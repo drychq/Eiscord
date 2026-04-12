@@ -1,0 +1,33 @@
+# LaTeX intermediate files
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.idx
+*.ilg
+*.ind
+*.lof
+*.log
+*.lot
+*.out
+*.run.xml
+*.synctex.gz
+*.toc
+*.xdv
+
+# Build/output directories
+build/
+output/
+
+# VS Code local settings backup
+*.code-workspace
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor temporary files
+*.swp
+*.swo
