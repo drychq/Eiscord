@@ -1,9 +1,0 @@
-$pdf_mode = 1;
-$xelatex = 'xelatex -synctex=1 -interaction=nonstopmode -file-line-error %O %S';
-
-# When build starts from src (e.g., with -cd), redirect outputs to workspace root.
-$out_dir = '../output';
-$aux_dir = '../build';
-
-$force_mode = 1;
-$silent = 0;
