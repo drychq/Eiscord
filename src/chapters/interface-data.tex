@@ -1,5 +1,7 @@
 \section{接口与数据需求}
 
+本章定义系统对外表现出的逻辑接口、实时事件和核心数据实体。接口名称仅表示业务命令或事件契约，不限定 REST、GraphQL、WebSocket、消息队列或数据库实现方式。
+
 \subsection{客户端界面要求}
 \noindent\begin{tabularx}{\textwidth}{L{3.2cm}Y}
   \toprule
@@ -8,93 +10,597 @@
   登录与注册界面 & 应清晰区分登录、注册、找回密码入口，表单项完整，错误信息可读，并支持基础输入校验。 \\
   社区导航区 & 应展示用户已加入的社区列表，支持进入社区、创建社区和接受邀请后的快速跳转。 \\
   频道列表区 & 应展示当前社区下的文本频道与语音频道，并按权限过滤用户不可访问的频道。 \\
-  消息主面板 & 应支持消息列表滚动、历史加载、输入框发送、附件上传、提及提示和撤回/删除反馈。 \\
-  成员与状态区 & 应展示当前社区在线成员、离线成员和语音频道内的成员状态变化。 \\
+  消息主面板 & 应支持消息列表滚动、历史加载、输入框发送、附件上传入口、提及提示、撤回和删除反馈。 \\
+  成员与状态区 & 应展示当前社区在线成员、离线成员、角色摘要和语音频道内的成员状态变化。 \\
   通知入口 & 应展示未读数量，并允许用户统一查看好友申请、私聊提醒、提及通知和系统提示。 \\
-  语音控制区 & 当用户加入语音频道后，应提供静音、取消静音、离开频道等基础操作入口。 \\
+  语音控制区 & 当用户加入语音频道后，应提供静音、闭麦、恢复和离开频道等状态操作入口。 \\
+  权限管理区 & 社区所有者或管理员应能维护角色、成员角色分配和频道级权限覆盖规则。 \\
   \bottomrule
 \end{tabularx}
 
-\subsection{实时通信接口要求}
-客户端与服务端之间应维持实时事件分发能力，以保证消息、在线状态、通知和语音状态的低延迟同步。接口要求如下：
+\subsection{逻辑命令接口}
+逻辑命令表示客户端或系统内部发起的业务动作。所有命令都必须携带可识别的操作者上下文，并在写入核心数据前完成身份与权限校验。
 
-\noindent\begin{tabularx}{\textwidth}{L{2.8cm}C{1.9cm}Y}
-  \toprule
-  接口或事件类型 & 方向 & 要求说明 \\
-  \midrule
-  身份会话同步 & 服务端至客户端 & 登录成功后，应向客户端下发基础会话信息、用户资料摘要和未读状态。 \\
-  消息创建事件 & 双向 & 客户端发送新消息请求后，服务端应向会话参与者或频道成员广播消息创建事件。 \\
-  消息变更事件 & 服务端至客户端 & 当消息被撤回、删除或更新时，服务端应同步通知相关客户端更新展示内容。 \\
-  在线状态事件 & 服务端至客户端 & 用户在线状态变化后，应实时同步至好友列表、成员列表及私聊界面。 \\
-  语音状态事件 & 服务端至客户端 & 用户加入、退出或切换语音状态时，应向同频道成员广播变化事件。 \\
-  通知事件 & 服务端至客户端 & 系统应将私聊新消息、提及、好友申请等事件转化为可实时展示的通知。 \\
-  心跳与连接保持 & 双向 & 客户端与服务端应通过定期保活机制判断连接可用性，并在异常断连后尝试重连。 \\
-  \bottomrule
-\end{tabularx}
+\CommandSpec{RegisterUser}{
+创建平台账号和基础用户档案。
+}{
+\texttt{username}、\texttt{email\_or\_phone}、\texttt{password}、可选验证凭据。
+}{
+注册结果、\texttt{user\_id}、账号验证状态。
+}{
+仅访客用户可发起；注册信息必须满足唯一性和密码规则。
+}{
+用户名或邮箱手机号重复；密码不合规；验证凭据无效；注册服务暂不可用。
+}{
+可触发 \texttt{NotificationCreated} 和审计记录。
+}{
+User、AuditLog。
+}
+
+\CommandSpec{LoginUser}{
+验证登录凭证并创建有效会话。
+}{
+\texttt{login\_identifier}、\texttt{password}、客户端上下文。
+}{
+会话标识、用户资料摘要、社区列表、好友摘要、未读与通知摘要。
+}{
+账号必须存在且处于可登录状态。
+}{
+账号不存在；密码错误；账号禁用；验证未完成；连续失败触发安全限制。
+}{
+\texttt{PresenceChanged}、\texttt{UnreadUpdated}。
+}{
+User、Membership、ReadState、Notification、AuditLog。
+}
+
+\CommandSpec{ResetPassword}{
+通过受信任验证方式重置账号密码。
+}{
+\texttt{account\_identifier}、验证凭据、新密码。
+}{
+重置结果和安全提示。
+}{
+操作者必须通过账号绑定验证。
+}{
+验证失败；凭据过期；新密码不合规；账号不存在或不可重置。
+}{
+\texttt{NotificationCreated}。
+}{
+User、AuditLog。
+}
+
+\CommandSpec{UpdateProfile}{
+修改用户公开资料和头像元数据。
+}{
+\texttt{nickname}、\texttt{avatar\_attachment\_id}、\texttt{bio} 等资料字段。
+}{
+更新后的用户资料摘要。
+}{
+用户必须已登录且只能修改自身资料。
+}{
+字段超长；头像附件不可用；资料格式非法。
+}{
+\texttt{PresenceChanged}。
+}{
+User、Attachment、AuditLog。
+}
+
+\CommandSpec{UpdatePresence}{
+更新用户在线状态或根据连接心跳推导状态。
+}{
+\texttt{desired\_status}、连接标识、心跳时间。
+}{
+可见状态和状态更新时间。
+}{
+用户必须有有效会话；系统可基于连接状态覆盖客户端上报状态。
+}{
+状态值非法；会话失效；连接上下文不可识别。
+}{
+\texttt{PresenceChanged}。
+}{
+User、Membership。
+}
+
+\CommandSpec{CreateFriendRequest}{
+向目标用户发送好友申请。
+}{
+\texttt{target\_user\_id} 或可搜索标识、申请附言。
+}{
+好友申请记录和通知结果。
+}{
+双方必须为平台注册用户，且尚未存在有效好友关系。
+}{
+目标不存在；向自己申请；重复申请；目标屏蔽或关系已存在。
+}{
+\texttt{NotificationCreated}。
+}{
+Friendship、Notification、AuditLog。
+}
+
+\CommandSpec{AcceptFriendRequest}{
+处理收到的好友申请。
+}{
+\texttt{friendship\_id}、处理动作。
+}{
+好友关系状态和双方好友摘要。
+}{
+操作者必须是申请接收方；申请必须处于待处理状态。
+}{
+申请不存在；申请已处理；操作者不是接收方。
+}{
+\texttt{NotificationCreated}、\texttt{PresenceChanged}。
+}{
+Friendship、DirectConversation、Notification、AuditLog。
+}
+
+\CommandSpec{CreateServer}{
+创建社区、默认角色和默认频道。
+}{
+社区名称、简介、图标附件、初始可见性配置。
+}{
+社区详情、所有者成员记录、默认角色和默认频道摘要。
+}{
+用户必须已登录且未超过社区创建限制。
+}{
+输入非法；创建数量超限；默认结构创建失败。
+}{
+\texttt{MemberJoined}、\texttt{ChannelChanged}、\texttt{PermissionChanged}。
+}{
+Server、Membership、Role、Channel、AuditLog。
+}
+
+\CommandSpec{JoinServer}{
+通过邀请加入社区。
+}{
+\texttt{invite\_code} 或邀请链接、用户上下文。
+}{
+成员记录、默认角色、可见频道列表。
+}{
+用户必须已登录；邀请必须有效；用户不得被社区限制访问。
+}{
+邀请不存在、过期或达到使用上限；用户已加入；用户被封禁。
+}{
+\texttt{MemberJoined}、\texttt{UnreadUpdated}。
+}{
+Invitation、Membership、Server、Role、AuditLog。
+}
+
+\CommandSpec{LeaveServer}{
+退出社区或由管理者移除成员。
+}{
+\texttt{server\_id}、目标成员、退出或移除原因。
+}{
+成员关系失效结果和权限刷新结果。
+}{
+本人可退出；管理员移除成员需要成员管理权限；社区所有者退出前必须转移所有权。
+}{
+目标成员不存在；无权移除；所有者未转移所有权。
+}{
+\texttt{PermissionChanged}、\texttt{MemberChanged}、\texttt{VoiceMemberLeft}。
+}{
+Membership、Role、VoiceSession、AuditLog。
+}
+
+\CommandSpec{ManageMember}{
+查看成员列表或执行基础成员管理动作。
+}{
+\texttt{server\_id}、目标成员、管理动作。
+}{
+成员列表、成员状态或管理动作结果。
+}{
+查看需具备社区成员身份；管理动作需具备成员管理权限。
+}{
+无权操作；目标成员不存在；尝试管理高权限成员。
+}{
+\texttt{MemberChanged}、\texttt{PermissionChanged}。
+}{
+Membership、Role、AuditLog。
+}
+
+\CommandSpec{CreateChannel}{
+创建或配置社区频道。
+}{
+\texttt{server\_id}、频道名称、频道类型、主题、排序、权限覆盖规则。
+}{
+频道详情和新的频道列表摘要。
+}{
+操作者必须拥有频道管理权限。
+}{
+频道类型非法；名称或排序不合规；权限不足；目标社区不存在。
+}{
+\texttt{ChannelChanged}、\texttt{PermissionChanged}。
+}{
+Channel、PermissionOverwrite、Role、AuditLog。
+}
+
+\CommandSpec{CheckPermission}{
+统一计算用户对资源和操作的有效权限。
+}{
+操作者、目标资源、操作类型、上下文。
+}{
+允许或拒绝结果、拒绝原因、可选权限摘要。
+}{
+所有受控业务命令在执行前必须调用等效权限判断。
+}{
+上下文不完整；目标资源不存在；权限规则冲突但无法解析。
+}{
+权限拒绝时写入审计；权限规则变化由 \texttt{PermissionChanged} 同步。
+}{
+Membership、Role、PermissionOverwrite、Channel、AuditLog。
+}
+
+\CommandSpec{SendMessage}{
+发送私聊或文本频道消息。
+}{
+会话或频道标识、文本内容、附件列表、提及列表、客户端临时消息标识。
+}{
+已持久化消息、附件元数据、分发结果。
+}{
+发送方必须有会话查看和发言权限。
+}{
+内容为空或超长；附件非法；无权发送；会话不存在；消息重复提交。
+}{
+\texttt{MessageCreated}、\texttt{UnreadUpdated}、\texttt{NotificationCreated}。
+}{
+Message、Attachment、DirectConversation、Channel、ReadState、Notification、AuditLog。
+}
+
+\CommandSpec{LoadMessages}{
+分页加载私聊或频道历史消息。
+}{
+会话或频道标识、游标、页大小、方向。
+}{
+消息列表、下一页游标、最近未读位置。
+}{
+请求者必须拥有目标会话或频道的查看权限。
+}{
+无权查看；游标无效；目标会话不存在；请求页大小超过限制。
+}{
+通常不触发广播事件，可配合 \texttt{UnreadUpdated}。
+}{
+Message、ReadState、DirectConversation、Channel、Membership。
+}
+
+\CommandSpec{MarkRead}{
+更新用户在会话或频道中的已读位置。
+}{
+会话或频道标识、最后已读消息标识。
+}{
+新的未读计数和读取状态。
+}{
+用户必须能查看目标会话或频道。
+}{
+消息不属于目标会话；无权查看；读取位置回退不被允许。
+}{
+\texttt{UnreadUpdated}。
+}{
+ReadState、Message、Membership、DirectConversation。
+}
+
+\CommandSpec{DeleteMessage}{
+撤回或删除消息。
+}{
+\texttt{message\_id}、操作类型、删除原因。
+}{
+消息可见状态和审计结果。
+}{
+发送者可撤回自身消息；管理员删除频道消息需具备消息管理权限。
+}{
+消息不存在；无权操作；消息已删除；跨会话删除。
+}{
+\texttt{MessageDeleted}、\texttt{UnreadUpdated}。
+}{
+Message、Notification、ReadState、AuditLog。
+}
+
+\CommandSpec{MarkNotificationRead}{
+将通知标记为已读。
+}{
+通知标识列表或全部已读动作。
+}{
+已读状态和剩余未读计数。
+}{
+用户只能处理自己的通知。
+}{
+通知不存在；通知归属不匹配；重复操作。
+}{
+\texttt{UnreadUpdated}。
+}{
+Notification、ReadState。
+}
+
+\CommandSpec{AssignRole}{
+创建、修改、删除角色或为成员分配角色。
+}{
+角色配置、目标成员、权限集合、优先级。
+}{
+角色详情、成员角色映射和权限刷新结果。
+}{
+操作者必须拥有角色管理权限，且不得授予超出自身能力的权限。
+}{
+角色不存在；默认角色非法删除；目标成员不存在；越权分配。
+}{
+\texttt{PermissionChanged}、\texttt{MemberChanged}。
+}{
+Role、Membership、PermissionOverwrite、AuditLog。
+}
+
+\CommandSpec{JoinVoiceChannel}{
+加入语音频道状态房间。
+}{
+\texttt{channel\_id}、连接上下文、初始静音和闭麦状态。
+}{
+语音会话状态和频道成员状态列表。
+}{
+用户必须有查看和加入目标语音频道的权限。
+}{
+频道不存在；频道非语音类型；无权加入；已有其他有效语音会话无法切换。
+}{
+\texttt{VoiceMemberJoined}、必要时触发 \texttt{VoiceMemberLeft}。
+}{
+VoiceSession、Channel、Membership、PermissionOverwrite、AuditLog。
+}
+
+\CommandSpec{UpdateVoiceState}{
+更新语音频道中的成员状态。
+}{
+\texttt{session\_id}、静音状态、闭麦状态、连接状态。
+}{
+更新后的语音会话状态。
+}{
+用户必须处于有效语音会话中。
+}{
+会话不存在；状态值非法；权限已失效；连接超时。
+}{
+\texttt{VoiceStateChanged}、\texttt{VoiceMemberLeft}。
+}{
+VoiceSession、Channel、AuditLog。
+}
+
+\subsection{实时事件要求}
+实时事件用于客户端状态同步。事件消费者不得仅凭事件载荷绕过权限校验；客户端收到事件后仍应基于本地会话上下文更新可见范围内的界面。
+
+\EventSpec{MessageCreated}{
+消息成功持久化并通过权限校验后。
+}{
+\texttt{message\_id}、会话或频道标识、发送者摘要、内容摘要、附件摘要、提及列表、创建时间。
+}{
+私聊参与者或有权查看目标频道的在线成员。
+}{
+插入消息、更新最近会话、刷新未读和通知角标。
+}{
+消息事件应在正常网络下 1 秒内到达目标客户端；断线客户端重连后通过历史消息补齐。
+}
+
+\EventSpec{MessageDeleted}{
+消息被发送者撤回或管理员删除后。
+}{
+\texttt{message\_id}、删除类型、操作者摘要、删除时间。
+}{
+仍有权查看原会话或频道的相关客户端。
+}{
+将消息展示为已撤回或移除，必要时刷新未读计数。
+}{
+删除事件必须幂等，重复接收不得恢复已删除消息。
+}
+
+\EventSpec{UnreadUpdated}{
+用户未读状态变化后。
+}{
+目标会话或频道标识、未读数量、最后读取位置。
+}{
+未读状态所属用户的客户端。
+}{
+更新私聊、频道和通知入口的未读角标。
+}{
+未读同步延迟不超过 2 秒；重连后以服务端状态为准。
+}
+
+\EventSpec{NotificationCreated}{
+系统生成好友申请、提及、私聊新消息或管理结果通知后。
+}{
+\texttt{notification\_id}、通知类型、来源摘要、预览内容、创建时间。
+}{
+通知目标用户的客户端。
+}{
+展示通知入口更新和必要的即时提示。
+}{
+同一业务事件不得重复生成多条等价通知。
+}
+
+\EventSpec{PresenceChanged}{
+用户登录、离线、隐身、离开或手动切换状态后。
+}{
+\texttt{user\_id}、可见状态、更新时间。
+}{
+目标用户好友、同社区可见成员和本人客户端。
+}{
+刷新好友列表、成员列表和私聊标题区域状态。
+}{
+隐身状态对他人按离线展示；断线状态应在超时后自动广播。
+}
+
+\EventSpec{MemberJoined}{
+用户加入社区或社区创建者成为首位成员后。
+}{
+\texttt{server\_id}、成员摘要、默认角色、加入时间。
+}{
+目标社区中有权查看成员列表的在线成员。
+}{
+刷新成员列表、社区导航和默认未读状态。
+}{
+事件必须在成员关系成功创建后发出。
+}
+
+\EventSpec{MemberChanged}{
+成员资料、角色或基础管理状态变化后。
+}{
+\texttt{server\_id}、成员摘要、变更类型、更新时间。
+}{
+目标社区中有权查看成员列表或管理界面的在线成员。
+}{
+刷新成员列表、角色标识和管理反馈。
+}{
+成员被移除后不得继续接收该社区后续成员事件。
+}
+
+\EventSpec{ChannelChanged}{
+频道创建、编辑、排序或删除后。
+}{
+\texttt{server\_id}、频道摘要、变更类型。
+}{
+对目标频道或频道列表有可见权限的社区成员。
+}{
+刷新频道列表和当前频道可用状态。
+}{
+权限变更导致不可见的频道应从客户端列表中移除。
+}
+
+\EventSpec{PermissionChanged}{
+角色、成员角色或频道权限覆盖变化后。
+}{
+\texttt{server\_id}、变更范围、受影响资源摘要。
+}{
+受影响社区成员和管理者客户端。
+}{
+重新计算可见频道、可用操作和管理入口。
+}{
+权限事件必须先于或同时于受影响资源的后续业务事件生效。
+}
+
+\EventSpec{VoiceMemberJoined}{
+用户成功加入语音频道状态房间后。
+}{
+\texttt{channel\_id}、成员摘要、初始语音状态、加入时间。
+}{
+同语音频道成员和有权查看该语音频道成员列表的用户。
+}{
+在语音频道成员列表中加入该成员。
+}{
+本事件只表示状态加入，不承诺真实音频媒体流已经建立。
+}
+
+\EventSpec{VoiceMemberLeft}{
+用户主动离开、断线超时或权限失效退出语音频道后。
+}{
+\texttt{channel\_id}、\texttt{user\_id}、离开原因、离开时间。
+}{
+同语音频道剩余成员和有权查看该语音频道成员列表的用户。
+}{
+从语音频道成员列表移除该成员。
+}{
+离开事件必须幂等，重复接收不得造成成员列表异常。
+}
+
+\EventSpec{VoiceStateChanged}{
+语音频道成员切换静音、闭麦或连接状态后。
+}{
+\texttt{session\_id}、\texttt{user\_id}、静音状态、闭麦状态、连接状态、更新时间。
+}{
+同语音频道成员。
+}{
+更新成员旁的语音状态标识。
+}{
+状态变化同步时间不超过 3 秒。
+}
 
 \subsection{外部接口要求}
 \noindent\begin{tabularx}{\textwidth}{L{3cm}L{3.2cm}Y}
   \toprule
   外部接口 & 主要用途 & 要求说明 \\
   \midrule
-  文件存储接口 & 消息附件、头像、社区图标上传与访问 & 应支持文件上传、访问地址返回和访问控制，禁止未授权用户直接访问受保护资源。 \\
+  文件存储接口 & 消息附件、头像、社区图标上传与访问 & 应支持文件上传、访问地址返回和访问控制；受保护资源必须与业务权限绑定，禁止未授权用户直接访问。 \\
   邮件或短信验证接口 & 注册验证、密码找回、安全通知 & 应支持验证码或重置链接发送，并保证验证结果与账号绑定关系一致。 \\
-  推送通知接口 & 应用外提醒或移动端通知 & 当用户离线或未处于当前会话时，可通过外部推送能力补充提醒。 \\
-  日志与监控接口 & 运行日志、异常告警与审计 & 应记录核心操作、异常事件和权限拒绝信息，支持后续故障分析与审计追踪。 \\
+  推送通知接口 & 应用外提醒或移动端通知 & v1 可作为增强能力；离线用户通知至少应在系统内生成，外部推送失败不得影响核心消息写入。 \\
+  日志与监控接口 & 运行日志、异常告警与审计 & 应记录核心操作、异常事件和权限拒绝信息，支持故障分析与审计追踪。 \\
   \bottomrule
 \end{tabularx}
 
 \subsection{核心数据实体定义}
-以下实体描述系统主要业务对象的结构边界与关联关系。
+以下实体描述系统主要业务对象的结构边界与关联关系。字段名称仅表达业务含义，不限定数据库列名或类型。
 
 \EntityTable{User}{
 表示平台注册用户的基础信息、身份状态和个人资料。
 }{
-\texttt{user\_id}、\texttt{username}、\texttt{nickname}、\texttt{email/phone}、\texttt{avatar\_url}、\texttt{bio}、\texttt{status}、\texttt{created\_at}
+\texttt{user\_id}、\texttt{username}、\texttt{nickname}、\texttt{email\_or\_phone}、\texttt{avatar\_url}、\texttt{bio}、\texttt{account\_status}、\texttt{presence\_status}、\texttt{created\_at}
 }{
-\texttt{username} 应保持平台级唯一；密码不得明文存储；\texttt{status} 仅能取在线、离开、忙碌、隐身、离线等定义值。
+\texttt{username} 和绑定联系方式应保持平台级唯一；密码不得明文存储；在线状态只能取系统定义值。
 }{
-与 Friendship、Membership、Message、VoiceSession、Notification 均存在关联，是多数业务实体的主关联对象。
+与 Friendship、DirectConversation、Membership、Message、VoiceSession、Notification、AuditLog 关联。
+}{
+账号禁用时保留历史消息和审计信息；账号删除或注销应使登录凭证失效，并按隐私要求处理公开资料展示。
 }
 
 \EntityTable{Friendship}{
-表示两名用户之间的好友关系或好友申请状态。
+表示两名用户之间的好友申请和好友关系。
 }{
 \texttt{friendship\_id}、\texttt{requester\_id}、\texttt{addressee\_id}、\texttt{status}、\texttt{created\_at}、\texttt{updated\_at}
 }{
-同一对用户在同一时间只允许存在一条有效好友关系；\texttt{status} 至少应支持待处理、已接受、已拒绝和已删除。
+同一对用户同一时间只允许存在一条有效好友关系；状态至少支持待处理、已接受、已拒绝、已删除。
 }{
-关联两个 User 实体，并可驱动私聊会话入口与好友通知生成。
+关联两个 User，并驱动 DirectConversation 入口和好友通知。
+}{
+拒绝或删除后关系不再授予好友能力；历史私聊记录按会话规则保留。
+}
+
+\EntityTable{DirectConversation}{
+表示两个好友之间的一对一私聊会话。
+}{
+\texttt{conversation\_id}、参与者用户标识、\texttt{last\_message\_id}、\texttt{created\_at}、\texttt{updated\_at}
+}{
+同一对用户应复用同一有效私聊会话；会话参与者必须与消息访问权限一致。
+}{
+关联 User、Friendship、Message、ReadState、Notification。
+}{
+好友关系删除后可隐藏会话入口，但历史消息仍按隐私和保留策略处理。
 }
 
 \EntityTable{Server}{
 表示用户创建或加入的社区空间。
 }{
-\texttt{server\_id}、\texttt{owner\_id}、\texttt{name}、\texttt{icon\_url}、\texttt{description}、\texttt{invite\_code}、\texttt{created\_at}
+\texttt{server\_id}、\texttt{owner\_id}、\texttt{name}、\texttt{icon\_url}、\texttt{description}、\texttt{created\_at}
 }{
-社区必须有且仅有一个所有者；社区名称在展示层应清晰可识别；邀请码应具备有效性控制。
+社区必须有且仅有一个所有者；社区名称在展示层应清晰可识别。
 }{
-与 Channel、Membership、Role 直接关联，并通过成员关系连接到 User。
+与 Invitation、Channel、Membership、Role、AuditLog 直接关联。
+}{
+社区删除或归档后，其邀请、频道、成员和语音会话全部失效；历史审计按保留策略保存。
 }
 
-\EntityTable{Channel}{
-表示社区内部的文本频道或语音频道。
+\EntityTable{Invitation}{
+表示加入社区的邀请凭据。
 }{
-\texttt{channel\_id}、\texttt{server\_id}、\texttt{name}、\texttt{type}、\texttt{topic}、\texttt{sort\_order}、\texttt{permission\_overwrite}、\texttt{created\_at}
+\texttt{invitation\_id}、\texttt{server\_id}、\texttt{code}、\texttt{created\_by}、\texttt{expires\_at}、\texttt{max\_uses}、\texttt{used\_count}、\texttt{status}
 }{
-\texttt{type} 至少区分文本频道与语音频道；频道必须隶属于某个社区；排序字段应支持频道列表展示。
+邀请码在有效期内应唯一可解析；使用次数和过期时间必须被校验。
 }{
-与 Server 形成从属关系；文本频道关联 Message，语音频道关联 VoiceSession。
+关联 Server、User、Membership。
+}{
+过期、撤销、达到使用上限或社区失效后不得继续加入。
 }
 
 \EntityTable{Membership}{
 表示用户加入社区后的成员身份信息。
 }{
-\texttt{membership\_id}、\texttt{server\_id}、\texttt{user\_id}、\texttt{nick\_in\_server}、\texttt{joined\_at}、\texttt{role\_ids}、\texttt{last\_read\_message\_id}
+\texttt{membership\_id}、\texttt{server\_id}、\texttt{user\_id}、\texttt{nick\_in\_server}、\texttt{joined\_at}、\texttt{role\_ids}、\texttt{member\_status}
 }{
-同一用户在同一社区只允许存在一条有效成员记录；角色集合应与社区角色定义保持一致。
+同一用户在同一社区只允许存在一条有效成员记录；角色集合必须属于同一社区。
 }{
-连接 User 与 Server，并承载角色分配、未读位置和社区昵称等上下文信息。
+连接 User 与 Server，并承载角色分配、成员状态和社区昵称。
+}{
+退出、移除或封禁后成员权限失效；相关语音会话必须释放。
+}
+
+\EntityTable{Channel}{
+表示社区内部的文本频道或语音频道。
+}{
+\texttt{channel\_id}、\texttt{server\_id}、\texttt{name}、\texttt{type}、\texttt{topic}、\texttt{sort\_order}、\texttt{created\_at}
+}{
+\texttt{type} 至少区分文本频道与语音频道；频道必须隶属于某个社区；排序字段应支持稳定展示。
+}{
+与 Server、PermissionOverwrite 关联；文本频道关联 Message，语音频道关联 VoiceSession。
+}{
+频道删除后不再允许发送消息或加入语音状态；历史消息按社区策略保留或隐藏。
 }
 
 \EntityTable{Role}{
@@ -102,29 +608,71 @@
 }{
 \texttt{role\_id}、\texttt{server\_id}、\texttt{name}、\texttt{permission\_bits}、\texttt{color}、\texttt{priority}、\texttt{is\_default}
 }{
-角色必须归属于某个社区；优先级应可比较；权限集合应支持查看频道、发送消息、管理成员等粒度。
+角色必须归属于某个社区；优先级应可比较；默认角色必须始终存在。
 }{
-与 Server、Membership、Channel 权限规则关联，是权限校验的核心依据之一。
+与 Server、Membership、PermissionOverwrite 关联，是权限校验的核心依据。
+}{
+角色删除后应从成员角色集合中移除；默认角色不得被删除到社区无默认权限状态。
+}
+
+\EntityTable{PermissionOverwrite}{
+表示频道级角色或成员权限覆盖规则。
+}{
+\texttt{overwrite\_id}、\texttt{channel\_id}、目标角色或成员、允许权限集合、拒绝权限集合。
+}{
+覆盖规则必须隶属于一个频道；同一频道对同一目标只允许一条有效覆盖规则。
+}{
+关联 Channel、Role、Membership，并参与 CheckPermission 计算。
+}{
+频道删除、目标角色删除或目标成员失效后覆盖规则同步失效。
 }
 
 \EntityTable{Message}{
 表示文本频道或私聊中的消息记录。
 }{
-\texttt{message\_id}、\texttt{channel\_id}、\texttt{sender\_id}、\texttt{content}、\texttt{attachment\_list}、\texttt{mention\_list}、\texttt{created\_at}、\texttt{deleted\_at}
+\texttt{message\_id}、会话或频道标识、\texttt{sender\_id}、\texttt{content}、\texttt{attachment\_ids}、\texttt{mention\_ids}、\texttt{created\_at}、\texttt{deleted\_at}
 }{
-消息必须关联合法发送者与会话上下文；删除或撤回后应保留必要状态字段；附件元数据需可追溯。
+消息必须关联合法发送者与会话上下文；删除或撤回后应保留可审计状态字段。
 }{
-与 User、Channel、Notification 关联，是文本交流和通知触发的主要数据来源。
+与 User、Channel 或 DirectConversation、Attachment、Notification、ReadState、AuditLog 关联。
+}{
+撤回或删除后不得以普通消息展示；必要元数据保留用于审计、未读修正和通知回溯。
+}
+
+\EntityTable{Attachment}{
+表示消息附件、头像和社区图标等文件元数据。
+}{
+\texttt{attachment\_id}、\texttt{owner\_id}、\texttt{storage\_key}、\texttt{file\_name}、\texttt{mime\_type}、\texttt{size}、\texttt{created\_at}
+}{
+附件大小和类型必须满足配置限制；访问附件必须结合业务上下文授权。
+}{
+可关联 User、Server、Message。
+}{
+所属消息删除或资源替换后，附件可进入不可见或待清理状态；受保护附件不得通过旧地址越权访问。
+}
+
+\EntityTable{ReadState}{
+表示用户在私聊或频道中的最近读取位置和未读状态。
+}{
+\texttt{read\_state\_id}、\texttt{user\_id}、会话或频道标识、\texttt{last\_read\_message\_id}、\texttt{unread\_count}、\texttt{updated\_at}
+}{
+每个用户对每个会话或频道最多保留一条有效读取状态；读取位置不得指向无权查看的消息。
+}{
+关联 User、Message、DirectConversation 或 Channel。
+}{
+用户退出社区后该社区频道读取状态不再授予访问能力；会话隐藏时可保留状态用于恢复。
 }
 
 \EntityTable{VoiceSession}{
-表示用户在语音频道中的在线会话状态。
+表示用户在语音频道中的在线状态会话。
 }{
-\texttt{session\_id}、\texttt{channel\_id}、\texttt{user\_id}、\texttt{join\_time}、\texttt{mute\_state}、\texttt{deafen\_state}、\texttt{connection\_status}
+\texttt{session\_id}、\texttt{channel\_id}、\texttt{user\_id}、\texttt{joined\_at}、\texttt{mute\_state}、\texttt{deafen\_state}、\texttt{connection\_status}
 }{
-同一用户在同一时刻仅允许关联一个有效语音会话；状态字段应能表达静音、离开和断线恢复等场景。
+同一用户同一时刻仅允许一个有效语音会话；状态字段仅表示语音频道成员状态，不表示真实媒体流质量。
 }{
-与 User 和语音类型 Channel 关联，用于驱动频道成员列表和实时语音状态广播。
+与 User 和语音类型 Channel 关联，用于驱动成员列表和实时状态广播。
+}{
+主动离开、断线超时、权限失效或成员退出社区后会话失效。
 }
 
 \EntityTable{Notification}{
@@ -132,7 +680,21 @@
 }{
 \texttt{notification\_id}、\texttt{user\_id}、\texttt{type}、\texttt{source\_id}、\texttt{content\_preview}、\texttt{is\_read}、\texttt{created\_at}
 }{
-通知必须可映射到具体触发事件；\texttt{is\_read} 只能在用户查看后更新；通知类型应支持好友申请、私聊新消息、提及等类别。
+通知必须可映射到具体触发事件；\texttt{is\_read} 只能由目标用户或系统已读策略更新。
 }{
-关联目标 User，并可由 Friendship、Message、Server 管理动作等业务事件触发生成。
+关联目标 User，并可由 Friendship、Message、Server 管理动作等触发。
+}{
+来源资源失效后通知可保留摘要但不得继续暴露受限内容。
+}
+
+\EntityTable{AuditLog}{
+表示安全、权限和关键管理动作的审计记录。
+}{
+\texttt{audit\_id}、操作者、目标资源、动作类型、结果、失败原因、请求标识、\texttt{created\_at}
+}{
+登录失败、权限拒绝、成员移除、角色变更、消息删除等关键动作必须记录；不得写入明文密码或完整敏感凭证。
+}{
+可关联 User、Server、Channel、Message、Membership、Role。
+}{
+审计日志至少保留 180 天；超期归档或删除不得影响业务数据一致性。
 }

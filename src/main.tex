@@ -24,28 +24,31 @@
 \newcolumntype{Y}{>{\raggedright\arraybackslash}X}
 
 \newcommand{\DocumentTitle}{类 Discord 实时社区交流系统软件需求规格说明书}
-\newcommand{\DocumentVersion}{V1.0}
+\newcommand{\DocumentVersion}{V1.1}
 \newcommand{\CourseName}{创新创业基础与实践}
 \newcommand{\StudentName}{陈瀚钦 \space 范宇扬}
 \newcommand{\StudentId}{2023051604062 2023051604100}
 \newcommand{\ClassName}{2023级 软件工程3班}
 \newcommand{\Instructor}{张扬}
 
-\newcommand{\Requirement}[5]{%
+\newcommand{\Requirement}[9]{%
   \par\medskip
-  \noindent{\bfseries #1\quad #2}\par
+  \noindent{\bfseries #1\quad #2\hfill 优先级：#3}\par
   \vspace{0.25em}
-  \noindent\begin{tabularx}{\linewidth}{L{2.8cm}Y}
+  \noindent\begin{tabularx}{\linewidth}{L{2.6cm}Y}
     \toprule
-    需求描述 & #3 \\
-    前置条件 & #4 \\
-    预期结果 & #5 \\
+    参与者 & #4 \\
+    触发条件 & #5 \\
+    前置条件 & #6 \\
+    主流程 & #7 \\
+    异常流程 & #8 \\
+    开发追踪 & #9 \\
     \bottomrule
   \end{tabularx}
   \par\medskip
 }
 
-\newcommand{\EntityTable}[5]{%
+\newcommand{\EntityTable}[6]{%
   \par\medskip
   \noindent{\bfseries #1}\par
   \vspace{0.25em}
@@ -55,6 +58,41 @@
     关键字段 & #3 \\
     约束 & #4 \\
     关联关系 & #5 \\
+    删除或失效规则 & #6 \\
+    \bottomrule
+  \end{tabularx}
+  \par\medskip
+}
+
+\newcommand{\CommandSpec}[8]{%
+  \par\medskip
+  \noindent{\bfseries #1}\par
+  \vspace{0.25em}
+  \noindent\begin{tabularx}{\linewidth}{L{2.8cm}Y}
+    \toprule
+    用途 & #2 \\
+    输入 & #3 \\
+    输出 & #4 \\
+    权限要求 & #5 \\
+    失败场景 & #6 \\
+    触发事件 & #7 \\
+    相关实体 & #8 \\
+    \bottomrule
+  \end{tabularx}
+  \par\medskip
+}
+
+\newcommand{\EventSpec}[6]{%
+  \par\medskip
+  \noindent{\bfseries #1}\par
+  \vspace{0.25em}
+  \noindent\begin{tabularx}{\linewidth}{L{2.8cm}Y}
+    \toprule
+    触发时机 & #2 \\
+    事件载荷 & #3 \\
+    接收方 & #4 \\
+    客户端动作 & #5 \\
+    可靠性要求 & #6 \\
     \bottomrule
   \end{tabularx}
   \par\medskip
@@ -98,6 +136,7 @@
   版本 & 日期 & 修订人 & 修订说明 \\
   \midrule
   V1.0 & \today & 待填写 & 初始版本，完成类 Discord 实时社区交流系统的软件需求规格说明书。 \\
+  V1.1 & \today & 待填写 & 补充 MVP 范围、优先级、开发追踪、逻辑接口、实时事件、数据约束、权限矩阵和验收映射。 \\
   \bottomrule
 \end{tabularx}
 
@@ -112,6 +151,7 @@
 \input{chapters/overview}
 \input{chapters/functional}
 \input{chapters/interface-data}
+\input{chapters/traceability}
 \input{chapters/nonfunctional}
 \input{chapters/acceptance}
 

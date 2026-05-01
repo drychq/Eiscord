@@ -1,0 +1,70 @@
+\section{需求追踪与权限矩阵}
+
+本章用于定义系统权限规则和需求追踪映射关系，确保每个 P0 需求均有接口、数据实体和验收用例覆盖。
+
+\subsection{权限矩阵}
+\small
+\noindent\begin{tabularx}{\textwidth}{Y C{1.55cm}C{1.65cm}C{1.65cm}C{1.85cm}C{1.85cm}}
+  \toprule
+  操作能力 & 访客 & 注册用户 & 社区成员 & 管理员/版主 & 社区所有者 \\
+  \midrule
+  注册、登录、找回密码 & 注册/登录 & 本人 & 本人 & 本人 & 本人 \\
+  维护个人资料 & 拒绝 & 本人 & 本人 & 本人 & 本人 \\
+  发送和处理好友申请 & 拒绝 & 允许 & 允许 & 允许 & 允许 \\
+  发起私聊和查看私聊历史 & 拒绝 & 好友内允许 & 好友内允许 & 好友内允许 & 好友内允许 \\
+  创建社区 & 拒绝 & 允许 & 允许 & 允许 & 允许 \\
+  加入社区 & 邀请预览 & 允许 & 已加入拒绝 & 已加入拒绝 & 已加入拒绝 \\
+  退出社区 & 拒绝 & 无社区上下文 & 本人允许 & 本人允许 & 转移所有权后允许 \\
+  查看社区成员列表 & 拒绝 & 拒绝 & 允许 & 允许 & 允许 \\
+  移除或管理成员 & 拒绝 & 拒绝 & 拒绝 & 权限内允许 & 允许 \\
+  创建、编辑或删除频道 & 拒绝 & 拒绝 & 拒绝 & 权限内允许 & 允许 \\
+  查看受限频道 & 拒绝 & 拒绝 & 按角色判断 & 按角色判断 & 允许 \\
+  发送文本频道消息 & 拒绝 & 拒绝 & 按频道权限 & 按频道权限 & 允许 \\
+  删除他人频道消息 & 拒绝 & 拒绝 & 拒绝 & 权限内允许 & 允许 \\
+  访问受保护附件 & 拒绝 & 按会话判断 & 按频道权限 & 按频道权限 & 允许 \\
+  加入语音频道状态房间 & 拒绝 & 拒绝 & 按频道权限 & 按频道权限 & 允许 \\
+  创建角色和分配角色 & 拒绝 & 拒绝 & 拒绝 & 权限内允许 & 允许 \\
+  查看通知和标记已读 & 拒绝 & 本人 & 本人 & 本人 & 本人 \\
+  \bottomrule
+\end{tabularx}
+\normalsize
+
+
+
+\subsection{需求追踪矩阵}
+\scriptsize
+\noindent\begin{tabularx}{\textwidth}{L{1.3cm}L{2.4cm}Y L{3cm}L{2cm}}
+  \toprule
+  编号 & 功能领域 & 接口与事件 & 关键实体 & 验收编号 \\
+  \midrule
+  FR-01 & 账号模块 & \texttt{RegisterUser}；\texttt{NotificationCreated} & User、AuditLog & AC-01、AC-E1 \\
+  FR-02 & 账号模块 & \texttt{LoginUser}；\texttt{PresenceChanged}、\texttt{UnreadUpdated} & User、ReadState、Notification、AuditLog & AC-01、AC-E2 \\
+  FR-03 & 账号模块 & \texttt{ResetPassword}；\texttt{NotificationCreated} & User、AuditLog & AC-01 \\
+  FR-04 & 账号模块 & \texttt{UpdateProfile}；\texttt{PresenceChanged} & User、Attachment & AC-01 \\
+  FR-05 & 账号模块 & \texttt{UpdatePresence}；\texttt{PresenceChanged} & User、Membership & AC-06、AC-E8 \\
+  FR-06 & 社交与私聊模块 & \texttt{CreateFriendRequest}、\texttt{AcceptFriendRequest}；\texttt{NotificationCreated} & Friendship、Notification & AC-01、AC-E3 \\
+  FR-07 & 社交与私聊模块 & \texttt{SendMessage}；\texttt{MessageCreated}、\texttt{UnreadUpdated} & DirectConversation、Message、ReadState & AC-01、AC-05 \\
+  FR-08 & 社区与频道模块 & \texttt{CreateServer}；\texttt{MemberJoined}、\texttt{ChannelChanged} & Server、Membership、Role、Channel & AC-02 \\
+  FR-09 & 社区与频道模块 & \texttt{JoinServer}、\texttt{LeaveServer}；\texttt{MemberJoined}、\texttt{PermissionChanged} & Invitation、Membership、Role & AC-02、AC-E4 \\
+  FR-10 & 社区与频道模块 & \texttt{ManageMember}；\texttt{MemberChanged}、\texttt{PermissionChanged} & Membership、Role、AuditLog & AC-04 \\
+  \bottomrule
+\end{tabularx}
+
+\vspace{0.5em}
+\noindent\begin{tabularx}{\textwidth}{L{1.3cm}L{2.4cm}Y L{3cm}L{2cm}}
+  \toprule
+  编号 & 功能领域 & 接口与事件 & 关键实体 & 验收编号 \\
+  \midrule
+  FR-11 & 社区与频道模块 & \texttt{CreateChannel}；\texttt{ChannelChanged}、\texttt{PermissionChanged} & Channel、PermissionOverwrite & AC-02、AC-04 \\
+  FR-12 & 权限模块 & \texttt{CheckPermission}；\texttt{PermissionChanged} & Role、PermissionOverwrite、Membership & AC-04、AC-E5、AC-E7 \\
+  FR-13 & 消息与附件模块 & \texttt{SendMessage}；\texttt{MessageCreated}、\texttt{NotificationCreated} & Message、Attachment、ReadState、Notification & AC-02、AC-05、AC-E6 \\
+  FR-14 & 消息与附件模块 & \texttt{LoadMessages}、\texttt{MarkRead}；\texttt{UnreadUpdated} & Message、ReadState、Channel、DirectConversation & AC-02、AC-05、AC-E5 \\
+  FR-15 & 消息与附件模块 & \texttt{DeleteMessage}；\texttt{MessageDeleted}、\texttt{UnreadUpdated} & Message、AuditLog、Notification & AC-04、AC-E7 \\
+  FR-16 & 语音状态模块 & \texttt{JoinVoiceChannel}；\texttt{VoiceMemberJoined}、\texttt{VoiceMemberLeft} & VoiceSession、Channel、Membership & AC-03、AC-E8 \\
+  FR-17 & 语音状态模块 & \texttt{UpdateVoiceState}；\texttt{VoiceStateChanged} & VoiceSession、PermissionOverwrite & AC-03、AC-N2 \\
+  FR-18 & 通知与未读模块 & \texttt{MarkNotificationRead}；\texttt{NotificationCreated}、\texttt{UnreadUpdated} & Notification、ReadState & AC-05、AC-E6 \\
+  FR-19 & 权限模块 & \texttt{AssignRole}；\texttt{PermissionChanged}、\texttt{MemberChanged} & Role、Membership、PermissionOverwrite & AC-04 \\
+  FR-20 & 权限模块 & \texttt{CheckPermission}；\texttt{PermissionChanged} & Role、PermissionOverwrite、AuditLog & AC-04、AC-N4、AC-E5、AC-E7 \\
+  \bottomrule
+\end{tabularx}
+\normalsize
