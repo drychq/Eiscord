@@ -1,0 +1,41 @@
+{
+  "name": "eiscord",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Discord-like realtime community collaboration system.",
+  "packageManager": "pnpm@9.15.4",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @eiscord/shared build && pnpm --parallel --filter @eiscord/api --filter @eiscord/web dev",
+    "dev:api": "pnpm --filter @eiscord/shared build && pnpm --filter @eiscord/api dev",
+    "dev:web": "pnpm --filter @eiscord/shared build && pnpm --filter @eiscord/web dev",
+    "build": "pnpm -r --if-present build",
+    "typecheck": "pnpm --filter @eiscord/shared build && pnpm -r --if-present typecheck",
+    "test": "pnpm -r --if-present test",
+    "lint": "pnpm -r --if-present lint",
+    "format": "prettier --write \"**/*.{ts,tsx,js,cjs,mjs,json,md,css,yml,yaml}\"",
+    "db:generate": "prisma generate --schema=prisma/schema.prisma",
+    "db:migrate": "prisma migrate dev --schema=prisma/schema.prisma",
+    "db:seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.13.0"
+  },
+  "devDependencies": {
+    "@eiscord/config": "workspace:*",
+    "@eslint/js": "^9.0.0",
+    "@playwright/test": "^1.43.1",
+    "eslint": "^9.0.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.4.5",
+    "globals": "^15.0.0",
+    "prettier": "^3.2.5",
+    "prisma": "^5.13.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.5",
+    "typescript-eslint": "^8.0.0",
+    "vitest": "^1.6.0"
+  }
+}

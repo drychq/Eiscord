@@ -1,0 +1,16 @@
+{
+  "name": "@eiscord/config",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./eslint": "./eslint/base.js",
+    "./prettier": "./prettier/index.cjs",
+    "./tsconfig/base": "./tsconfig/base.json"
+  },
+  "dependencies": {
+    "@eslint/js": "^9.0.0",
+    "globals": "^15.0.0",
+    "typescript-eslint": "^8.0.0"
+  }
+}

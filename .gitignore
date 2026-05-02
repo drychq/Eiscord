@@ -20,9 +20,28 @@
 # Build/output directories
 build/
 output/
+dist/
+coverage/
+.turbo/
+.vite/
+*.tsbuildinfo
+.prisma/
+playwright-report/
+test-results/
 
-# VS Code local settings backup
+# IDE local settings
 *.code-workspace
+.idea/
+
+# Node workspace
+node_modules/
+pnpm-debug.log*
+
+# Local environment
+.env
+.env.local
+.env.*.local
+docker-compose.override.yml
 
 # OS files
 .DS_Store

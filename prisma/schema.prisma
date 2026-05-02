@@ -1,0 +1,15 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Engineering-only placeholder so Prisma Client generation works before the
+// business data model from docs/dev/04-data-model.md is implemented.
+model EngineeringMetadata {
+  id        String   @id @default("engineering-skeleton")
+  createdAt DateTime @default(now())
+}
