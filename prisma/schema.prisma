@@ -7,9 +7,81 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// Engineering-only placeholder so Prisma Client generation works before the
-// business data model from docs/dev/04-data-model.md is implemented.
-model EngineeringMetadata {
-  id        String   @id @default("engineering-skeleton")
-  createdAt DateTime @default(now())
+model User {
+  id                 String        @id @default(uuid()) @db.Uuid
+  username           String        @unique @db.VarChar(32)
+  emailOrPhone       String        @unique @map("email_or_phone") @db.VarChar(320)
+  passwordHash       String        @map("password_hash") @db.VarChar(256)
+  nickname           String        @db.VarChar(64)
+  avatarAttachmentId String?       @map("avatar_attachment_id") @db.Uuid
+  bio                String?       @db.VarChar(280)
+  accountStatus      String        @default("active") @map("account_status") @db.VarChar(32)
+  presenceStatus     String        @default("offline") @map("presence_status") @db.VarChar(32)
+  createdAt          DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  avatarAttachment Attachment?  @relation("UserAvatar", fields: [avatarAttachmentId], references: [id], onDelete: SetNull)
+  attachments      Attachment[] @relation("AttachmentOwner")
+  auditLogs        AuditLog[]   @relation("AuditActor")
+  sessions         AuthSession[]
+
+  @@index([accountStatus])
+  @@map("users")
+}
+
+model AuthSession {
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String    @map("user_id") @db.Uuid
+  refreshTokenHash String    @unique @map("refresh_token_hash") @db.VarChar(128)
+  clientDeviceName String?   @map("client_device_name") @db.VarChar(120)
+  clientTimezone   String?   @map("client_timezone") @db.VarChar(80)
+  expiresAt        DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt        DateTime? @map("revoked_at") @db.Timestamptz(6)
+  lastUsedAt       DateTime? @map("last_used_at") @db.Timestamptz(6)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("auth_sessions")
+}
+
+model Attachment {
+  id         String   @id @default(uuid()) @db.Uuid
+  ownerId    String   @map("owner_id") @db.Uuid
+  storageKey String   @map("storage_key") @db.VarChar(512)
+  fileName   String   @map("file_name") @db.VarChar(255)
+  mimeType   String   @map("mime_type") @db.VarChar(120)
+  sizeBytes  Int      @map("size_bytes")
+  purpose    String   @db.VarChar(32)
+  status     String   @default("pending") @db.VarChar(32)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  owner       User   @relation("AttachmentOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  avatarUsers User[] @relation("UserAvatar")
+
+  @@index([ownerId, purpose, status])
+  @@map("attachments")
+}
+
+model AuditLog {
+  id            String   @id @default(uuid()) @db.Uuid
+  actorId       String?  @map("actor_id") @db.Uuid
+  targetType    String?  @map("target_type") @db.VarChar(80)
+  targetId      String?  @map("target_id") @db.VarChar(120)
+  action        String   @db.VarChar(120)
+  result        String   @db.VarChar(20)
+  failureReason String?  @map("failure_reason") @db.VarChar(255)
+  requestId     String?  @map("request_id") @db.VarChar(120)
+  metadata      Json?
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  actor User? @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([requestId])
+  @@index([actorId, createdAt])
+  @@index([targetType, targetId])
+  @@map("audit_logs")
 }

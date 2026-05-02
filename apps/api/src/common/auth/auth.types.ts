@@ -1,5 +1,6 @@
 export type AuthenticatedUserContext = {
   accountStatus: 'active' | 'pending_verification' | 'disabled';
+  sessionId: string;
   userId: string;
 };
 

@@ -3,12 +3,12 @@ module.exports = {
   clearMocks: true,
   moduleFileExtensions: ['js', 'json', 'ts'],
   moduleNameMapper: {
-    '^@eiscord/shared$': '<rootDir>/../../packages/shared/src/index.ts',
+    '^@eiscord/shared$': '<rootDir>/../../packages/shared/dist/index.js',
   },
   rootDir: '.',
   testEnvironment: 'node',
   testMatch: ['<rootDir>/src/**/*.spec.ts'],
   transform: {
-    '^.+\\.ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.json' }],
+    '^.+\\.ts$': '<rootDir>/jest.transformer.cjs',
   },
 };
