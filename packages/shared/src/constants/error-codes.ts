@@ -5,6 +5,7 @@ export const ErrorCode = {
   PermissionDenied: 'PERMISSION_DENIED',
   ResourceNotFound: 'RESOURCE_NOT_FOUND',
   Conflict: 'CONFLICT',
+  PayloadTooLarge: 'PAYLOAD_TOO_LARGE',
   RateLimited: 'RATE_LIMITED',
   DependencyUnavailable: 'DEPENDENCY_UNAVAILABLE',
   InternalError: 'INTERNAL_ERROR',

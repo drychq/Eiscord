@@ -1,11 +1,9 @@
 import { randomUUID } from 'node:crypto';
 
 import { Injectable, NestMiddleware } from '@nestjs/common';
-import { NextFunction, Request, Response } from 'express';
+import { NextFunction, Response } from 'express';
 
-type RequestWithId = Request & {
-  requestId?: string;
-};
+import { RequestWithId } from './request.types';
 
 @Injectable()
 export class RequestIdMiddleware implements NestMiddleware {

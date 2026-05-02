@@ -70,6 +70,8 @@ curl http://localhost:3000/api/v1/health
 
 ## 当前范围
 
-本仓库当前只落地 `docs/dev/01-tech-stack-and-repo-structure.md` 对应的工程骨架。账号、好友、社区、频道、消息、权限、通知和语音状态等业务实现会按后续开发文档继续补充。
+本仓库当前落地 `docs/dev/01-tech-stack-and-repo-structure.md` 对应的工程骨架，以及 `docs/dev/02-system-architecture.md` 对应的架构底座：统一 API 响应与错误信封、请求 ID、Prisma 服务封装、审计服务骨架、鉴权/权限/限流守卫骨架、`/realtime` Socket.IO 网关和实时事件发布器。
+
+账号、好友、社区、频道、消息、权限计算、通知和语音状态等业务实现会按后续开发文档继续补充。当前默认 token verifier 不接受任何 access token，受控实时订阅也会在真实权限计算接入前拒绝。
 
 完整本地验证需要 Node.js、Corepack/pnpm 和 Docker。若 `docker` 不在 PATH 中，容器依赖服务需要等 Docker Desktop 安装并可用后再启动。
