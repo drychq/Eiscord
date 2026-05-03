@@ -99,12 +99,16 @@ describe('AuthService', () => {
     ).rejects.toMatchObject<AppError>({ code: ErrorCode.Conflict });
   });
 
-  it('logs in and returns access, refresh, user, and empty M2/M3 placeholders', async () => {
+  it('logs in and returns access, refresh, user, and M2 summaries', async () => {
     const hash = passwordService.hashPassword('StrongPass1');
     prisma.$queryRaw.mockResolvedValueOnce([userRecord({ passwordHash: hash })]);
     prisma.$queryRaw.mockResolvedValueOnce([
       { expiresAt: futureDate(), id: 'session-1', revokedAt: null, userId: 'user-1' },
     ]);
+    prisma.$queryRaw.mockResolvedValueOnce([friendshipRow()]);
+    prisma.$queryRaw.mockResolvedValueOnce([serverRow()]);
+    prisma.$queryRaw.mockResolvedValueOnce([]);
+    prisma.$queryRaw.mockResolvedValueOnce([]);
 
     const result = await service.login({
       login_identifier: 'alice@example.com',
@@ -114,8 +118,8 @@ describe('AuthService', () => {
     expect(result.access_token).toEqual(expect.any(String));
     expect(result.refresh_token).toEqual(expect.any(String));
     expect(result.user.user_id).toBe('user-1');
-    expect(result.friends).toEqual([]);
-    expect(result.servers).toEqual([]);
+    expect(result.friends).toMatchObject([{ friendship_id: 'friendship-1', status: 'accepted' }]);
+    expect(result.servers).toMatchObject([{ server_id: 'server-1', name: 'Course' }]);
     expect(result.unread).toEqual([]);
     expect(result.notifications).toEqual([]);
   });
@@ -148,6 +152,10 @@ describe('AuthService', () => {
         sessionUserId: 'user-1',
       },
     ]);
+    prisma.$queryRaw.mockResolvedValueOnce([]);
+    prisma.$queryRaw.mockResolvedValueOnce([]);
+    prisma.$queryRaw.mockResolvedValueOnce([]);
+    prisma.$queryRaw.mockResolvedValueOnce([]);
 
     const result = await service.refresh({ refresh_token: 'refresh-token-value' });
 
@@ -167,9 +175,9 @@ describe('AuthService', () => {
       },
     ]);
 
-    await expect(service.refresh({ refresh_token: 'refresh-token-value' })).rejects.toMatchObject<
-      AppError
-    >({ code: ErrorCode.AuthRequired });
+    await expect(
+      service.refresh({ refresh_token: 'refresh-token-value' }),
+    ).rejects.toMatchObject<AppError>({ code: ErrorCode.AuthRequired });
   });
 
   it('revokes the current session on logout', async () => {
@@ -202,4 +210,36 @@ function userRecord(overrides: Partial<UserRecord> = {}): UserRecord {
 
 function futureDate(): Date {
   return new Date(Date.now() + 60_000);
+}
+
+function friendshipRow() {
+  return {
+    addresseeId: 'user-2',
+    conversationId: 'conversation-1',
+    friendAccountStatus: 'active',
+    friendAvatarAttachmentId: null,
+    friendBio: null,
+    friendCreatedAt: now,
+    friendId: 'user-2',
+    friendNickname: 'bob',
+    friendPresenceStatus: 'offline',
+    friendUsername: 'bob',
+    friendshipId: 'friendship-1',
+    requesterId: 'user-1',
+    status: 'accepted',
+  };
+}
+
+function serverRow() {
+  return {
+    createdAt: now,
+    description: null,
+    iconAttachmentId: null,
+    id: 'server-1',
+    joinedAt: now,
+    memberStatus: 'active',
+    name: 'Course',
+    ownerId: 'user-1',
+    status: 'active',
+  };
 }

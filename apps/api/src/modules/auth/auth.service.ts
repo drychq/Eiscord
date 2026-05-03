@@ -8,6 +8,18 @@ import { AuthenticatedUserContext } from '../../common/auth/auth.types';
 import { AppError } from '../../common/errors/app-error';
 import { PrismaService } from '../../common/persistence/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import {
+  FriendshipRow,
+  FriendshipSummary,
+  toFriendshipSummary,
+} from '../friends/friends.presenter';
+import {
+  NotificationRow,
+  NotificationSummary,
+  toNotificationSummary,
+} from '../notifications/notifications.presenter';
+import { ReadStateRow, ReadStateSummary, toReadStateSummary } from '../messages/messages.presenter';
+import { ServerListRow, ServerSummary, toServerSummary } from '../servers/servers.presenter';
 import { toUserSummary, UserRecord, UserSummary } from '../users/user.presenter';
 import { LoginUserDto } from './dto/login-user.dto';
 import { RefreshSessionDto } from './dto/refresh-session.dto';
@@ -22,11 +34,11 @@ export type RegisterUserResponse = {
 
 export type LoginUserResponse = {
   access_token: string;
-  friends: unknown[];
-  notifications: unknown[];
+  friends: FriendshipSummary[];
+  notifications: NotificationSummary[];
   refresh_token: string;
-  servers: unknown[];
-  unread: unknown[];
+  servers: ServerSummary[];
+  unread: ReadStateSummary[];
   user: UserSummary;
 };
 
@@ -241,7 +253,11 @@ export class AuthService {
         targetType: 'auth_session',
       });
 
-      throw new AppError(ErrorCode.AuthRequired, 'Refresh token is invalid.', HttpStatus.UNAUTHORIZED);
+      throw new AppError(
+        ErrorCode.AuthRequired,
+        'Refresh token is invalid.',
+        HttpStatus.UNAUTHORIZED,
+      );
     }
 
     if (sessionRow.accountStatus !== 'active') {
@@ -308,23 +324,137 @@ export class AuthService {
     return { ok: true };
   }
 
-  private buildLoginResponse(user: UserRecord, sessionId: string, refreshToken: string): LoginUserResponse {
+  private async buildLoginResponse(
+    user: UserRecord,
+    sessionId: string,
+    refreshToken: string,
+  ): Promise<LoginUserResponse> {
+    const [friends, servers, notifications, unread] = await Promise.all([
+      this.listFriendSummaries(user.id),
+      this.listServerSummaries(user.id),
+      this.listNotificationSummaries(user.id),
+      this.listUnreadSummaries(user.id),
+    ]);
+
     return {
       access_token: this.tokenService.createAccessToken({
         accountStatus: toAccountStatus(user.accountStatus),
         sessionId,
         userId: user.id,
       }),
-      friends: [],
-      notifications: [],
+      friends,
+      notifications,
       refresh_token: refreshToken,
-      servers: [],
-      unread: [],
+      servers,
+      unread,
       user: toUserSummary(user),
     };
   }
 
-  private async recordLoginFailure(actorId: string | undefined, reason: string, requestId?: string) {
+  private async listFriendSummaries(userId: string): Promise<FriendshipSummary[]> {
+    const rows = await this.prisma.$queryRaw<FriendshipRow[]>`
+      SELECT
+        f.id AS "friendshipId",
+        f.requester_id AS "requesterId",
+        f.addressee_id AS "addresseeId",
+        f.status,
+        dc.id AS "conversationId",
+        other_user.id AS "friendId",
+        other_user.username AS "friendUsername",
+        other_user.nickname AS "friendNickname",
+        other_user.avatar_attachment_id AS "friendAvatarAttachmentId",
+        other_user.bio AS "friendBio",
+        other_user.account_status AS "friendAccountStatus",
+        other_user.presence_status AS "friendPresenceStatus",
+        other_user.created_at AS "friendCreatedAt"
+      FROM friendships f
+      INNER JOIN users other_user
+        ON other_user.id = CASE
+          WHEN f.requester_id = ${userId}::uuid THEN f.addressee_id
+          ELSE f.requester_id
+        END
+      LEFT JOIN direct_conversations dc
+        ON dc.participant_a_id = LEAST(f.requester_id, f.addressee_id)
+       AND dc.participant_b_id = GREATEST(f.requester_id, f.addressee_id)
+      WHERE (f.requester_id = ${userId}::uuid OR f.addressee_id = ${userId}::uuid)
+        AND f.status IN ('pending', 'accepted', 'rejected')
+      ORDER BY f.updated_at DESC
+    `;
+
+    return rows.map((row) => toFriendshipSummary(row, userId));
+  }
+
+  private async listServerSummaries(userId: string): Promise<ServerSummary[]> {
+    const rows = await this.prisma.$queryRaw<ServerListRow[]>`
+      SELECT
+        s.id,
+        s.owner_id AS "ownerId",
+        s.name,
+        s.icon_attachment_id AS "iconAttachmentId",
+        s.description,
+        s.status,
+        s.created_at AS "createdAt",
+        m.joined_at AS "joinedAt",
+        m.member_status AS "memberStatus"
+      FROM memberships m
+      INNER JOIN servers s ON s.id = m.server_id
+      WHERE m.user_id = ${userId}::uuid
+        AND m.member_status IN ('active', 'muted')
+        AND s.status = 'active'
+      ORDER BY m.joined_at DESC
+    `;
+
+    return rows.map(toServerSummary);
+  }
+
+  private async listNotificationSummaries(userId: string): Promise<NotificationSummary[]> {
+    const rows = await this.prisma.$queryRaw<NotificationRow[]>`
+      SELECT
+        id,
+        user_id AS "userId",
+        type,
+        source_type AS "sourceType",
+        source_id AS "sourceId",
+        content_preview AS "contentPreview",
+        is_read AS "isRead",
+        dedupe_key AS "dedupeKey",
+        created_at AS "createdAt",
+        read_at AS "readAt"
+      FROM notifications
+      WHERE user_id = ${userId}::uuid
+        AND is_read = false
+      ORDER BY created_at DESC
+      LIMIT 20
+    `;
+
+    return rows.map(toNotificationSummary);
+  }
+
+  private async listUnreadSummaries(userId: string): Promise<ReadStateSummary[]> {
+    const rows = await this.prisma.$queryRaw<ReadStateRow[]>`
+      SELECT
+        user_id AS "userId",
+        scope_type AS "scopeType",
+        channel_id AS "channelId",
+        conversation_id AS "conversationId",
+        last_read_message_id AS "lastReadMessageId",
+        unread_count AS "unreadCount",
+        updated_at AS "updatedAt"
+      FROM read_states
+      WHERE user_id = ${userId}::uuid
+        AND unread_count > 0
+      ORDER BY updated_at DESC
+      LIMIT 100
+    `;
+
+    return rows.map(toReadStateSummary);
+  }
+
+  private async recordLoginFailure(
+    actorId: string | undefined,
+    reason: string,
+    requestId?: string,
+  ) {
     await this.auditService.record({
       action: 'LoginUser',
       actorId,
@@ -338,7 +468,11 @@ export class AuthService {
 }
 
 function invalidCredentialsError(): AppError {
-  return new AppError(ErrorCode.InvalidCredentials, 'Invalid credentials.', HttpStatus.UNAUTHORIZED);
+  return new AppError(
+    ErrorCode.InvalidCredentials,
+    'Invalid credentials.',
+    HttpStatus.UNAUTHORIZED,
+  );
 }
 
 function normalizeUsername(value: string): string {
