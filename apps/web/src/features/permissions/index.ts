@@ -1,1 +1,1 @@
-export const permissionsFeatureKey = 'permissions';
+export { PermissionsPage } from './PermissionsPage';

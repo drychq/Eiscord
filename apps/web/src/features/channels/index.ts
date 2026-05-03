@@ -1,1 +1,2 @@
-export const channelsFeatureKey = 'channels';
+export { fetchServerChannels } from './channels-api';
+export type { ChannelSummary } from './channels-api';

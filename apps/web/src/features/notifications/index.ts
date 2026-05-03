@@ -1,1 +1,1 @@
-export const notificationsFeatureKey = 'notifications';
+export { NotificationsPage } from './NotificationsPage';

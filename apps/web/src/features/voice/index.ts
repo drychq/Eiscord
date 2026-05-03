@@ -1,1 +1,1 @@
-export const voiceFeatureKey = 'voice';
+export { VoicePage } from './VoicePage';

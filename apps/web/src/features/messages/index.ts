@@ -1,1 +1,1 @@
-export const messagesFeatureKey = 'messages';
+export { MessagesPage } from './MessagesPage';
