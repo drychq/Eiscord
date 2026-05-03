@@ -1,0 +1,43 @@
+import { Body, Controller, Delete, Param, ParseUUIDPipe, Patch, Post, Req } from '@nestjs/common';
+
+import { CurrentUser } from '../../common/auth/current-user.decorator';
+import type { AuthenticatedUserContext } from '../../common/auth/auth.types';
+import { getRequestId } from '../../common/request/request-id.util';
+import type { AuthenticatedRequest } from '../../common/request/request.types';
+import { ChannelsService } from './channels.service';
+import { CreateChannelDto } from './dto/create-channel.dto';
+import { UpdateChannelDto } from './dto/update-channel.dto';
+
+@Controller()
+export class ChannelsController {
+  constructor(private readonly channelsService: ChannelsService) {}
+
+  @Post('servers/:server_id/channels')
+  createChannel(
+    @CurrentUser() user: AuthenticatedUserContext,
+    @Param('server_id', ParseUUIDPipe) serverId: string,
+    @Body() dto: CreateChannelDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.channelsService.createChannel(user, serverId, dto, getRequestId(request));
+  }
+
+  @Patch('channels/:channel_id')
+  updateChannel(
+    @CurrentUser() user: AuthenticatedUserContext,
+    @Param('channel_id', ParseUUIDPipe) channelId: string,
+    @Body() dto: UpdateChannelDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.channelsService.updateChannel(user, channelId, dto, getRequestId(request));
+  }
+
+  @Delete('channels/:channel_id')
+  deleteChannel(
+    @CurrentUser() user: AuthenticatedUserContext,
+    @Param('channel_id', ParseUUIDPipe) channelId: string,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.channelsService.deleteChannel(user, channelId, getRequestId(request));
+  }
+}

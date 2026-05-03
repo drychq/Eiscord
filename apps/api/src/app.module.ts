@@ -9,6 +9,7 @@ import { validateEnvironment } from './common/config/env.validation';
 import { PersistenceModule } from './common/persistence/persistence.module';
 import { RateLimitGuard } from './common/rate-limit/rate-limit.guard';
 import { AuditModule } from './modules/audit/audit.module';
+import { AttachmentsModule } from './modules/attachments/attachments.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { ChannelsModule } from './modules/channels/channels.module';
 import { FriendsModule } from './modules/friends/friends.module';
@@ -29,6 +30,7 @@ import { VoiceModule } from './modules/voice/voice.module';
     }),
     PersistenceModule,
     HealthModule,
+    AttachmentsModule,
     AuthModule,
     UsersModule,
     FriendsModule,
