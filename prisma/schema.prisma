@@ -8,22 +8,34 @@ datasource db {
 }
 
 model User {
-  id                 String        @id @default(uuid()) @db.Uuid
-  username           String        @unique @db.VarChar(32)
-  emailOrPhone       String        @unique @map("email_or_phone") @db.VarChar(320)
-  passwordHash       String        @map("password_hash") @db.VarChar(256)
-  nickname           String        @db.VarChar(64)
-  avatarAttachmentId String?       @map("avatar_attachment_id") @db.Uuid
-  bio                String?       @db.VarChar(280)
-  accountStatus      String        @default("active") @map("account_status") @db.VarChar(32)
-  presenceStatus     String        @default("offline") @map("presence_status") @db.VarChar(32)
-  createdAt          DateTime      @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt          DateTime      @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id                 String   @id @default(uuid()) @db.Uuid
+  username           String   @unique @db.VarChar(32)
+  emailOrPhone       String   @unique @map("email_or_phone") @db.VarChar(320)
+  passwordHash       String   @map("password_hash") @db.VarChar(256)
+  nickname           String   @db.VarChar(64)
+  avatarAttachmentId String?  @map("avatar_attachment_id") @db.Uuid
+  bio                String?  @db.VarChar(280)
+  accountStatus      String   @default("active") @map("account_status") @db.VarChar(32)
+  presenceStatus     String   @default("offline") @map("presence_status") @db.VarChar(32)
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  avatarAttachment Attachment?  @relation("UserAvatar", fields: [avatarAttachmentId], references: [id], onDelete: SetNull)
-  attachments      Attachment[] @relation("AttachmentOwner")
-  auditLogs        AuditLog[]   @relation("AuditActor")
+  avatarAttachment Attachment?          @relation("UserAvatar", fields: [avatarAttachmentId], references: [id], onDelete: SetNull)
+  attachments      Attachment[]         @relation("AttachmentOwner")
+  auditLogs        AuditLog[]           @relation("AuditActor")
   sessions         AuthSession[]
+  friendshipsSent  Friendship[]         @relation("FriendshipRequester")
+  friendshipsInbox Friendship[]         @relation("FriendshipAddressee")
+  dmParticipantA   DirectConversation[] @relation("DirectConversationA")
+  dmParticipantB   DirectConversation[] @relation("DirectConversationB")
+  ownedServers     Server[]             @relation("ServerOwner")
+  createdInvites   Invitation[]         @relation("InvitationCreator")
+  memberships      Membership[]
+  assignedRoles    MembershipRole[]     @relation("MembershipRoleAssigner")
+  sentMessages     Message[]            @relation("MessageSender")
+  mentionedIn      MessageMention[]
+  readStates       ReadState[]
+  notifications    Notification[]
 
   @@index([accountStatus])
   @@map("users")
@@ -59,11 +71,256 @@ model Attachment {
   status     String   @default("pending") @db.VarChar(32)
   createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  owner       User   @relation("AttachmentOwner", fields: [ownerId], references: [id], onDelete: Cascade)
-  avatarUsers User[] @relation("UserAvatar")
+  owner       User                @relation("AttachmentOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  avatarUsers User[]              @relation("UserAvatar")
+  iconServers Server[]            @relation("ServerIcon")
+  messages    MessageAttachment[]
 
   @@index([ownerId, purpose, status])
   @@map("attachments")
+}
+
+model Friendship {
+  id          String   @id @default(uuid()) @db.Uuid
+  requesterId String   @map("requester_id") @db.Uuid
+  addresseeId String   @map("addressee_id") @db.Uuid
+  status      String   @default("pending") @db.VarChar(32)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  requester User @relation("FriendshipRequester", fields: [requesterId], references: [id], onDelete: Cascade)
+  addressee User @relation("FriendshipAddressee", fields: [addresseeId], references: [id], onDelete: Cascade)
+
+  @@index([requesterId, addresseeId])
+  @@index([addresseeId, status])
+  @@map("friendships")
+}
+
+model DirectConversation {
+  id             String   @id @default(uuid()) @db.Uuid
+  participantAId String   @map("participant_a_id") @db.Uuid
+  participantBId String   @map("participant_b_id") @db.Uuid
+  lastMessageId  String?  @map("last_message_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  participantA User        @relation("DirectConversationA", fields: [participantAId], references: [id], onDelete: Cascade)
+  participantB User        @relation("DirectConversationB", fields: [participantBId], references: [id], onDelete: Cascade)
+  lastMessage  Message?    @relation("DirectConversationLastMessage", fields: [lastMessageId], references: [id], onDelete: SetNull)
+  messages     Message[]   @relation("DirectConversationMessages")
+  readStates   ReadState[]
+
+  @@unique([participantAId, participantBId])
+  @@index([participantBId])
+  @@map("direct_conversations")
+}
+
+model Server {
+  id               String   @id @default(uuid()) @db.Uuid
+  ownerId          String   @map("owner_id") @db.Uuid
+  name             String   @db.VarChar(80)
+  iconAttachmentId String?  @map("icon_attachment_id") @db.Uuid
+  description      String?  @db.VarChar(280)
+  status           String   @default("active") @db.VarChar(32)
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  owner          User         @relation("ServerOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  iconAttachment Attachment?  @relation("ServerIcon", fields: [iconAttachmentId], references: [id], onDelete: SetNull)
+  invitations    Invitation[]
+  memberships    Membership[]
+  roles          Role[]
+  channels       Channel[]
+
+  @@index([ownerId, status])
+  @@map("servers")
+}
+
+model Invitation {
+  id          String    @id @default(uuid()) @db.Uuid
+  serverId    String    @map("server_id") @db.Uuid
+  code        String    @unique @db.VarChar(32)
+  createdById String    @map("created_by_id") @db.Uuid
+  expiresAt   DateTime? @map("expires_at") @db.Timestamptz(6)
+  maxUses     Int?      @map("max_uses")
+  usedCount   Int       @default(0) @map("used_count")
+  status      String    @default("active") @db.VarChar(32)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  server    Server @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  createdBy User   @relation("InvitationCreator", fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([serverId, status])
+  @@map("invitations")
+}
+
+model Membership {
+  id           String   @id @default(uuid()) @db.Uuid
+  serverId     String   @map("server_id") @db.Uuid
+  userId       String   @map("user_id") @db.Uuid
+  nickInServer String?  @map("nick_in_server") @db.VarChar(64)
+  memberStatus String   @default("active") @map("member_status") @db.VarChar(32)
+  joinedAt     DateTime @default(now()) @map("joined_at") @db.Timestamptz(6)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  server Server           @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  user   User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  roles  MembershipRole[]
+
+  @@unique([serverId, userId])
+  @@index([userId, memberStatus])
+  @@map("memberships")
+}
+
+model Role {
+  id             String   @id @default(uuid()) @db.Uuid
+  serverId       String   @map("server_id") @db.Uuid
+  name           String   @db.VarChar(80)
+  permissionBits BigInt   @default(0) @map("permission_bits")
+  color          String?  @db.VarChar(20)
+  priority       Int      @default(0)
+  isDefault      Boolean  @default(false) @map("is_default")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  server      Server           @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  memberships MembershipRole[]
+
+  @@index([serverId, priority])
+  @@index([serverId, isDefault])
+  @@map("roles")
+}
+
+model MembershipRole {
+  membershipId String   @map("membership_id") @db.Uuid
+  roleId       String   @map("role_id") @db.Uuid
+  assignedById String?  @map("assigned_by_id") @db.Uuid
+  assignedAt   DateTime @default(now()) @map("assigned_at") @db.Timestamptz(6)
+
+  membership Membership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  assignedBy User?      @relation("MembershipRoleAssigner", fields: [assignedById], references: [id], onDelete: SetNull)
+
+  @@id([membershipId, roleId])
+  @@index([roleId])
+  @@map("membership_roles")
+}
+
+model Channel {
+  id        String   @id @default(uuid()) @db.Uuid
+  serverId  String   @map("server_id") @db.Uuid
+  name      String   @db.VarChar(80)
+  type      String   @db.VarChar(20)
+  topic     String?  @db.VarChar(280)
+  sortOrder Int      @default(0) @map("sort_order")
+  status    String   @default("active") @db.VarChar(32)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  server     Server      @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  messages   Message[]
+  readStates ReadState[]
+
+  @@index([serverId, sortOrder])
+  @@index([serverId, type])
+  @@map("channels")
+}
+
+model Message {
+  id              String    @id @default(uuid()) @db.Uuid
+  scopeType       String    @map("scope_type") @db.VarChar(20)
+  channelId       String?   @map("channel_id") @db.Uuid
+  conversationId  String?   @map("conversation_id") @db.Uuid
+  senderId        String    @map("sender_id") @db.Uuid
+  content         String?   @db.VarChar(4000)
+  visibility      String    @default("visible") @db.VarChar(32)
+  clientMessageId String?   @map("client_message_id") @db.VarChar(120)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  channel                       Channel?             @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  conversation                  DirectConversation?  @relation("DirectConversationMessages", fields: [conversationId], references: [id], onDelete: Cascade)
+  sender                        User                 @relation("MessageSender", fields: [senderId], references: [id], onDelete: Cascade)
+  directConversationLastMessage DirectConversation[] @relation("DirectConversationLastMessage")
+  attachments                   MessageAttachment[]
+  mentions                      MessageMention[]
+  readStates                    ReadState[]
+
+  @@unique([senderId, channelId, clientMessageId])
+  @@unique([senderId, conversationId, clientMessageId])
+  @@index([channelId, createdAt])
+  @@index([conversationId, createdAt])
+  @@index([senderId, clientMessageId])
+  @@map("messages")
+}
+
+model MessageAttachment {
+  messageId    String   @map("message_id") @db.Uuid
+  attachmentId String   @map("attachment_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  message    Message    @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  attachment Attachment @relation(fields: [attachmentId], references: [id], onDelete: Cascade)
+
+  @@id([messageId, attachmentId])
+  @@index([attachmentId])
+  @@map("message_attachments")
+}
+
+model MessageMention {
+  messageId       String   @map("message_id") @db.Uuid
+  mentionedUserId String   @map("mentioned_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  message       Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  mentionedUser User    @relation(fields: [mentionedUserId], references: [id], onDelete: Cascade)
+
+  @@id([messageId, mentionedUserId])
+  @@index([mentionedUserId])
+  @@map("message_mentions")
+}
+
+model ReadState {
+  id                String   @id @default(uuid()) @db.Uuid
+  userId            String   @map("user_id") @db.Uuid
+  scopeType         String   @map("scope_type") @db.VarChar(20)
+  channelId         String?  @map("channel_id") @db.Uuid
+  conversationId    String?  @map("conversation_id") @db.Uuid
+  lastReadMessageId String?  @map("last_read_message_id") @db.Uuid
+  unreadCount       Int      @default(0) @map("unread_count")
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user            User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  channel         Channel?            @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  conversation    DirectConversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  lastReadMessage Message?            @relation(fields: [lastReadMessageId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, channelId])
+  @@unique([userId, conversationId])
+  @@index([userId, unreadCount])
+  @@map("read_states")
+}
+
+model Notification {
+  id             String    @id @default(uuid()) @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
+  type           String    @db.VarChar(40)
+  sourceType     String    @map("source_type") @db.VarChar(40)
+  sourceId       String    @map("source_id") @db.Uuid
+  contentPreview String    @map("content_preview") @db.VarChar(280)
+  isRead         Boolean   @default(false) @map("is_read")
+  dedupeKey      String    @unique @map("dedupe_key") @db.VarChar(160)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  readAt         DateTime? @map("read_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead, createdAt])
+  @@map("notifications")
 }
 
 model AuditLog {
