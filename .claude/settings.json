@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C /home/chq/Desktop/Eiscord diff --stat d0762de..851f6af)",
+      "Bash(git -C /home/chq/Desktop/Eiscord diff --stat 851f6af..42aa5cd)",
+      "Bash(git -C /home/chq/Desktop/Eiscord branch -a)",
+      "Bash(npx tsc *)",
+      "Bash(pnpm --filter web test --run)",
+      "Bash(pnpm --filter web build)",
+      "Bash(git add *)",
+      "Bash(git commit *)"
+    ]
+  }
+}
