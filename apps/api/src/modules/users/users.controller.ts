@@ -5,6 +5,7 @@ import type { AuthenticatedUserContext } from '../../common/auth/auth.types';
 import { getRequestId } from '../../common/request/request-id.util';
 import type { AuthenticatedRequest } from '../../common/request/request.types';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { UpdatePresenceDto } from './dto/update-presence.dto';
 import { UsersService } from './users.service';
 
 @Controller('users')
@@ -23,5 +24,14 @@ export class UsersController {
     @Req() request: AuthenticatedRequest,
   ) {
     return this.usersService.updateProfile(user, dto, getRequestId(request));
+  }
+
+  @Patch('me/presence')
+  updatePresence(
+    @CurrentUser() user: AuthenticatedUserContext,
+    @Body() dto: UpdatePresenceDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.usersService.updatePresence(user, dto, getRequestId(request));
   }
 }

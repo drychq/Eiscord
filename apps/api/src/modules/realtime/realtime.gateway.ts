@@ -1,4 +1,4 @@
-import { HttpStatus, Inject, Logger } from '@nestjs/common';
+import { forwardRef, HttpStatus, Inject, Logger, OnModuleDestroy } from '@nestjs/common';
 import {
   ConnectedSocket,
   MessageBody,
@@ -24,10 +24,13 @@ import type { AuthenticatedUserContext, TokenVerifier } from '../../common/auth/
 import { extractBearerToken } from '../../common/auth/token.utils';
 import { AppError } from '../../common/errors/app-error';
 import { createApiErrorResponse, createApiSuccessResponse } from '../../common/http/api-response.factory';
+import { PrismaService } from '../../common/persistence/prisma.service';
 import { PermissionAction, PermissionResourceType } from '../../common/permissions/permission.types';
 import { PermissionsService } from '../../common/permissions/permissions.service';
 import { isRecord } from '../../common/utils/is-record';
 import { AuditService } from '../audit/audit.service';
+import { VoiceService } from '../voice/voice.service';
+import { PresenceService } from './presence.service';
 import { buildRealtimeRoom, buildUserRoom } from './realtime.rooms';
 import { RealtimePublisher } from './realtime.publisher';
 
@@ -46,14 +49,19 @@ type SocketSuccessPayload = {
   server_time?: string;
 };
 
+const PRESENCE_SWEEP_INTERVAL_MS = 5_000;
+
 @WebSocketGateway({
   cors: {
     origin: true,
   },
   namespace: '/realtime',
 })
-export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit {
+export class RealtimeGateway
+  implements OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit, OnModuleDestroy
+{
   private readonly logger = new Logger(RealtimeGateway.name);
+  private presenceSweepTimer: ReturnType<typeof setInterval> | null = null;
 
   @WebSocketServer()
   private server!: Server;
@@ -61,12 +69,28 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
   constructor(
     @Inject(TOKEN_VERIFIER) private readonly tokenVerifier: TokenVerifier,
     private readonly permissionsService: PermissionsService,
+    private readonly prisma: PrismaService,
     private readonly publisher: RealtimePublisher,
     private readonly auditService: AuditService,
+    private readonly presenceService: PresenceService,
+    @Inject(forwardRef(() => VoiceService)) private readonly voiceService: VoiceService,
   ) {}
 
   afterInit(server: Server) {
     this.publisher.bindServer(server);
+
+    if (process.env.NODE_ENV !== 'test' && !this.presenceSweepTimer) {
+      this.presenceSweepTimer = setInterval(() => {
+        void this.sweepPresenceAndVoice();
+      }, PRESENCE_SWEEP_INTERVAL_MS);
+    }
+  }
+
+  onModuleDestroy() {
+    if (this.presenceSweepTimer) {
+      clearInterval(this.presenceSweepTimer);
+      this.presenceSweepTimer = null;
+    }
   }
 
   async handleConnection(socket: RealtimeSocket) {
@@ -90,6 +114,7 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     socket.data.user = user;
     socket.data.connectedAt = new Date().toISOString();
     socket.join(buildUserRoom(user.userId));
+    await this.presenceService.trackConnection(user, socket.id, requestId);
 
     await this.auditService.record({
       action: 'RealtimeConnect',
@@ -107,6 +132,8 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     if (!user) {
       return;
     }
+
+    await this.presenceService.markDisconnected(user, socket.id);
 
     await this.auditService.record({
       action: 'RealtimeDisconnect',
@@ -203,8 +230,19 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
   }
 
   @SubscribeMessage('Heartbeat')
-  handleHeartbeat(@ConnectedSocket() socket: RealtimeSocket, @MessageBody() payload: unknown) {
+  async handleHeartbeat(@ConnectedSocket() socket: RealtimeSocket, @MessageBody() payload: unknown) {
     const requestId = getSocketRequestId(socket);
+    const user = socket.data.user;
+
+    if (!user) {
+      return this.emitSocketError(
+        socket,
+        ErrorCode.AuthRequired,
+        'Authentication is required.',
+        requestId,
+      );
+    }
+
     const parsed = realtimeHeartbeatPayloadSchema.safeParse(payload ?? {});
 
     if (!parsed.success) {
@@ -218,9 +256,57 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     }
 
     this.logger.debug(`Heartbeat received from socket ${socket.id}`);
+    await this.presenceService.heartbeat(user, socket.id);
 
     return createApiSuccessResponse<SocketSuccessPayload>(
       { ok: true, server_time: new Date().toISOString() },
+      requestId,
+    );
+  }
+
+  @SubscribeMessage('SyncState')
+  async handleSyncState(
+    @ConnectedSocket() socket: RealtimeSocket,
+  ) {
+    const user = socket.data.user;
+    const requestId = getSocketRequestId(socket);
+
+    if (!user) {
+      return this.emitSocketError(
+        socket,
+        ErrorCode.AuthRequired,
+        'Authentication is required.',
+        requestId,
+      );
+    }
+
+    const unreadRows = await this.prisma.$queryRaw<Array<{
+      channelId: string | null;
+      conversationId: string | null;
+      unreadCount: number;
+    }>>`
+      SELECT
+        channel_id AS "channelId",
+        conversation_id AS "conversationId",
+        unread_count AS "unreadCount"
+      FROM read_states
+      WHERE user_id = ${user.userId}::uuid
+        AND unread_count > 0
+      ORDER BY updated_at DESC
+      LIMIT 100
+    `;
+
+    const activeSession = await this.voiceService.getActiveSessionForUser(user.userId);
+
+    return createApiSuccessResponse(
+      {
+        ok: true,
+        server_time: new Date().toISOString(),
+        state: {
+          unreads: unreadRows,
+          voice_session: activeSession ?? null,
+        },
+      },
       requestId,
     );
   }
@@ -248,6 +334,17 @@ export class RealtimeGateway implements OnGatewayConnection, OnGatewayDisconnect
     const response = createApiErrorResponse({ code, message, requestId, details });
     socket.emit('Error', response);
     return response;
+  }
+
+  private async sweepPresenceAndVoice() {
+    const offlineUserIds = await this.presenceService.sweepExpiredPresence();
+
+    if (offlineUserIds.length > 0) {
+      await this.voiceService.releaseUsersActiveSessions(
+        offlineUserIds,
+        'disconnect_timeout',
+      );
+    }
   }
 }
 

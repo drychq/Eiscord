@@ -3,11 +3,13 @@ import { ErrorCode } from '@eiscord/shared';
 import { AppError } from '../../common/errors/app-error';
 import { PrismaService } from '../../common/persistence/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { PresenceService } from '../realtime/presence.service';
 import type { UserRecord } from './user.presenter';
 import { UsersService } from './users.service';
 
 describe('UsersService', () => {
   let auditService: jest.Mocked<AuditService>;
+  let presenceService: jest.Mocked<PresenceService>;
   let prisma: { $queryRaw: jest.Mock };
   let service: UsersService;
 
@@ -15,10 +17,17 @@ describe('UsersService', () => {
     auditService = {
       record: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<AuditService>;
+    presenceService = {
+      updatePresence: jest.fn(),
+    } as unknown as jest.Mocked<PresenceService>;
     prisma = {
       $queryRaw: jest.fn(),
     };
-    service = new UsersService(auditService, prisma as unknown as PrismaService);
+    service = new UsersService(
+      auditService,
+      presenceService,
+      prisma as unknown as PrismaService,
+    );
   });
 
   it('returns the current user profile', async () => {
@@ -73,6 +82,33 @@ describe('UsersService', () => {
 
     expect(auditService.record).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'UpdateProfile', result: 'failure' }),
+    );
+  });
+
+  it('updates presence through the realtime presence service', async () => {
+    presenceService.updatePresence.mockResolvedValueOnce({
+      account_status: 'active',
+      avatar_attachment_id: null,
+      bio: null,
+      created_at: '2026-05-02T00:00:00.000Z',
+      nickname: 'alice',
+      presence_status: 'idle',
+      user_id: 'user-1',
+      username: 'alice',
+    });
+
+    await expect(
+      service.updatePresence(
+        { accountStatus: 'active', sessionId: 'session-1', userId: 'user-1' },
+        { desired_status: 'idle' },
+        'request-1',
+      ),
+    ).resolves.toMatchObject({ presence_status: 'idle' });
+
+    expect(presenceService.updatePresence).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 'user-1' }),
+      'idle',
+      'request-1',
     );
   });
 });

@@ -6,6 +6,8 @@ import { AuthenticatedUserContext } from '../../common/auth/auth.types';
 import { AppError } from '../../common/errors/app-error';
 import { PrismaService } from '../../common/persistence/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { PresenceService } from '../realtime/presence.service';
+import { UpdatePresenceDto } from './dto/update-presence.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { toUserSummary, UserRecord, UserSummary } from './user.presenter';
 
@@ -17,6 +19,7 @@ type AttachmentLookupRow = {
 export class UsersService {
   constructor(
     private readonly auditService: AuditService,
+    private readonly presenceService: PresenceService,
     private readonly prisma: PrismaService,
   ) {}
 
@@ -126,6 +129,29 @@ export class UsersService {
     });
 
     return toUserSummary(updated);
+  }
+
+  async updatePresence(
+    user: AuthenticatedUserContext,
+    dto: UpdatePresenceDto,
+    requestId?: string,
+  ): Promise<UserSummary> {
+    const summary = await this.presenceService.updatePresence(
+      user,
+      dto.desired_status,
+      requestId,
+    );
+
+    await this.auditService.record({
+      action: 'UpdatePresence',
+      actorId: user.userId,
+      requestId,
+      result: 'success',
+      targetId: user.userId,
+      targetType: 'user',
+    });
+
+    return summary;
   }
 
   private async getUserRecord(userId: string): Promise<UserRecord | null> {
