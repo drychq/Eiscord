@@ -5,6 +5,7 @@ const channelSummarySchema = z.object({
   channel_id: z.string().uuid(),
   created_at: z.string(),
   name: z.string(),
+  permission_overwrites: z.array(z.unknown()).default([]),
   server_id: z.string().uuid(),
   sort_order: z.number(),
   status: z.string(),

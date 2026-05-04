@@ -7,6 +7,15 @@ export {
   useCreateServer,
   useJoinServer,
   useLeaveServer,
+  useCreateRole,
+  useUpdateRole,
+  useDeleteRole,
+  useAssignRole,
+  useRemoveRole,
+  useManageMember,
+  useCreateChannel,
+  useUpdateChannel,
+  useDeleteChannel,
 } from './use-servers-queries';
 export {
   fetchServers,
@@ -15,5 +24,23 @@ export {
   joinServer,
   leaveServer,
   fetchServerMembers,
+  fetchServerRoles,
+  manageMember,
+  createRole,
+  updateRole,
+  deleteRole,
+  assignRole,
+  removeRole,
+  createChannel,
+  updateChannel,
+  deleteChannel,
 } from './servers-api';
-export type { ServerSummary, ServerDetail, ChannelSummary, MemberSummary, RoleSummary } from './servers-api';
+export type {
+  ServerSummary,
+  ServerDetail,
+  ChannelSummary,
+  MemberSummary,
+  RoleSummary,
+  ManageMemberAction,
+  PermissionOverwriteInput,
+} from './servers-api';

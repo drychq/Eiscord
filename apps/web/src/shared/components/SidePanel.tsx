@@ -1,5 +1,6 @@
 import { NavLink, useParams, useNavigate } from 'react-router-dom';
 import { Hash, UserPlus, Volume2, Settings } from 'lucide-react';
+import { PermissionBit, hasPermissionBit } from '@eiscord/shared';
 import { useWorkspaceStore } from '../state/use-workspace-store';
 import { useServerDetail } from '../../features/servers/use-servers-queries';
 import { useDmConversations } from '../../features/friends/use-friends-queries';
@@ -15,8 +16,31 @@ export function SidePanel() {
   if (serverId) {
     if (serverLoading) return <aside className="channel-panel" aria-label="频道列表"><Spinner /></aside>;
 
-    const textChannels = server?.channels.filter((c) => c.type === 'text') ?? [];
-    const voiceChannels = server?.channels.filter((c) => c.type === 'voice') ?? [];
+    const roles = server?.roles ?? [];
+    const currentRoleIds = server?.current_member?.role_ids ?? [];
+    const currentRoles = roles.filter((r) => currentRoleIds.includes(r.role_id));
+    const currentPerms = currentRoles.reduce(
+      (acc, r) => acc | BigInt(r.permission_bits),
+      BigInt(0),
+    );
+    const isOwner = server?.owner_id === server?.current_member?.user?.user_id;
+    const canManage =
+      isOwner ||
+      hasPermissionBit(currentPerms, PermissionBit.ManageRole) ||
+      hasPermissionBit(currentPerms, PermissionBit.ManageMember) ||
+      hasPermissionBit(currentPerms, PermissionBit.ManageChannel);
+
+    const allChannels = server?.channels ?? [];
+    const textChannels = allChannels.filter(
+      (c) =>
+        (c.type === 'text' || c.type === 'TEXT') &&
+        channelVisible(c, currentPerms, currentRoleIds, isOwner),
+    );
+    const voiceChannels = allChannels.filter(
+      (c) =>
+        (c.type === 'voice' || c.type === 'VOICE') &&
+        channelVisible(c, currentPerms, currentRoleIds, isOwner),
+    );
 
     return (
       <aside className="channel-panel" aria-label="频道与私聊列表">
@@ -25,14 +49,16 @@ export function SidePanel() {
             <span className="eyebrow">社区</span>
             <h1>{server?.name ?? `社区 #${serverId.slice(0, 8)}`}</h1>
           </div>
-          <button
-            className="icon-button"
-            type="button"
-            aria-label="社区设置"
-            onClick={() => setServerSettingsOpen(!isServerSettingsOpen)}
-          >
-            <Settings size={18} />
-          </button>
+          {canManage && (
+            <button
+              className="icon-button"
+              type="button"
+              aria-label="社区设置"
+              onClick={() => setServerSettingsOpen(!isServerSettingsOpen)}
+            >
+              <Settings size={18} />
+            </button>
+          )}
         </div>
 
         <section className="channel-section">
@@ -119,4 +145,33 @@ export function SidePanel() {
       </section>
     </aside>
   );
+}
+
+function channelVisible(
+  channel: {
+    channel_id: string;
+    permission_overwrites?: Array<{
+      target_id: string;
+      target_type: string;
+      allow_bits: string;
+      deny_bits: string;
+    }>;
+  },
+  currentPerms: bigint,
+  currentRoleIds: string[],
+  isOwner: boolean,
+): boolean {
+  if (isOwner) return true;
+  if (hasPermissionBit(currentPerms, PermissionBit.ManageChannel)) return true;
+
+  const overwrites = channel.permission_overwrites ?? [];
+
+  for (const ow of overwrites) {
+    if (ow.target_type === 'role' && currentRoleIds.includes(ow.target_id)) {
+      if (hasPermissionBit(ow.deny_bits, PermissionBit.ViewChannel)) return false;
+      if (hasPermissionBit(ow.allow_bits, PermissionBit.ViewChannel)) return true;
+    }
+  }
+
+  return hasPermissionBit(currentPerms, PermissionBit.ViewChannel);
 }

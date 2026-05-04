@@ -16,6 +16,17 @@ const channelSummarySchema = z.object({
   channel_id: z.string().uuid(),
   created_at: z.string(),
   name: z.string(),
+  permission_overwrites: z
+    .array(
+      z.object({
+        allow_bits: z.string(),
+        deny_bits: z.string(),
+        overwrite_id: z.string().uuid(),
+        target_id: z.string().uuid(),
+        target_type: z.string(),
+      }),
+    )
+    .default([]),
   server_id: z.string().uuid(),
   sort_order: z.number(),
   status: z.string(),
@@ -117,5 +128,138 @@ export function leaveServer(serverId: string): Promise<{ ok: true }> {
 export function fetchServerMembers(serverId: string): Promise<MemberSummary[]> {
   return request<MemberSummary[]>('GET', `/servers/${serverId}/members`, {
     schema: z.array(memberSummarySchema),
+  });
+}
+
+export function fetchServerRoles(serverId: string): Promise<RoleSummary[]> {
+  return request<RoleSummary[]>('GET', `/servers/${serverId}/roles`, {
+    schema: z.array(roleSummarySchema),
+  });
+}
+
+export type ManageMemberAction = 'mute' | 'restore' | 'remove';
+
+export function manageMember(
+  serverId: string,
+  memberId: string,
+  action: ManageMemberAction,
+  reason?: string,
+): Promise<MemberSummary> {
+  return request<MemberSummary>('PATCH', `/servers/${serverId}/members/${memberId}`, {
+    body: { action, reason: reason ?? null },
+    schema: memberSummarySchema,
+  });
+}
+
+const createRoleResponseSchema = roleSummarySchema;
+
+export function createRole(
+  serverId: string,
+  data: { name: string; permission_bits: string; color?: string; priority?: number },
+): Promise<RoleSummary> {
+  return request<RoleSummary>('POST', `/servers/${serverId}/roles`, {
+    body: {
+      name: data.name,
+      permission_bits: data.permission_bits,
+      color: data.color ?? null,
+      priority: data.priority ?? 0,
+    },
+    schema: createRoleResponseSchema,
+  });
+}
+
+export function updateRole(
+  serverId: string,
+  roleId: string,
+  data: { name?: string; permission_bits?: string; color?: string; priority?: number },
+): Promise<RoleSummary> {
+  return request<RoleSummary>('PATCH', `/servers/${serverId}/roles/${roleId}`, {
+    body: data,
+    schema: roleSummarySchema,
+  });
+}
+
+export function deleteRole(
+  serverId: string,
+  roleId: string,
+): Promise<{ ok: true }> {
+  return request<{ ok: true }>('DELETE', `/servers/${serverId}/roles/${roleId}`, {
+    schema: z.object({ ok: z.literal(true) }),
+  });
+}
+
+export function assignRole(
+  serverId: string,
+  memberId: string,
+  roleId: string,
+): Promise<MemberSummary> {
+  return request<MemberSummary>('POST', `/servers/${serverId}/members/${memberId}/roles`, {
+    body: { role_id: roleId },
+    schema: memberSummarySchema,
+  });
+}
+
+export function removeRole(
+  serverId: string,
+  memberId: string,
+  roleId: string,
+): Promise<MemberSummary> {
+  return request<MemberSummary>(
+    'DELETE',
+    `/servers/${serverId}/members/${memberId}/roles/${roleId}`,
+    { schema: memberSummarySchema },
+  );
+}
+
+const permissionOverwriteSchema = z.object({
+  target_type: z.enum(['role', 'member']),
+  target_id: z.string().uuid(),
+  allow_bits: z.string(),
+  deny_bits: z.string(),
+});
+
+export type PermissionOverwriteInput = z.infer<typeof permissionOverwriteSchema>;
+
+export function createChannel(
+  serverId: string,
+  data: {
+    name: string;
+    type: 'text' | 'voice';
+    topic?: string;
+    sort_order?: number;
+    permission_overwrites?: PermissionOverwriteInput[];
+  },
+): Promise<ChannelSummary> {
+  return request<ChannelSummary>('POST', `/servers/${serverId}/channels`, {
+    body: {
+      name: data.name,
+      type: data.type,
+      topic: data.topic ?? null,
+      sort_order: data.sort_order,
+      permission_overwrites: data.permission_overwrites ?? [],
+    },
+    schema: channelSummarySchema,
+  });
+}
+
+export function updateChannel(
+  channelId: string,
+  data: {
+    name?: string;
+    type?: 'text' | 'voice';
+    topic?: string;
+    sort_order?: number;
+    permission_overwrites?: PermissionOverwriteInput[];
+  },
+): Promise<ChannelSummary> {
+  return request<ChannelSummary>('PATCH', `/channels/${channelId}`, {
+    body: data,
+    schema: channelSummarySchema,
+  });
+}
+
+export function deleteChannel(channelId: string): Promise<{ ok: true }> {
+  return request<{ ok: true }>('DELETE', `/channels/${channelId}`, {
+    schema: z.object({ ok: z.literal(true) }),
   });
 }
