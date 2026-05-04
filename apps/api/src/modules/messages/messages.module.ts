@@ -1,12 +1,14 @@
 import { Module } from '@nestjs/common';
 
+import { AuditModule } from '../audit/audit.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { PermissionsModule } from '../permissions/permissions.module';
 import { RealtimeModule } from '../realtime/realtime.module';
 import { MessagesController } from './messages.controller';
 import { MessagesService } from './messages.service';
 
 @Module({
-  imports: [NotificationsModule, RealtimeModule],
+  imports: [AuditModule, NotificationsModule, PermissionsModule, RealtimeModule],
   controllers: [MessagesController],
   providers: [MessagesService],
   exports: [MessagesService],

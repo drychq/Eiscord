@@ -7,21 +7,39 @@ import { ErrorCode, RealtimeEvent } from '@eiscord/shared';
 import { AuthenticatedUserContext } from '../../common/auth/auth.types';
 import { AppError } from '../../common/errors/app-error';
 import { PrismaService } from '../../common/persistence/prisma.service';
+import { PermissionAction } from '../../common/permissions/permission.types';
+import { PermissionsService } from '../../common/permissions/permissions.service';
 import { AuditService } from '../audit/audit.service';
-import { buildRealtimeRoom } from '../realtime/realtime.rooms';
+import { buildRealtimeRoom, buildUserRoom } from '../realtime/realtime.rooms';
 import { RealtimePublisher } from '../realtime/realtime.publisher';
-import { ChannelRow, ChannelSummary, toChannelSummary } from './channels.presenter';
+import {
+  ChannelRow,
+  ChannelSummary,
+  PermissionOverwriteRow,
+  toChannelSummary,
+} from './channels.presenter';
 import { CreateChannelDto } from './dto/create-channel.dto';
+import { PermissionOverwriteDto } from './dto/permission-overwrite.dto';
 import { UpdateChannelDto } from './dto/update-channel.dto';
 
-type MembershipRow = {
-  serverId: string;
+type RawSqlExecutor = Pick<PrismaService, '$executeRaw' | '$queryRaw'>;
+
+type NormalizedPermissionOverwrite = {
+  allowBits: bigint;
+  denyBits: bigint;
+  targetId: string;
+  targetType: 'member' | 'role';
+};
+
+type ServerUserRow = {
+  userId: string;
 };
 
 @Injectable()
 export class ChannelsService {
   constructor(
     private readonly auditService: AuditService,
+    private readonly permissionsService: PermissionsService,
     private readonly prisma: PrismaService,
     private readonly realtimePublisher: RealtimePublisher,
   ) {}
@@ -32,7 +50,7 @@ export class ChannelsService {
     dto: CreateChannelDto,
     requestId?: string,
   ): Promise<ChannelSummary> {
-    this.assertNoPermissionOverwrites(dto.permission_overwrites);
+    const overwrites = normalizePermissionOverwrites(dto.permission_overwrites);
     const name = dto.name.trim();
 
     if (name.length === 0) {
@@ -44,8 +62,13 @@ export class ChannelsService {
       );
     }
 
-    await this.assertServerMember(user.userId, serverId, 'CreateChannel', requestId);
-    const channel = await this.prisma.$transaction(async (tx) => {
+    await this.permissionsService.assertAllowed({
+      action: PermissionAction.ManageChannel,
+      requestId,
+      resource: { id: serverId, type: 'server' },
+      user,
+    });
+    const result = await this.prisma.$transaction(async (tx) => {
       const [created] = await tx.$queryRaw<ChannelRow[]>`
         INSERT INTO channels (id, server_id, name, type, topic, sort_order, status)
         VALUES (
@@ -77,7 +100,14 @@ export class ChannelsService {
         ON CONFLICT (user_id, channel_id) DO NOTHING
       `;
 
-      return created;
+      const permissionOverwrites = await this.replacePermissionOverwrites(
+        tx,
+        created.id,
+        serverId,
+        overwrites,
+      );
+
+      return { channel: created, permissionOverwrites };
     });
 
     await this.auditService.record({
@@ -85,12 +115,16 @@ export class ChannelsService {
       actorId: user.userId,
       requestId,
       result: 'success',
-      targetId: channel.id,
+      targetId: result.channel.id,
       targetType: 'channel',
     });
-    this.publishChannelChanged(channel, 'created', requestId);
+    this.publishChannelChanged(result.channel, 'created', result.permissionOverwrites, requestId);
 
-    return toChannelSummary(channel);
+    if (overwrites.length > 0) {
+      await this.publishPermissionChanged(result.channel, 'channel', requestId);
+    }
+
+    return toChannelSummary(result.channel, result.permissionOverwrites);
   }
 
   async updateChannel(
@@ -99,8 +133,17 @@ export class ChannelsService {
     dto: UpdateChannelDto,
     requestId?: string,
   ): Promise<ChannelSummary> {
-    this.assertNoPermissionOverwrites(dto.permission_overwrites);
-    const current = await this.getActiveChannel(channelId, user.userId, 'UpdateChannel', requestId);
+    const overwrites =
+      dto.permission_overwrites === undefined
+        ? undefined
+        : normalizePermissionOverwrites(dto.permission_overwrites);
+    await this.permissionsService.assertAllowed({
+      action: PermissionAction.ManageChannel,
+      requestId,
+      resource: { id: channelId, type: 'channel' },
+      user,
+    });
+    const current = await this.getActiveChannel(channelId, 'UpdateChannel', user.userId, requestId);
     const name = dto.name !== undefined ? dto.name.trim() : current.name;
 
     if (name.length === 0) {
@@ -112,25 +155,33 @@ export class ChannelsService {
       );
     }
 
-    const [updated] = await this.prisma.$queryRaw<ChannelRow[]>`
-      UPDATE channels
-      SET
-        name = ${name},
-        type = ${dto.type ?? current.type},
-        topic = ${dto.topic !== undefined ? normalizeNullableText(dto.topic) : current.topic},
-        sort_order = ${dto.sort_order ?? current.sortOrder},
-        updated_at = NOW()
-      WHERE id = ${channelId}::uuid
-      RETURNING
-        id,
-        server_id AS "serverId",
-        name,
-        type,
-        topic,
-        sort_order AS "sortOrder",
-        status,
-        created_at AS "createdAt"
-    `;
+    const result = await this.prisma.$transaction(async (tx) => {
+      const [updated] = await tx.$queryRaw<ChannelRow[]>`
+        UPDATE channels
+        SET
+          name = ${name},
+          type = ${dto.type ?? current.type},
+          topic = ${dto.topic !== undefined ? normalizeNullableText(dto.topic) : current.topic},
+          sort_order = ${dto.sort_order ?? current.sortOrder},
+          updated_at = NOW()
+        WHERE id = ${channelId}::uuid
+        RETURNING
+          id,
+          server_id AS "serverId",
+          name,
+          type,
+          topic,
+          sort_order AS "sortOrder",
+          status,
+          created_at AS "createdAt"
+      `;
+      const permissionOverwrites =
+        overwrites === undefined
+          ? await this.listPermissionOverwrites(tx, channelId)
+          : await this.replacePermissionOverwrites(tx, channelId, updated.serverId, overwrites);
+
+      return { channel: updated, permissionOverwrites };
+    });
 
     await this.auditService.record({
       action: 'UpdateChannel',
@@ -140,9 +191,13 @@ export class ChannelsService {
       targetId: channelId,
       targetType: 'channel',
     });
-    this.publishChannelChanged(updated, 'updated', requestId);
+    this.publishChannelChanged(result.channel, 'updated', result.permissionOverwrites, requestId);
 
-    return toChannelSummary(updated);
+    if (overwrites !== undefined) {
+      await this.publishPermissionChanged(result.channel, 'channel', requestId);
+    }
+
+    return toChannelSummary(result.channel, result.permissionOverwrites);
   }
 
   async deleteChannel(
@@ -150,7 +205,13 @@ export class ChannelsService {
     channelId: string,
     requestId?: string,
   ): Promise<ChannelSummary> {
-    const current = await this.getActiveChannel(channelId, user.userId, 'DeleteChannel', requestId);
+    await this.permissionsService.assertAllowed({
+      action: PermissionAction.ManageChannel,
+      requestId,
+      resource: { id: channelId, type: 'channel' },
+      user,
+    });
+    const current = await this.getActiveChannel(channelId, 'DeleteChannel', user.userId, requestId);
     const [deleted] = await this.prisma.$queryRaw<ChannelRow[]>`
       UPDATE channels
       SET status = 'deleted', updated_at = NOW()
@@ -174,42 +235,16 @@ export class ChannelsService {
       targetId: channelId,
       targetType: 'channel',
     });
-    this.publishChannelChanged(deleted, 'deleted', requestId);
+    this.publishChannelChanged(deleted, 'deleted', [], requestId);
+    await this.publishPermissionChanged(deleted, 'channel', requestId);
 
-    return toChannelSummary({ ...deleted, serverId: current.serverId });
-  }
-
-  private async assertServerMember(
-    userId: string,
-    serverId: string,
-    action: string,
-    requestId?: string,
-  ): Promise<void> {
-    const [membership] = await this.prisma.$queryRaw<MembershipRow[]>`
-      SELECT m.server_id AS "serverId"
-      FROM memberships m
-      INNER JOIN servers s ON s.id = m.server_id
-      WHERE m.server_id = ${serverId}::uuid
-        AND m.user_id = ${userId}::uuid
-        AND m.member_status IN ('active', 'muted')
-        AND s.status = 'active'
-      LIMIT 1
-    `;
-
-    if (!membership) {
-      await this.recordFailure(action, userId, serverId, 'not_server_member', requestId);
-      throw new AppError(
-        ErrorCode.PermissionDenied,
-        'Server membership is required.',
-        HttpStatus.FORBIDDEN,
-      );
-    }
+    return toChannelSummary({ ...deleted, serverId: current.serverId }, []);
   }
 
   private async getActiveChannel(
     channelId: string,
-    userId: string,
     action: string,
+    userId: string,
     requestId?: string,
   ): Promise<ChannelRow> {
     const [channel] = await this.prisma.$queryRaw<ChannelRow[]>`
@@ -246,19 +281,107 @@ export class ChannelsService {
     return channel;
   }
 
-  private assertNoPermissionOverwrites(overwrites: unknown[] | undefined): void {
-    if (overwrites && overwrites.length > 0) {
-      throw new AppError(
-        ErrorCode.ValidationFailed,
-        'Channel permission overwrites are not supported until M4.',
-        HttpStatus.BAD_REQUEST,
-      );
+  private async replacePermissionOverwrites(
+    tx: RawSqlExecutor,
+    channelId: string,
+    serverId: string,
+    overwrites: NormalizedPermissionOverwrite[],
+  ): Promise<PermissionOverwriteRow[]> {
+    await this.validatePermissionOverwriteTargets(tx, serverId, overwrites);
+    await tx.$executeRaw`
+      DELETE FROM permission_overwrites
+      WHERE channel_id = ${channelId}::uuid
+    `;
+
+    for (const overwrite of overwrites) {
+      await tx.$executeRaw`
+        INSERT INTO permission_overwrites (
+          id,
+          channel_id,
+          target_type,
+          target_id,
+          allow_bits,
+          deny_bits
+        )
+        VALUES (
+          gen_random_uuid(),
+          ${channelId}::uuid,
+          ${overwrite.targetType},
+          ${overwrite.targetId}::uuid,
+          ${overwrite.allowBits},
+          ${overwrite.denyBits}
+        )
+      `;
     }
+
+    return this.listPermissionOverwrites(tx, channelId);
+  }
+
+  private async validatePermissionOverwriteTargets(
+    tx: RawSqlExecutor,
+    serverId: string,
+    overwrites: NormalizedPermissionOverwrite[],
+  ): Promise<void> {
+    for (const overwrite of overwrites) {
+      if (overwrite.targetType === 'role') {
+        const [role] = await tx.$queryRaw<{ id: string }[]>`
+          SELECT id
+          FROM roles
+          WHERE id = ${overwrite.targetId}::uuid
+            AND server_id = ${serverId}::uuid
+          LIMIT 1
+        `;
+
+        if (!role) {
+          throw new AppError(
+            ErrorCode.ResourceNotFound,
+            'Permission overwrite role target was not found.',
+            HttpStatus.NOT_FOUND,
+          );
+        }
+      } else {
+        const [member] = await tx.$queryRaw<{ id: string }[]>`
+          SELECT id
+          FROM memberships
+          WHERE id = ${overwrite.targetId}::uuid
+            AND server_id = ${serverId}::uuid
+            AND member_status IN ('active', 'muted')
+          LIMIT 1
+        `;
+
+        if (!member) {
+          throw new AppError(
+            ErrorCode.ResourceNotFound,
+            'Permission overwrite member target was not found.',
+            HttpStatus.NOT_FOUND,
+          );
+        }
+      }
+    }
+  }
+
+  private async listPermissionOverwrites(
+    tx: RawSqlExecutor,
+    channelId: string,
+  ): Promise<PermissionOverwriteRow[]> {
+    return tx.$queryRaw<PermissionOverwriteRow[]>`
+      SELECT
+        id,
+        channel_id AS "channelId",
+        target_type AS "targetType",
+        target_id AS "targetId",
+        allow_bits AS "allowBits",
+        deny_bits AS "denyBits"
+      FROM permission_overwrites
+      WHERE channel_id = ${channelId}::uuid
+      ORDER BY target_type ASC, created_at ASC
+    `;
   }
 
   private publishChannelChanged(
     channel: ChannelRow,
     changeType: 'created' | 'deleted' | 'updated',
+    permissionOverwrites: PermissionOverwriteRow[],
     requestId?: string,
   ) {
     this.realtimePublisher.publishToRoom(
@@ -266,11 +389,55 @@ export class ChannelsService {
       RealtimeEvent.ChannelChanged,
       {
         change_type: changeType,
-        channel: toChannelSummary(channel),
+        channel: toChannelSummary(channel, permissionOverwrites),
         server_id: channel.serverId,
       },
       requestId,
     );
+  }
+
+  private async publishPermissionChanged(
+    channel: ChannelRow,
+    changeScope: 'channel',
+    requestId?: string,
+  ) {
+    const [serverUsers, allowedUsers] = await Promise.all([
+      this.listServerUserIds(channel.serverId),
+      this.permissionsService.listUsersWithChannelPermission(channel.id, PermissionAction.ViewChannel),
+    ]);
+    const deniedUsers = serverUsers.filter((userId) => !allowedUsers.includes(userId));
+    const roomsToLeave = [buildRealtimeRoom('channel', channel.id)];
+
+    if (channel.type === 'voice') {
+      roomsToLeave.push(buildRealtimeRoom('voice', channel.id));
+    }
+
+    this.realtimePublisher.leaveUserRooms(deniedUsers, roomsToLeave);
+
+    for (const userId of serverUsers) {
+      this.realtimePublisher.publishToRoom(
+        buildUserRoom(userId),
+        RealtimeEvent.PermissionChanged,
+        {
+          affected_user_ids: serverUsers,
+          change_scope: changeScope,
+          resource_id: channel.id,
+          server_id: channel.serverId,
+        },
+        requestId,
+      );
+    }
+  }
+
+  private async listServerUserIds(serverId: string): Promise<string[]> {
+    const rows = await this.prisma.$queryRaw<ServerUserRow[]>`
+      SELECT user_id AS "userId"
+      FROM memberships
+      WHERE server_id = ${serverId}::uuid
+        AND member_status IN ('active', 'muted')
+    `;
+
+    return rows.map((row) => row.userId);
   }
 
   private async recordFailure(
@@ -290,6 +457,34 @@ export class ChannelsService {
       targetType: 'channel',
     });
   }
+}
+
+function normalizePermissionOverwrites(
+  overwrites: PermissionOverwriteDto[] | undefined,
+): NormalizedPermissionOverwrite[] {
+  const normalized = (overwrites ?? []).map((overwrite) => ({
+    allowBits: BigInt(overwrite.allow_bits),
+    denyBits: BigInt(overwrite.deny_bits),
+    targetId: overwrite.target_id,
+    targetType: overwrite.target_type,
+  }));
+  const seen = new Set<string>();
+
+  for (const overwrite of normalized) {
+    const key = `${overwrite.targetType}:${overwrite.targetId}`;
+
+    if (seen.has(key)) {
+      throw new AppError(
+        ErrorCode.ValidationFailed,
+        'Duplicate permission overwrite target.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    seen.add(key);
+  }
+
+  return normalized;
 }
 
 function normalizeNullableText(value: string | null | undefined): string | null {

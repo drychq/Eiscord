@@ -1,12 +1,13 @@
 import { Module } from '@nestjs/common';
 
 import { AuditModule } from '../audit/audit.module';
+import { PermissionsModule } from '../permissions/permissions.module';
 import { RealtimeModule } from '../realtime/realtime.module';
 import { ChannelsController } from './channels.controller';
 import { ChannelsService } from './channels.service';
 
 @Module({
-  imports: [AuditModule, RealtimeModule],
+  imports: [AuditModule, PermissionsModule, RealtimeModule],
   controllers: [ChannelsController],
   providers: [ChannelsService],
   exports: [ChannelsService],

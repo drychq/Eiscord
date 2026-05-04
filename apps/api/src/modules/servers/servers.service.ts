@@ -2,20 +2,27 @@ import { randomBytes, randomUUID } from 'node:crypto';
 
 import { HttpStatus, Injectable } from '@nestjs/common';
 
-import { ErrorCode, RealtimeEvent } from '@eiscord/shared';
+import { DEFAULT_MEMBER_PERMISSION_BITS, ErrorCode, RealtimeEvent } from '@eiscord/shared';
 
 import { AuthenticatedUserContext } from '../../common/auth/auth.types';
 import { AppError } from '../../common/errors/app-error';
 import { PrismaService } from '../../common/persistence/prisma.service';
+import { PermissionAction } from '../../common/permissions/permission.types';
+import { PermissionsService } from '../../common/permissions/permissions.service';
 import { AuditService } from '../audit/audit.service';
-import { buildRealtimeRoom } from '../realtime/realtime.rooms';
+import { buildRealtimeRoom, buildUserRoom } from '../realtime/realtime.rooms';
 import { RealtimePublisher } from '../realtime/realtime.publisher';
+import { AssignMemberRoleDto } from './dto/assign-member-role.dto';
 import { CreateServerDto } from './dto/create-server.dto';
+import { CreateRoleDto } from './dto/create-role.dto';
 import { JoinServerDto } from './dto/join-server.dto';
+import { ManageMemberDto } from './dto/manage-member.dto';
+import { UpdateRoleDto } from './dto/update-role.dto';
 import {
   ChannelRow,
   MemberSummary,
   MemberRow,
+  PermissionOverwriteRow,
   RoleRow,
   ServerCreateResponse,
   ServerDetail,
@@ -58,10 +65,15 @@ type ServerMembershipRow = ServerRow & {
 
 type RawSqlExecutor = Pick<PrismaService, '$executeRaw' | '$queryRaw'>;
 
+type ServerUserRow = {
+  userId: string;
+};
+
 @Injectable()
 export class ServersService {
   constructor(
     private readonly auditService: AuditService,
+    private readonly permissionsService: PermissionsService,
     private readonly prisma: PrismaService,
     private readonly realtimePublisher: RealtimePublisher,
   ) {}
@@ -154,7 +166,15 @@ export class ServersService {
 
       const [defaultRole] = await tx.$queryRaw<RoleRow[]>`
         INSERT INTO roles (id, server_id, name, permission_bits, color, priority, is_default)
-        VALUES (${randomUUID()}::uuid, ${server.id}::uuid, 'Member', 0, null, 0, true)
+        VALUES (
+          ${randomUUID()}::uuid,
+          ${server.id}::uuid,
+          'Member',
+          ${BigInt(DEFAULT_MEMBER_PERMISSION_BITS)},
+          null,
+          0,
+          true
+        )
         RETURNING
           id,
           server_id AS "serverId",
@@ -269,14 +289,14 @@ export class ServersService {
   async getServerDetail(user: AuthenticatedUserContext, serverId: string): Promise<ServerDetail> {
     const membership = await this.getActiveServerMembership(user.userId, serverId);
     const [channels, members, roles] = await Promise.all([
-      this.listChannels(serverId),
+      this.listVisibleChannels(user, serverId),
       this.listServerMembersRows(serverId),
-      this.listRoles(serverId),
+      this.listRoleRows(serverId),
     ]);
 
     return {
       ...toServerBaseSummary(membership),
-      channels: channels.map(toChannelSummary),
+      channels,
       current_member: toMemberSummary(membership),
       members: members.map(toMemberSummary),
       roles: roles.map(toRoleSummary),
@@ -460,6 +480,309 @@ export class ServersService {
     const rows = await this.listServerMembersRows(serverId);
 
     return rows.map(toMemberSummary);
+  }
+
+  async manageMember(
+    user: AuthenticatedUserContext,
+    serverId: string,
+    membershipId: string,
+    dto: ManageMemberDto,
+    requestId?: string,
+  ): Promise<MemberSummary> {
+    const target = await this.permissionsService.assertCanManageMember(
+      user,
+      serverId,
+      membershipId,
+      requestId,
+    );
+    const member = await this.prisma.$transaction(async (tx) => {
+      if (dto.action === 'remove') {
+        await tx.$executeRaw`
+          DELETE FROM membership_roles
+          WHERE membership_id = ${membershipId}::uuid
+        `;
+      }
+
+      if (dto.action === 'restore') {
+        const defaultRole = await this.getDefaultRole(tx, serverId);
+
+        await tx.$executeRaw`
+          INSERT INTO membership_roles (membership_id, role_id, assigned_by_id)
+          VALUES (${membershipId}::uuid, ${defaultRole.id}::uuid, ${user.userId}::uuid)
+          ON CONFLICT (membership_id, role_id) DO NOTHING
+        `;
+      }
+
+      const nextStatus = dto.action === 'mute' ? 'muted' : dto.action === 'restore' ? 'active' : 'removed';
+      const [updated] = await tx.$queryRaw<MemberRow[]>`
+        UPDATE memberships
+        SET member_status = ${nextStatus}, updated_at = NOW()
+        WHERE id = ${membershipId}::uuid
+          AND server_id = ${serverId}::uuid
+        RETURNING
+          id AS "membershipId",
+          server_id AS "serverId",
+          user_id AS "userId",
+          nick_in_server AS "nickInServer",
+          member_status AS "memberStatus",
+          joined_at AS "joinedAt",
+          ARRAY[]::text[] AS "roleIds",
+          (SELECT username FROM users WHERE id = memberships.user_id) AS "username",
+          (SELECT nickname FROM users WHERE id = memberships.user_id) AS "userNickname",
+          (SELECT avatar_attachment_id FROM users WHERE id = memberships.user_id) AS "avatarAttachmentId",
+          (SELECT presence_status FROM users WHERE id = memberships.user_id) AS "presenceStatus"
+      `;
+
+      return updated;
+    });
+    const refreshed = dto.action === 'remove'
+      ? member
+      : await this.getMemberRowById(serverId, membershipId);
+    const summary = toMemberSummary(refreshed);
+
+    await this.auditService.record({
+      action: `ManageMember:${dto.action}`,
+      actorId: user.userId,
+      metadata: { reason: normalizeNullableText(dto.reason) },
+      requestId,
+      result: 'success',
+      targetId: membershipId,
+      targetType: 'membership',
+    });
+
+    this.publishMemberChanged(serverId, membershipId, `member_${dto.action}`, summary, requestId);
+    await this.publishPermissionChanged(serverId, 'member', membershipId, [target.userId], requestId);
+
+    if (dto.action === 'remove') {
+      await this.forceMemberLeaveServerRooms(serverId, target.userId);
+    }
+
+    return summary;
+  }
+
+  async listRolesForUser(
+    user: AuthenticatedUserContext,
+    serverId: string,
+  ): Promise<ReturnType<typeof toRoleSummary>[]> {
+    await this.getActiveServerMembership(user.userId, serverId);
+
+    return (await this.listRoleRows(serverId)).map(toRoleSummary);
+  }
+
+  async createRole(
+    user: AuthenticatedUserContext,
+    serverId: string,
+    dto: CreateRoleDto,
+    requestId?: string,
+  ): Promise<ReturnType<typeof toRoleSummary>> {
+    const name = dto.name.trim();
+    const permissionBits = parsePermissionBits(dto.permission_bits);
+    const priority = dto.priority ?? 0;
+
+    if (name.length === 0) {
+      throw new AppError(ErrorCode.ValidationFailed, 'Role name cannot be empty.', HttpStatus.BAD_REQUEST);
+    }
+
+    await this.permissionsService.assertCanMutateRole(
+      user,
+      serverId,
+      { desiredPermissionBits: permissionBits, desiredPriority: priority },
+      requestId,
+    );
+    const [role] = await this.prisma.$queryRaw<RoleRow[]>`
+      INSERT INTO roles (id, server_id, name, permission_bits, color, priority, is_default)
+      VALUES (
+        ${randomUUID()}::uuid,
+        ${serverId}::uuid,
+        ${name},
+        ${permissionBits},
+        ${normalizeNullableText(dto.color)},
+        ${priority},
+        false
+      )
+      RETURNING
+        id,
+        server_id AS "serverId",
+        name,
+        permission_bits AS "permissionBits",
+        color,
+        priority,
+        is_default AS "isDefault"
+    `;
+
+    await this.auditRoleChange(user.userId, 'CreateRole', role.id, requestId);
+    await this.publishPermissionChanged(serverId, 'role', role.id, await this.listServerUserIds(serverId), requestId);
+
+    return toRoleSummary(role);
+  }
+
+  async updateRole(
+    user: AuthenticatedUserContext,
+    roleId: string,
+    dto: UpdateRoleDto,
+    requestId?: string,
+  ): Promise<ReturnType<typeof toRoleSummary>> {
+    const existing = await this.getRoleRow(roleId);
+
+    if (!existing) {
+      throw new AppError(ErrorCode.ResourceNotFound, 'Role was not found.', HttpStatus.NOT_FOUND);
+    }
+
+    if (existing.isDefault && dto.priority !== undefined && dto.priority !== 0) {
+      throw new AppError(
+        ErrorCode.ValidationFailed,
+        'Default role priority must remain 0.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
+    const permissionBits =
+      dto.permission_bits !== undefined ? parsePermissionBits(dto.permission_bits) : parsePermissionBits(existing.permissionBits);
+    const priority = existing.isDefault ? 0 : dto.priority ?? existing.priority;
+    const name = dto.name !== undefined ? dto.name.trim() : existing.name;
+
+    if (name.length === 0) {
+      throw new AppError(ErrorCode.ValidationFailed, 'Role name cannot be empty.', HttpStatus.BAD_REQUEST);
+    }
+
+    await this.permissionsService.assertCanMutateRole(
+      user,
+      existing.serverId,
+      {
+        desiredPermissionBits: permissionBits,
+        desiredPriority: priority,
+        targetRoleId: roleId,
+      },
+      requestId,
+    );
+    const [role] = await this.prisma.$queryRaw<RoleRow[]>`
+      UPDATE roles
+      SET
+        name = ${name},
+        permission_bits = ${permissionBits},
+        color = ${dto.color !== undefined ? normalizeNullableText(dto.color) : existing.color},
+        priority = ${priority},
+        updated_at = NOW()
+      WHERE id = ${roleId}::uuid
+      RETURNING
+        id,
+        server_id AS "serverId",
+        name,
+        permission_bits AS "permissionBits",
+        color,
+        priority,
+        is_default AS "isDefault"
+    `;
+
+    await this.auditRoleChange(user.userId, 'UpdateRole', role.id, requestId);
+    await this.publishPermissionChanged(
+      role.serverId,
+      'role',
+      role.id,
+      await this.listServerUserIds(role.serverId),
+      requestId,
+    );
+
+    return toRoleSummary(role);
+  }
+
+  async deleteRole(
+    user: AuthenticatedUserContext,
+    roleId: string,
+    requestId?: string,
+  ): Promise<{ ok: true }> {
+    const existing = await this.getRoleRow(roleId);
+
+    if (!existing) {
+      throw new AppError(ErrorCode.ResourceNotFound, 'Role was not found.', HttpStatus.NOT_FOUND);
+    }
+
+    const target = await this.permissionsService.assertCanMutateRole(
+      user,
+      existing.serverId,
+      { targetRoleId: roleId },
+      requestId,
+    );
+
+    if (target?.isDefault) {
+      throw new AppError(ErrorCode.Conflict, 'Default role cannot be deleted.', HttpStatus.CONFLICT);
+    }
+
+    await this.prisma.$executeRaw`
+      DELETE FROM roles
+      WHERE id = ${roleId}::uuid
+    `;
+    await this.auditRoleChange(user.userId, 'DeleteRole', roleId, requestId);
+    await this.publishPermissionChanged(
+      existing.serverId,
+      'role',
+      roleId,
+      await this.listServerUserIds(existing.serverId),
+      requestId,
+    );
+
+    return { ok: true };
+  }
+
+  async assignRoleToMember(
+    user: AuthenticatedUserContext,
+    serverId: string,
+    membershipId: string,
+    dto: AssignMemberRoleDto,
+    requestId?: string,
+  ): Promise<MemberSummary> {
+    await this.permissionsService.assertCanAssignRoleToMember(
+      user,
+      serverId,
+      membershipId,
+      dto.role_id,
+      requestId,
+    );
+    await this.prisma.$executeRaw`
+      INSERT INTO membership_roles (membership_id, role_id, assigned_by_id)
+      VALUES (${membershipId}::uuid, ${dto.role_id}::uuid, ${user.userId}::uuid)
+      ON CONFLICT (membership_id, role_id) DO NOTHING
+    `;
+    const member = await this.getMemberRowById(serverId, membershipId);
+
+    await this.auditRoleChange(user.userId, 'AssignRole', dto.role_id, requestId, membershipId);
+    this.publishMemberChanged(serverId, membershipId, 'role_assigned', toMemberSummary(member), requestId);
+    await this.publishPermissionChanged(serverId, 'member', membershipId, [member.userId], requestId);
+
+    return toMemberSummary(member);
+  }
+
+  async removeRoleFromMember(
+    user: AuthenticatedUserContext,
+    serverId: string,
+    membershipId: string,
+    roleId: string,
+    requestId?: string,
+  ): Promise<MemberSummary> {
+    const { role } = await this.permissionsService.assertCanAssignRoleToMember(
+      user,
+      serverId,
+      membershipId,
+      roleId,
+      requestId,
+    );
+
+    if (role.isDefault) {
+      throw new AppError(ErrorCode.Conflict, 'Default role cannot be removed from members.', HttpStatus.CONFLICT);
+    }
+
+    await this.prisma.$executeRaw`
+      DELETE FROM membership_roles
+      WHERE membership_id = ${membershipId}::uuid
+        AND role_id = ${roleId}::uuid
+    `;
+    const member = await this.getMemberRowById(serverId, membershipId);
+
+    await this.auditRoleChange(user.userId, 'RemoveRole', roleId, requestId, membershipId);
+    this.publishMemberChanged(serverId, membershipId, 'role_removed', toMemberSummary(member), requestId);
+    await this.publishPermissionChanged(serverId, 'member', membershipId, [member.userId], requestId);
+
+    return toMemberSummary(member);
   }
 
   private async getInvitationForUpdate(
@@ -658,8 +981,11 @@ export class ServersService {
     return membership;
   }
 
-  private async listChannels(serverId: string): Promise<ChannelRow[]> {
-    return this.prisma.$queryRaw<ChannelRow[]>`
+  private async listVisibleChannels(
+    user: AuthenticatedUserContext,
+    serverId: string,
+  ): Promise<ReturnType<typeof toChannelSummary>[]> {
+    const rows = await this.prisma.$queryRaw<ChannelRow[]>`
       SELECT
         id,
         server_id AS "serverId",
@@ -674,9 +1000,31 @@ export class ServersService {
         AND status = 'active'
       ORDER BY sort_order ASC, created_at ASC
     `;
+    const visibleChannels: ChannelRow[] = [];
+
+    for (const channel of rows) {
+      const decision = await this.permissionsService.checkAllowed({
+        action: PermissionAction.ViewChannel,
+        resource: { id: channel.id, type: channel.type === 'voice' ? 'voice' : 'channel' },
+        user,
+      });
+
+      if (decision.allowed) {
+        visibleChannels.push(channel);
+      }
+    }
+
+    const overwrites = await this.listPermissionOverwritesForChannels(visibleChannels.map((row) => row.id));
+
+    return visibleChannels.map((channel) =>
+      toChannelSummary(
+        channel,
+        overwrites.filter((overwrite) => overwrite.channelId === channel.id),
+      ),
+    );
   }
 
-  private async listRoles(serverId: string): Promise<RoleRow[]> {
+  private async listRoleRows(serverId: string): Promise<RoleRow[]> {
     return this.prisma.$queryRaw<RoleRow[]>`
       SELECT
         id,
@@ -689,6 +1037,27 @@ export class ServersService {
       FROM roles
       WHERE server_id = ${serverId}::uuid
       ORDER BY priority DESC, created_at ASC
+    `;
+  }
+
+  private async listPermissionOverwritesForChannels(
+    channelIds: string[],
+  ): Promise<PermissionOverwriteRow[]> {
+    if (channelIds.length === 0) {
+      return [];
+    }
+
+    return this.prisma.$queryRaw<PermissionOverwriteRow[]>`
+      SELECT
+        id,
+        channel_id AS "channelId",
+        target_type AS "targetType",
+        target_id AS "targetId",
+        allow_bits AS "allowBits",
+        deny_bits AS "denyBits"
+      FROM permission_overwrites
+      WHERE channel_id = ANY(${channelIds}::uuid[])
+      ORDER BY target_type ASC, created_at ASC
     `;
   }
 
@@ -714,6 +1083,152 @@ export class ServersService {
       GROUP BY m.id, u.id
       ORDER BY m.joined_at ASC
     `;
+  }
+
+  private async getMemberRowById(serverId: string, membershipId: string): Promise<MemberRow> {
+    const [member] = await this.prisma.$queryRaw<MemberRow[]>`
+      SELECT
+        m.id AS "membershipId",
+        m.server_id AS "serverId",
+        m.user_id AS "userId",
+        m.nick_in_server AS "nickInServer",
+        m.member_status AS "memberStatus",
+        m.joined_at AS "joinedAt",
+        COALESCE(array_agg(mr.role_id::text) FILTER (WHERE mr.role_id IS NOT NULL), ARRAY[]::text[]) AS "roleIds",
+        u.username,
+        u.nickname AS "userNickname",
+        u.avatar_attachment_id AS "avatarAttachmentId",
+        u.presence_status AS "presenceStatus"
+      FROM memberships m
+      INNER JOIN users u ON u.id = m.user_id
+      LEFT JOIN membership_roles mr ON mr.membership_id = m.id
+      WHERE m.server_id = ${serverId}::uuid
+        AND m.id = ${membershipId}::uuid
+      GROUP BY m.id, u.id
+      LIMIT 1
+    `;
+
+    if (!member) {
+      throw new AppError(ErrorCode.ResourceNotFound, 'Server member was not found.', HttpStatus.NOT_FOUND);
+    }
+
+    return member;
+  }
+
+  private async getRoleRow(roleId: string): Promise<RoleRow | null> {
+    const [role] = await this.prisma.$queryRaw<RoleRow[]>`
+      SELECT
+        id,
+        server_id AS "serverId",
+        name,
+        permission_bits AS "permissionBits",
+        color,
+        priority,
+        is_default AS "isDefault"
+      FROM roles
+      WHERE id = ${roleId}::uuid
+      LIMIT 1
+    `;
+
+    return role ?? null;
+  }
+
+  private async auditRoleChange(
+    actorId: string,
+    action: string,
+    roleId: string,
+    requestId?: string,
+    membershipId?: string,
+  ): Promise<void> {
+    await this.auditService.record({
+      action,
+      actorId,
+      metadata: membershipId ? { membership_id: membershipId } : undefined,
+      requestId,
+      result: 'success',
+      targetId: roleId,
+      targetType: 'role',
+    });
+  }
+
+  private publishMemberChanged(
+    serverId: string,
+    membershipId: string,
+    changeType: string,
+    member: MemberSummary,
+    requestId?: string,
+  ): void {
+    this.realtimePublisher.publishToRoom(
+      buildRealtimeRoom('server', serverId),
+      RealtimeEvent.MemberChanged,
+      {
+        change_type: changeType,
+        member,
+        membership_id: membershipId,
+        server_id: serverId,
+      },
+      requestId,
+    );
+  }
+
+  private async publishPermissionChanged(
+    serverId: string,
+    changeScope: 'member' | 'role',
+    resourceId: string,
+    affectedUserIds: string[],
+    requestId?: string,
+  ): Promise<void> {
+    const payload = {
+      affected_user_ids: affectedUserIds,
+      change_scope: changeScope,
+      resource_id: resourceId,
+      server_id: serverId,
+    };
+
+    this.realtimePublisher.publishToRoom(
+      buildRealtimeRoom('server', serverId),
+      RealtimeEvent.PermissionChanged,
+      payload,
+      requestId,
+    );
+
+    for (const userId of affectedUserIds) {
+      this.realtimePublisher.publishToRoom(
+        buildUserRoom(userId),
+        RealtimeEvent.PermissionChanged,
+        payload,
+        requestId,
+      );
+    }
+  }
+
+  private async listServerUserIds(serverId: string): Promise<string[]> {
+    const rows = await this.prisma.$queryRaw<ServerUserRow[]>`
+      SELECT user_id AS "userId"
+      FROM memberships
+      WHERE server_id = ${serverId}::uuid
+        AND member_status IN ('active', 'muted')
+    `;
+
+    return rows.map((row) => row.userId);
+  }
+
+  private async forceMemberLeaveServerRooms(serverId: string, userId: string): Promise<void> {
+    const channels = await this.prisma.$queryRaw<Array<{ id: string; type: string }>>`
+      SELECT id, type
+      FROM channels
+      WHERE server_id = ${serverId}::uuid
+        AND status = 'active'
+    `;
+    const rooms = [
+      buildRealtimeRoom('server', serverId),
+      ...channels.map((channel) => buildRealtimeRoom('channel', channel.id)),
+      ...channels
+        .filter((channel) => channel.type === 'voice')
+        .map((channel) => buildRealtimeRoom('voice', channel.id)),
+    ];
+
+    this.realtimePublisher.leaveUserRooms([userId], rooms);
   }
 
   private async recordFailure(
@@ -745,6 +1260,26 @@ function normalizeNullableText(value: string | null | undefined): string | null 
   const trimmed = value.trim();
 
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function parsePermissionBits(value: bigint | number | string): bigint {
+  if (typeof value === 'bigint') {
+    return value;
+  }
+
+  if (typeof value === 'number') {
+    return BigInt(value);
+  }
+
+  if (!/^\d+$/.test(value)) {
+    throw new AppError(
+      ErrorCode.ValidationFailed,
+      'Permission bits must be a non-negative integer string.',
+      HttpStatus.BAD_REQUEST,
+    );
+  }
+
+  return BigInt(value);
 }
 
 function toMemberSummaryWithRole(

@@ -1,4 +1,7 @@
-import { IsArray, IsIn, IsInt, IsOptional, IsString, Length, MaxLength } from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsArray, IsIn, IsInt, IsOptional, IsString, Length, MaxLength, ValidateNested } from 'class-validator';
+
+import { PermissionOverwriteDto } from './permission-overwrite.dto';
 
 export class UpdateChannelDto {
   @IsOptional()
@@ -21,5 +24,7 @@ export class UpdateChannelDto {
 
   @IsOptional()
   @IsArray()
-  permission_overwrites?: unknown[];
+  @ValidateNested({ each: true })
+  @Type(() => PermissionOverwriteDto)
+  permission_overwrites?: PermissionOverwriteDto[];
 }

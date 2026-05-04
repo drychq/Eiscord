@@ -26,6 +26,14 @@ export class RealtimePublisher {
     return envelope;
   }
 
+  leaveUserRooms(userIds: string[], rooms: string | string[]) {
+    const targetRooms = Array.isArray(rooms) ? rooms : [rooms];
+
+    for (const userId of userIds) {
+      this.server?.in(`user:${userId}`).socketsLeave(targetRooms);
+    }
+  }
+
   createEnvelope<TPayload>(
     eventName: RealtimeEvent,
     payload: TPayload,

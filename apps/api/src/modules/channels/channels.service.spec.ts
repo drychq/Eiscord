@@ -2,6 +2,7 @@ import { ErrorCode, RealtimeEvent } from '@eiscord/shared';
 
 import { AppError } from '../../common/errors/app-error';
 import { PrismaService } from '../../common/persistence/prisma.service';
+import { PermissionsService } from '../../common/permissions/permissions.service';
 import { AuditService } from '../audit/audit.service';
 import { RealtimePublisher } from '../realtime/realtime.publisher';
 import { ChannelsService } from './channels.service';
@@ -16,6 +17,7 @@ describe('ChannelsService', () => {
     $queryRaw: jest.Mock;
     $transaction: jest.Mock;
   };
+  let permissionsService: jest.Mocked<PermissionsService>;
   let realtimePublisher: jest.Mocked<RealtimePublisher>;
   let service: ChannelsService;
   let tx: { $executeRaw: jest.Mock; $queryRaw: jest.Mock };
@@ -33,19 +35,25 @@ describe('ChannelsService', () => {
       $queryRaw: jest.fn(),
       $transaction: jest.fn((callback: (transaction: typeof tx) => unknown) => callback(tx)),
     };
+    permissionsService = {
+      assertAllowed: jest.fn().mockResolvedValue(undefined),
+      listUsersWithChannelPermission: jest.fn().mockResolvedValue([userId()]),
+    } as unknown as jest.Mocked<PermissionsService>;
     realtimePublisher = {
       publishToRoom: jest.fn(),
+      leaveUserRooms: jest.fn(),
     } as unknown as jest.Mocked<RealtimePublisher>;
     service = new ChannelsService(
       auditService,
+      permissionsService,
       prisma as unknown as PrismaService,
       realtimePublisher,
     );
   });
 
   it('creates channels for server members and publishes channel changes', async () => {
-    prisma.$queryRaw.mockResolvedValueOnce([{ serverId: serverId() }]);
     tx.$queryRaw.mockResolvedValueOnce([channelRow({ name: 'general' })]);
+    tx.$queryRaw.mockResolvedValueOnce([]);
 
     const result = await service.createChannel(
       user,
@@ -60,7 +68,7 @@ describe('ChannelsService', () => {
       sort_order: 10,
       type: 'text',
     });
-    expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(tx.$executeRaw).toHaveBeenCalledTimes(2);
     expect(auditService.record).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'CreateChannel', result: 'success' }),
     );
@@ -72,28 +80,53 @@ describe('ChannelsService', () => {
     );
   });
 
-  it('rejects non-empty permission overwrites until M4', async () => {
-    await expect(
-      service.createChannel(user, serverId(), {
-        name: 'private',
-        permission_overwrites: [{}],
-        type: 'text',
-      }),
-    ).rejects.toMatchObject<AppError>({ code: ErrorCode.ValidationFailed });
+  it('accepts permission overwrites in M4', async () => {
+    tx.$queryRaw.mockResolvedValueOnce([channelRow({ name: 'private' })]);
+    tx.$queryRaw.mockResolvedValueOnce([{ id: roleId() }]);
+    tx.$queryRaw.mockResolvedValueOnce([
+      {
+        allowBits: '0',
+        channelId: channelId(),
+        denyBits: '1',
+        id: overwriteId(),
+        targetId: roleId(),
+        targetType: 'role',
+      },
+    ]);
+    prisma.$queryRaw.mockResolvedValueOnce([{ userId: userId() }]);
 
-    expect(prisma.$queryRaw).not.toHaveBeenCalled();
+    const result = await service.createChannel(
+      user,
+      serverId(),
+      {
+        name: 'private',
+        permission_overwrites: [
+          {
+            allow_bits: '0',
+            deny_bits: '1',
+            target_id: roleId(),
+            target_type: 'role',
+          },
+        ],
+        type: 'text',
+      },
+      'request-1',
+    );
+
+    expect(result.permission_overwrites).toHaveLength(1);
+    expect(realtimePublisher.leaveUserRooms).toHaveBeenCalled();
   });
 
   it('rejects non-members', async () => {
-    prisma.$queryRaw.mockResolvedValueOnce([]);
+    permissionsService.assertAllowed.mockRejectedValueOnce(
+      new AppError(ErrorCode.PermissionDenied, 'Permission denied.', 403),
+    );
 
     await expect(
       service.createChannel(user, serverId(), { name: 'general', type: 'text' }),
     ).rejects.toMatchObject<AppError>({ code: ErrorCode.PermissionDenied });
 
-    expect(auditService.record).toHaveBeenCalledWith(
-      expect.objectContaining({ failureReason: 'not_server_member' }),
-    );
+    expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 });
 
@@ -111,6 +144,14 @@ function serverId(): string {
 
 function channelId(): string {
   return '00000000-0000-4000-8000-000000000301';
+}
+
+function roleId(): string {
+  return '00000000-0000-4000-8000-000000000401';
+}
+
+function overwriteId(): string {
+  return '00000000-0000-4000-8000-000000000501';
 }
 
 function channelRow(overrides: Record<string, unknown> = {}) {

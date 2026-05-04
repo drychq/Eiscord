@@ -1,11 +1,15 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Req } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Req } from '@nestjs/common';
 
 import { CurrentUser } from '../../common/auth/current-user.decorator';
 import type { AuthenticatedUserContext } from '../../common/auth/auth.types';
 import { getRequestId } from '../../common/request/request-id.util';
 import type { AuthenticatedRequest } from '../../common/request/request.types';
+import { AssignMemberRoleDto } from './dto/assign-member-role.dto';
 import { CreateServerDto } from './dto/create-server.dto';
+import { CreateRoleDto } from './dto/create-role.dto';
 import { JoinServerDto } from './dto/join-server.dto';
+import { ManageMemberDto } from './dto/manage-member.dto';
+import { UpdateRoleDto } from './dto/update-role.dto';
 import { ServersService } from './servers.service';
 
 @Controller('servers')
@@ -58,5 +62,87 @@ export class ServersController {
     @Param('server_id', ParseUUIDPipe) serverId: string,
   ) {
     return this.serversService.listMembers(user, serverId);
+  }
+
+  @Patch(':server_id/members/:member_id')
+  manageMember(
+    @CurrentUser() user: AuthenticatedUserContext,
+    @Param('server_id', ParseUUIDPipe) serverId: string,
+    @Param('member_id', ParseUUIDPipe) memberId: string,
+    @Body() dto: ManageMemberDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.serversService.manageMember(user, serverId, memberId, dto, getRequestId(request));
+  }
+
+  @Get(':server_id/roles')
+  listRoles(
+    @CurrentUser() user: AuthenticatedUserContext,
+    @Param('server_id', ParseUUIDPipe) serverId: string,
+  ) {
+    return this.serversService.listRolesForUser(user, serverId);
+  }
+
+  @Post(':server_id/roles')
+  createRole(
+    @CurrentUser() user: AuthenticatedUserContext,
+    @Param('server_id', ParseUUIDPipe) serverId: string,
+    @Body() dto: CreateRoleDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.serversService.createRole(user, serverId, dto, getRequestId(request));
+  }
+
+  @Patch(':server_id/roles/:role_id')
+  updateRole(
+    @CurrentUser() user: AuthenticatedUserContext,
+    @Param('role_id', ParseUUIDPipe) roleId: string,
+    @Body() dto: UpdateRoleDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.serversService.updateRole(user, roleId, dto, getRequestId(request));
+  }
+
+  @Delete(':server_id/roles/:role_id')
+  deleteRole(
+    @CurrentUser() user: AuthenticatedUserContext,
+    @Param('role_id', ParseUUIDPipe) roleId: string,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.serversService.deleteRole(user, roleId, getRequestId(request));
+  }
+
+  @Post(':server_id/members/:member_id/roles')
+  assignRole(
+    @CurrentUser() user: AuthenticatedUserContext,
+    @Param('server_id', ParseUUIDPipe) serverId: string,
+    @Param('member_id', ParseUUIDPipe) memberId: string,
+    @Body() dto: AssignMemberRoleDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.serversService.assignRoleToMember(
+      user,
+      serverId,
+      memberId,
+      dto,
+      getRequestId(request),
+    );
+  }
+
+  @Delete(':server_id/members/:member_id/roles/:role_id')
+  removeRole(
+    @CurrentUser() user: AuthenticatedUserContext,
+    @Param('server_id', ParseUUIDPipe) serverId: string,
+    @Param('member_id', ParseUUIDPipe) memberId: string,
+    @Param('role_id', ParseUUIDPipe) roleId: string,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.serversService.removeRoleFromMember(
+      user,
+      serverId,
+      memberId,
+      roleId,
+      getRequestId(request),
+    );
   }
 }

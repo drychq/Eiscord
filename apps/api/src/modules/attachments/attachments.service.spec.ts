@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { ErrorCode } from '@eiscord/shared';
 
 import { AppError } from '../../common/errors/app-error';
+import { PermissionsService } from '../../common/permissions/permissions.service';
 import { PrismaService } from '../../common/persistence/prisma.service';
 import { AttachmentsService } from './attachments.service';
 
@@ -12,12 +13,16 @@ const user = { accountStatus: 'active', sessionId: sessionId(), userId: userId()
 
 describe('AttachmentsService', () => {
   let prisma: { $queryRaw: jest.Mock };
+  let permissionsService: jest.Mocked<PermissionsService>;
   let service: AttachmentsService;
 
   beforeEach(() => {
     prisma = {
       $queryRaw: jest.fn(),
     };
+    permissionsService = {
+      assertAllowed: jest.fn().mockResolvedValue(undefined),
+    } as unknown as jest.Mocked<PermissionsService>;
     service = new AttachmentsService(
       {
         get: jest.fn((key: string) => {
@@ -36,6 +41,7 @@ describe('AttachmentsService', () => {
           return 'minioadmin';
         }),
       } as unknown as ConfigService,
+      permissionsService,
       prisma as unknown as PrismaService,
     );
     jest.clearAllMocks();

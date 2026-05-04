@@ -7,10 +7,14 @@ import { ErrorCode, RealtimeEvent } from '@eiscord/shared';
 import { AuthenticatedUserContext } from '../../common/auth/auth.types';
 import { AppError } from '../../common/errors/app-error';
 import { PrismaService } from '../../common/persistence/prisma.service';
+import { PermissionAction } from '../../common/permissions/permission.types';
+import { PermissionsService } from '../../common/permissions/permissions.service';
+import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import type { CreateNotificationResult } from '../notifications/notifications.service';
 import { buildRealtimeRoom, buildUserRoom } from '../realtime/realtime.rooms';
 import { RealtimePublisher } from '../realtime/realtime.publisher';
+import { DeleteMessageDto } from './dto/delete-message.dto';
 import { LoadMessagesDto } from './dto/load-messages.dto';
 import { MarkReadDto } from './dto/mark-read.dto';
 import { SendMessageDto } from './dto/send-message.dto';
@@ -60,10 +64,16 @@ type CurrentReadStateRow = ReadStateRow & {
   lastReadCreatedAt: Date | null;
 };
 
+type DeleteMessageRow = MessageRow & {
+  deletedAt: Date | null;
+};
+
 @Injectable()
 export class MessagesService {
   constructor(
+    private readonly auditService: AuditService,
     private readonly notificationsService: NotificationsService,
+    private readonly permissionsService: PermissionsService,
     private readonly prisma: PrismaService,
     private readonly realtimePublisher: RealtimePublisher,
   ) {}
@@ -75,8 +85,12 @@ export class MessagesService {
     requestId?: string,
   ): Promise<MessageSummary> {
     const input = normalizeSendInput(dto);
+    const channel = await this.getChannelForSend(user, channelId, requestId);
+    const readableUserIds = await this.permissionsService.listUsersWithChannelPermission(
+      channelId,
+      PermissionAction.ViewChannel,
+    );
     const result = await this.prisma.$transaction(async (tx) => {
-      const channel = await this.getChannelForSend(tx, user.userId, channelId);
       const existing = await this.getExistingChannelMessage(
         tx,
         user.userId,
@@ -93,6 +107,7 @@ export class MessagesService {
         tx,
         channel.serverId,
         input.mentionUserIds,
+        readableUserIds,
       );
       const message = await this.insertMessage(tx, {
         channelId,
@@ -105,7 +120,12 @@ export class MessagesService {
       await this.insertMessageAttachments(tx, message.id, input.attachmentIds);
       await this.insertMessageMentions(tx, message.id, mentionUserIds);
       await this.markSenderRead(tx, user.userId, 'channel', channelId, null, message.id);
-      const unreadRows = await this.incrementChannelUnread(tx, channel.serverId, channelId, user.userId);
+      const unreadRows = await this.incrementChannelUnread(
+        tx,
+        channelId,
+        user.userId,
+        readableUserIds,
+      );
       const notifications: CreateNotificationResult[] = [];
 
       for (const mentionedUserId of mentionUserIds.filter((id) => id !== user.userId)) {
@@ -212,7 +232,7 @@ export class MessagesService {
     channelId: string,
     dto: LoadMessagesDto,
   ): Promise<MessageListResponse> {
-    await this.getChannelForRead(this.prisma, user.userId, channelId);
+    await this.getChannelForRead(user, channelId);
     const rows = await this.loadMessages('channel', channelId, dto);
     const page = rows.slice(0, pageLimit(dto));
     const readState = await this.ensureReadState(user.userId, 'channel', channelId, null);
@@ -251,7 +271,7 @@ export class MessagesService {
         throw new AppError(ErrorCode.ValidationFailed, 'channel_id is required.', HttpStatus.BAD_REQUEST);
       }
 
-      await this.getChannelForRead(this.prisma, user.userId, dto.channel_id);
+      await this.getChannelForRead(user, dto.channel_id);
       const readState = await this.markScopeRead(
         user.userId,
         'channel',
@@ -301,23 +321,112 @@ export class MessagesService {
     return toReadStateSummary(readState);
   }
 
+  async deleteMessage(
+    user: AuthenticatedUserContext,
+    messageId: string,
+    dto: DeleteMessageDto,
+    requestId?: string,
+  ): Promise<MessageSummary> {
+    const message = await this.getMessageForDelete(messageId);
+
+    if (dto.operation === 'retract') {
+      if (message.senderId !== user.userId) {
+        throw new AppError(ErrorCode.PermissionDenied, 'Permission denied.', HttpStatus.FORBIDDEN);
+      }
+    } else {
+      if (message.scopeType !== 'channel' || !message.channelId) {
+        throw new AppError(
+          ErrorCode.PermissionDenied,
+          'Direct message history cannot be deleted by another user.',
+          HttpStatus.FORBIDDEN,
+        );
+      }
+
+      await this.permissionsService.assertAllowed({
+        action: PermissionAction.ManageMessage,
+        requestId,
+        resource: { id: message.channelId, type: 'channel' },
+        user,
+      });
+    }
+
+    const visibility = dto.operation === 'retract' ? 'retracted' : 'deleted';
+    const result = await this.prisma.$transaction(async (tx) => {
+      const [updated] = await tx.$queryRaw<MessageRow[]>`
+        UPDATE messages
+        SET visibility = ${visibility}, deleted_at = NOW(), updated_at = NOW()
+        WHERE id = ${messageId}::uuid
+          AND visibility = 'visible'
+        RETURNING
+          id,
+          scope_type AS "scopeType",
+          channel_id AS "channelId",
+          conversation_id AS "conversationId",
+          sender_id AS "senderId",
+          content,
+          visibility,
+          created_at AS "createdAt",
+          (SELECT username FROM users WHERE id = messages.sender_id) AS "senderUsername",
+          (SELECT nickname FROM users WHERE id = messages.sender_id) AS "senderNickname",
+          (SELECT avatar_attachment_id FROM users WHERE id = messages.sender_id) AS "avatarAttachmentId"
+      `;
+      const unreadRows = await this.recomputeUnreadAfterDelete(tx, updated);
+
+      return { message: updated, unreadRows };
+    });
+    const summary = await this.hydrateMessage(result.message);
+    const room =
+      summary.scope_type === 'channel'
+        ? buildRealtimeRoom('channel', summary.channel_id!)
+        : buildRealtimeRoom('dm', summary.conversation_id!);
+
+    await this.auditService.record({
+      action: `DeleteMessage:${dto.operation}`,
+      actorId: user.userId,
+      metadata: { reason: normalizeNullableString(dto.reason) },
+      requestId,
+      result: 'success',
+      targetId: messageId,
+      targetType: 'message',
+    });
+    this.realtimePublisher.publishToRoom(
+      room,
+      RealtimeEvent.MessageDeleted,
+      {
+        deleted_at: new Date().toISOString(),
+        message_id: messageId,
+        operation: dto.operation,
+      },
+      requestId,
+    );
+    this.publishUnreadUpdates(result.unreadRows, {
+      channelId: summary.channel_id,
+      conversationId: summary.conversation_id,
+      scopeType: summary.scope_type as 'channel' | 'dm',
+    }, requestId);
+
+    return summary;
+  }
+
   private async getChannelForSend(
-    tx: RawSqlExecutor,
-    userId: string,
+    user: AuthenticatedUserContext,
     channelId: string,
+    requestId?: string,
   ): Promise<ChannelAccessRow> {
-    const [channel] = await tx.$queryRaw<ChannelAccessRow[]>`
+    await this.permissionsService.assertAllowed({
+      action: PermissionAction.SendMessage,
+      requestId,
+      resource: { id: channelId, type: 'channel' },
+      user,
+    });
+    const [channel] = await this.prisma.$queryRaw<ChannelAccessRow[]>`
       SELECT c.id AS "channelId", c.server_id AS "serverId"
       FROM channels c
       INNER JOIN servers s ON s.id = c.server_id
-      INNER JOIN memberships m
-        ON m.server_id = c.server_id
-       AND m.user_id = ${userId}::uuid
       WHERE c.id = ${channelId}::uuid
         AND c.status = 'active'
         AND c.type = 'text'
         AND s.status = 'active'
-        AND m.member_status = 'active'
       LIMIT 1
     `;
 
@@ -329,22 +438,22 @@ export class MessagesService {
   }
 
   private async getChannelForRead(
-    tx: RawSqlExecutor,
-    userId: string,
+    user: AuthenticatedUserContext,
     channelId: string,
   ): Promise<ChannelAccessRow> {
-    const [channel] = await tx.$queryRaw<ChannelAccessRow[]>`
+    await this.permissionsService.assertAllowed({
+      action: PermissionAction.ViewChannel,
+      resource: { id: channelId, type: 'channel' },
+      user,
+    });
+    const [channel] = await this.prisma.$queryRaw<ChannelAccessRow[]>`
       SELECT c.id AS "channelId", c.server_id AS "serverId"
       FROM channels c
       INNER JOIN servers s ON s.id = c.server_id
-      INNER JOIN memberships m
-        ON m.server_id = c.server_id
-       AND m.user_id = ${userId}::uuid
       WHERE c.id = ${channelId}::uuid
         AND c.status = 'active'
         AND c.type = 'text'
         AND s.status = 'active'
-        AND m.member_status IN ('active', 'muted')
       LIMIT 1
     `;
 
@@ -549,8 +658,10 @@ export class MessagesService {
     tx: RawSqlExecutor,
     serverId: string,
     mentionUserIds: string[],
+    readableUserIds: string[],
   ): Promise<string[]> {
     const validUserIds: string[] = [];
+    const readableUsers = new Set(readableUserIds);
 
     for (const userId of mentionUserIds) {
       const [member] = await tx.$queryRaw<{ userId: string }[]>`
@@ -567,6 +678,14 @@ export class MessagesService {
           ErrorCode.ResourceNotFound,
           'Mentioned user is not a member of this server.',
           HttpStatus.NOT_FOUND,
+        );
+      }
+
+      if (!readableUsers.has(member.userId)) {
+        throw new AppError(
+          ErrorCode.PermissionDenied,
+          'Mentioned user cannot access this channel.',
+          HttpStatus.FORBIDDEN,
         );
       }
 
@@ -652,17 +771,20 @@ export class MessagesService {
 
   private async incrementChannelUnread(
     tx: RawSqlExecutor,
-    serverId: string,
     channelId: string,
     senderId: string,
+    readableUserIds: string[],
   ): Promise<UnreadRow[]> {
+    const recipients = readableUserIds.filter((userId) => userId !== senderId);
+
+    if (recipients.length === 0) {
+      return [];
+    }
+
     return tx.$queryRaw<UnreadRow[]>`
       INSERT INTO read_states (id, user_id, scope_type, channel_id, last_read_message_id, unread_count)
-      SELECT gen_random_uuid(), m.user_id, 'channel', ${channelId}::uuid, null, 1
-      FROM memberships m
-      WHERE m.server_id = ${serverId}::uuid
-        AND m.user_id <> ${senderId}::uuid
-        AND m.member_status IN ('active', 'muted')
+      SELECT gen_random_uuid(), user_id, 'channel', ${channelId}::uuid, null, 1
+      FROM unnest(${recipients}::uuid[]) AS readable(user_id)
       ON CONFLICT (user_id, channel_id)
       DO UPDATE SET
         unread_count = read_states.unread_count + 1,
@@ -983,6 +1105,96 @@ export class MessagesService {
     }
 
     return message;
+  }
+
+  private async getMessageForDelete(messageId: string): Promise<DeleteMessageRow> {
+    const [message] = await this.prisma.$queryRaw<DeleteMessageRow[]>`
+      SELECT
+        msg.id,
+        msg.scope_type AS "scopeType",
+        msg.channel_id AS "channelId",
+        msg.conversation_id AS "conversationId",
+        msg.sender_id AS "senderId",
+        msg.content,
+        msg.visibility,
+        msg.created_at AS "createdAt",
+        msg.deleted_at AS "deletedAt",
+        u.username AS "senderUsername",
+        u.nickname AS "senderNickname",
+        u.avatar_attachment_id AS "avatarAttachmentId"
+      FROM messages msg
+      INNER JOIN users u ON u.id = msg.sender_id
+      WHERE msg.id = ${messageId}::uuid
+        AND msg.visibility = 'visible'
+      LIMIT 1
+    `;
+
+    if (!message) {
+      throw new AppError(ErrorCode.ResourceNotFound, 'Message was not found.', HttpStatus.NOT_FOUND);
+    }
+
+    return message;
+  }
+
+  private async recomputeUnreadAfterDelete(
+    tx: RawSqlExecutor,
+    message: MessageRow,
+  ): Promise<UnreadRow[]> {
+    if (message.scopeType === 'channel') {
+      return tx.$queryRaw<UnreadRow[]>`
+        UPDATE read_states rs
+        SET
+          unread_count = (
+            SELECT COUNT(*)::int
+            FROM messages msg
+            WHERE msg.channel_id = ${message.channelId}::uuid
+              AND msg.sender_id <> rs.user_id
+              AND msg.visibility = 'visible'
+              AND (
+                rs.last_read_message_id IS NULL
+                OR msg.created_at > (
+                  SELECT created_at
+                  FROM messages
+                  WHERE id = rs.last_read_message_id
+                )
+              )
+          ),
+          updated_at = NOW()
+        WHERE rs.scope_type = 'channel'
+          AND rs.channel_id = ${message.channelId}::uuid
+        RETURNING
+          rs.user_id AS "userId",
+          rs.unread_count AS "unreadCount",
+          rs.last_read_message_id AS "lastReadMessageId"
+      `;
+    }
+
+    return tx.$queryRaw<UnreadRow[]>`
+      UPDATE read_states rs
+      SET
+        unread_count = (
+          SELECT COUNT(*)::int
+          FROM messages msg
+          WHERE msg.conversation_id = ${message.conversationId}::uuid
+            AND msg.sender_id <> rs.user_id
+            AND msg.visibility = 'visible'
+            AND (
+              rs.last_read_message_id IS NULL
+              OR msg.created_at > (
+                SELECT created_at
+                FROM messages
+                WHERE id = rs.last_read_message_id
+              )
+            )
+        ),
+        updated_at = NOW()
+      WHERE rs.scope_type = 'dm'
+        AND rs.conversation_id = ${message.conversationId}::uuid
+      RETURNING
+        rs.user_id AS "userId",
+        rs.unread_count AS "unreadCount",
+        rs.last_read_message_id AS "lastReadMessageId"
+    `;
   }
 
   private async getCurrentReadState(

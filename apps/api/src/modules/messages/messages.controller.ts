@@ -4,6 +4,7 @@ import { CurrentUser } from '../../common/auth/current-user.decorator';
 import type { AuthenticatedUserContext } from '../../common/auth/auth.types';
 import { getRequestId } from '../../common/request/request-id.util';
 import type { AuthenticatedRequest } from '../../common/request/request.types';
+import { DeleteMessageDto } from './dto/delete-message.dto';
 import { LoadMessagesDto } from './dto/load-messages.dto';
 import { MarkReadDto } from './dto/mark-read.dto';
 import { SendMessageDto } from './dto/send-message.dto';
@@ -58,5 +59,15 @@ export class MessagesController {
     @Req() request: AuthenticatedRequest,
   ) {
     return this.messagesService.markRead(user, dto, getRequestId(request));
+  }
+
+  @Post('messages/:message_id/delete')
+  deleteMessage(
+    @CurrentUser() user: AuthenticatedUserContext,
+    @Param('message_id', ParseUUIDPipe) messageId: string,
+    @Body() dto: DeleteMessageDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.messagesService.deleteMessage(user, messageId, dto, getRequestId(request));
   }
 }

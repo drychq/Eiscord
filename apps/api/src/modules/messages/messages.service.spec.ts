@@ -2,6 +2,8 @@ import { ErrorCode, RealtimeEvent } from '@eiscord/shared';
 
 import { AppError } from '../../common/errors/app-error';
 import { PrismaService } from '../../common/persistence/prisma.service';
+import { PermissionsService } from '../../common/permissions/permissions.service';
+import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RealtimePublisher } from '../realtime/realtime.publisher';
 import { MessagesService } from './messages.service';
@@ -11,6 +13,8 @@ const user = { accountStatus: 'active', sessionId: sessionId(), userId: userId(1
 
 describe('MessagesService', () => {
   let notificationsService: jest.Mocked<NotificationsService>;
+  let auditService: jest.Mocked<AuditService>;
+  let permissionsService: jest.Mocked<PermissionsService>;
   let prisma: { $executeRaw: jest.Mock; $queryRaw: jest.Mock; $transaction: jest.Mock };
   let realtimePublisher: jest.Mocked<RealtimePublisher>;
   let service: MessagesService;
@@ -21,6 +25,13 @@ describe('MessagesService', () => {
       createNotification: jest.fn(),
       publishCreated: jest.fn(),
     } as unknown as jest.Mocked<NotificationsService>;
+    auditService = {
+      record: jest.fn().mockResolvedValue(undefined),
+    } as unknown as jest.Mocked<AuditService>;
+    permissionsService = {
+      assertAllowed: jest.fn().mockResolvedValue(undefined),
+      listUsersWithChannelPermission: jest.fn().mockResolvedValue([userId(1), userId(2)]),
+    } as unknown as jest.Mocked<PermissionsService>;
     tx = {
       $executeRaw: jest.fn().mockResolvedValue(1),
       $queryRaw: jest.fn(),
@@ -34,14 +45,16 @@ describe('MessagesService', () => {
       publishToRoom: jest.fn(),
     } as unknown as jest.Mocked<RealtimePublisher>;
     service = new MessagesService(
+      auditService,
       notificationsService,
+      permissionsService,
       prisma as unknown as PrismaService,
       realtimePublisher,
     );
   });
 
   it('sends channel messages, increments unread, and publishes realtime events', async () => {
-    tx.$queryRaw.mockResolvedValueOnce([{ channelId: channelId(), serverId: serverId() }]);
+    prisma.$queryRaw.mockResolvedValueOnce([{ channelId: channelId(), serverId: serverId() }]);
     tx.$queryRaw.mockResolvedValueOnce([messageRow()]);
     tx.$queryRaw.mockResolvedValueOnce([
       { lastReadMessageId: null, unreadCount: 1, userId: userId(2) },
@@ -85,7 +98,7 @@ describe('MessagesService', () => {
   });
 
   it('rejects illegal message attachments', async () => {
-    tx.$queryRaw.mockResolvedValueOnce([{ channelId: channelId(), serverId: serverId() }]);
+    prisma.$queryRaw.mockResolvedValueOnce([{ channelId: channelId(), serverId: serverId() }]);
     tx.$queryRaw.mockResolvedValueOnce([]);
 
     await expect(

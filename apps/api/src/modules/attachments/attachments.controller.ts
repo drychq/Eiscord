@@ -1,7 +1,9 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Req } from '@nestjs/common';
 
 import { CurrentUser } from '../../common/auth/current-user.decorator';
 import type { AuthenticatedUserContext } from '../../common/auth/auth.types';
+import { getRequestId } from '../../common/request/request-id.util';
+import type { AuthenticatedRequest } from '../../common/request/request.types';
 import { AttachmentsService } from './attachments.service';
 import { InitAttachmentDto } from './dto/init-attachment.dto';
 
@@ -29,7 +31,8 @@ export class AttachmentsController {
   getAttachmentAccess(
     @CurrentUser() user: AuthenticatedUserContext,
     @Param('attachment_id', ParseUUIDPipe) attachmentId: string,
+    @Req() request: AuthenticatedRequest,
   ) {
-    return this.attachmentsService.getAttachmentAccess(user, attachmentId);
+    return this.attachmentsService.getAttachmentAccess(user, attachmentId, getRequestId(request));
   }
 }

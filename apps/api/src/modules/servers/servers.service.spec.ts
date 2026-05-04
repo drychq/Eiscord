@@ -2,6 +2,7 @@ import { ErrorCode, RealtimeEvent } from '@eiscord/shared';
 
 import { AppError } from '../../common/errors/app-error';
 import { PrismaService } from '../../common/persistence/prisma.service';
+import { PermissionsService } from '../../common/permissions/permissions.service';
 import { AuditService } from '../audit/audit.service';
 import { RealtimePublisher } from '../realtime/realtime.publisher';
 import { ServersService } from './servers.service';
@@ -17,6 +18,7 @@ describe('ServersService', () => {
     $queryRaw: jest.Mock;
     $transaction: jest.Mock;
   };
+  let permissionsService: jest.Mocked<PermissionsService>;
   let realtimePublisher: jest.Mocked<RealtimePublisher>;
   let service: ServersService;
   let tx: { $executeRaw: jest.Mock; $queryRaw: jest.Mock };
@@ -34,11 +36,16 @@ describe('ServersService', () => {
       $queryRaw: jest.fn(),
       $transaction: jest.fn((callback: (transaction: typeof tx) => unknown) => callback(tx)),
     };
+    permissionsService = {
+      checkAllowed: jest.fn().mockResolvedValue({ allowed: true }),
+    } as unknown as jest.Mocked<PermissionsService>;
     realtimePublisher = {
       publishToRoom: jest.fn(),
+      leaveUserRooms: jest.fn(),
     } as unknown as jest.Mocked<RealtimePublisher>;
     service = new ServersService(
       auditService,
+      permissionsService,
       prisma as unknown as PrismaService,
       realtimePublisher,
     );
@@ -182,6 +189,7 @@ describe('ServersService', () => {
     prisma.$queryRaw.mockResolvedValueOnce([channelRow()]);
     prisma.$queryRaw.mockResolvedValueOnce([memberRow({ userId: currentUserId })]);
     prisma.$queryRaw.mockResolvedValueOnce([roleRow()]);
+    prisma.$queryRaw.mockResolvedValueOnce([]);
   }
 });
 

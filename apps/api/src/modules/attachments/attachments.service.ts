@@ -15,11 +15,16 @@ import { ErrorCode } from '@eiscord/shared';
 import { AuthenticatedUserContext } from '../../common/auth/auth.types';
 import { AppError } from '../../common/errors/app-error';
 import { PrismaService } from '../../common/persistence/prisma.service';
+import { PermissionAction } from '../../common/permissions/permission.types';
+import { PermissionsService } from '../../common/permissions/permissions.service';
 import { AttachmentAccessResponse, AttachmentInitResponse, AttachmentRow, toAttachmentSummary } from './attachments.presenter';
 import { InitAttachmentDto } from './dto/init-attachment.dto';
 
-type AccessRow = {
-  allowed: number;
+type MessageAttachmentContextRow = {
+  channelId: string | null;
+  conversationId: string | null;
+  scopeType: string;
+  visibility: string;
 };
 
 const PRESIGNED_URL_TTL_SECONDS = 900;
@@ -32,6 +37,7 @@ export class AttachmentsService {
 
   constructor(
     config: ConfigService,
+    private readonly permissionsService: PermissionsService,
     private readonly prisma: PrismaService,
   ) {
     this.bucket = config.get<string>('S3_BUCKET') ?? 'eiscord-local';
@@ -146,10 +152,32 @@ export class AttachmentsService {
   async getAttachmentAccess(
     user: AuthenticatedUserContext,
     attachmentId: string,
+    requestId?: string,
   ): Promise<AttachmentAccessResponse> {
     const attachment = await this.getReadyAttachment(attachmentId);
+    const messageContext = await this.getMessageAttachmentContext(attachmentId);
 
-    if (attachment.ownerId !== user.userId && !(await this.canAccessMessageAttachment(user.userId, attachmentId))) {
+    if (messageContext) {
+      if (messageContext.visibility !== 'visible') {
+        throw new AppError(ErrorCode.ResourceNotFound, 'Attachment was not found.', HttpStatus.NOT_FOUND);
+      }
+
+      if (messageContext.scopeType === 'dm') {
+        await this.permissionsService.assertAllowed({
+          action: PermissionAction.AccessAttachment,
+          requestId,
+          resource: { id: messageContext.conversationId!, type: 'dm' },
+          user,
+        });
+      } else {
+        await this.permissionsService.assertAllowed({
+          action: PermissionAction.AccessAttachment,
+          requestId,
+          resource: { id: messageContext.channelId!, type: 'channel' },
+          user,
+        });
+      }
+    } else if (attachment.ownerId !== user.userId) {
       throw new AppError(ErrorCode.PermissionDenied, 'Permission denied.', HttpStatus.FORBIDDEN);
     }
 
@@ -216,38 +244,22 @@ export class AttachmentsService {
     return attachment;
   }
 
-  private async canAccessMessageAttachment(userId: string, attachmentId: string): Promise<boolean> {
-    const [row] = await this.prisma.$queryRaw<AccessRow[]>`
-      SELECT 1 AS "allowed"
+  private async getMessageAttachmentContext(
+    attachmentId: string,
+  ): Promise<MessageAttachmentContextRow | null> {
+    const [row] = await this.prisma.$queryRaw<MessageAttachmentContextRow[]>`
+      SELECT
+        msg.scope_type AS "scopeType",
+        msg.channel_id AS "channelId",
+        msg.conversation_id AS "conversationId",
+        msg.visibility
       FROM message_attachments ma
       INNER JOIN messages msg ON msg.id = ma.message_id
-      LEFT JOIN direct_conversations dc ON dc.id = msg.conversation_id
-      LEFT JOIN channels c ON c.id = msg.channel_id
-      LEFT JOIN servers s ON s.id = c.server_id
-      LEFT JOIN memberships m
-        ON m.server_id = c.server_id
-       AND m.user_id = ${userId}::uuid
       WHERE ma.attachment_id = ${attachmentId}::uuid
-        AND msg.visibility = 'visible'
-        AND (
-          (
-            msg.scope_type = 'dm'
-            AND (
-              dc.participant_a_id = ${userId}::uuid
-              OR dc.participant_b_id = ${userId}::uuid
-            )
-          )
-          OR (
-            msg.scope_type = 'channel'
-            AND c.status = 'active'
-            AND s.status = 'active'
-            AND m.member_status IN ('active', 'muted')
-          )
-        )
       LIMIT 1
     `;
 
-    return Boolean(row);
+    return row ?? null;
   }
 
   private async createPutUrl(attachment: AttachmentRow): Promise<string> {
