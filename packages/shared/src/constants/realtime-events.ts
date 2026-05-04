@@ -11,6 +11,7 @@ export const RealtimeEvent = {
   VoiceMemberJoined: 'VoiceMemberJoined',
   VoiceMemberLeft: 'VoiceMemberLeft',
   VoiceStateChanged: 'VoiceStateChanged',
+  SyncState: 'SyncState',
 } as const;
 
 export type RealtimeEvent = (typeof RealtimeEvent)[keyof typeof RealtimeEvent];

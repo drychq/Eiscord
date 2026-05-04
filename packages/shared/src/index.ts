@@ -8,3 +8,4 @@ export * from './schemas/config';
 export * from './schemas/health';
 export * from './schemas/realtime';
 export * from './schemas/user';
+export * from './schemas/voice';

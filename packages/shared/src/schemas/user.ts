@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+export const presenceStatusSchema = z.enum(['online', 'idle', 'busy', 'invisible', 'offline']);
+
 export const userSummarySchema = z.object({
   account_status: z.string().min(1),
   avatar_attachment_id: z.string().uuid().nullable(),
@@ -26,6 +28,16 @@ export const updateProfileRequestSchema = z
     { message: 'At least one profile field must be provided.' },
   );
 
+export const updatePresenceRequestSchema = z
+  .object({
+    desired_status: presenceStatusSchema,
+  })
+  .strict();
+
 export type UserSummary = z.infer<typeof userSummarySchema>;
 
 export type UpdateProfileRequest = z.infer<typeof updateProfileRequestSchema>;
+
+export type PresenceStatusValue = z.infer<typeof presenceStatusSchema>;
+
+export type UpdatePresenceRequest = z.infer<typeof updatePresenceRequestSchema>;

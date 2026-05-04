@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { updateProfileRequestSchema, userSummarySchema } from './user';
+import {
+  updatePresenceRequestSchema,
+  updateProfileRequestSchema,
+  userSummarySchema,
+} from './user';
 
 describe('user schemas', () => {
   it('parses a user summary with nullable fields', () => {
@@ -34,5 +38,11 @@ describe('user schemas', () => {
 
   it('rejects a bio longer than 280 characters', () => {
     expect(() => updateProfileRequestSchema.parse({ bio: 'a'.repeat(281) })).toThrow();
+  });
+
+  it('accepts supported presence updates', () => {
+    expect(updatePresenceRequestSchema.parse({ desired_status: 'invisible' })).toEqual({
+      desired_status: 'invisible',
+    });
   });
 });
