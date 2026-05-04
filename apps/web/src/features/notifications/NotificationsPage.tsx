@@ -1,13 +1,18 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { Bell, UserPlus, MessageCircle, AtSign, Check, CheckCheck } from 'lucide-react';
 import { useNotificationsList, useMarkNotificationsRead } from './use-notifications-queries';
 import type { Notification } from './notifications-api';
 
 const TYPE_ICONS: Record<string, typeof Bell> = {
-  FRIEND_REQUEST: UserPlus,
-  DIRECT_MESSAGE: MessageCircle,
-  CHANNEL_MENTION: AtSign,
+  channel_mention: AtSign,
+  direct_message: MessageCircle,
+  friend_request: UserPlus,
+};
+
+const TYPE_LABELS: Record<string, string> = {
+  channel_mention: '频道提及',
+  direct_message: '私聊消息',
+  friend_request: '好友申请',
 };
 
 function iconFor(type: string) {
@@ -20,20 +25,12 @@ export function NotificationsPage() {
     is_read: filter === 'unread' ? false : undefined,
   });
   const markMutation = useMarkNotificationsRead();
-  const navigate = useNavigate();
 
   const notifications = data?.items ?? [];
 
   const handleClick = (n: Notification) => {
     if (!n.is_read) {
       markMutation.mutate({ notification_ids: [n.notification_id] });
-    }
-    if (n.reference_type && n.reference_id) {
-      if (n.reference_type === 'channel') {
-        navigate(`/app/servers/lookup/channels/${n.reference_id}`);
-      } else if (n.reference_type === 'dm') {
-        navigate(`/app/dm/${n.reference_id}`);
-      }
     }
   };
 
@@ -81,14 +78,14 @@ export function NotificationsPage() {
                 key={n.notification_id}
                 className={`notification-item${n.is_read ? '' : ' unread'}`}
                 onClick={() => handleClick(n)}
-                style={{ cursor: n.reference_id ? 'pointer' : 'default' }}
+                style={{ cursor: n.is_read ? 'default' : 'pointer' }}
               >
                 <div className="notification-icon">
                   <Icon size={18} />
                 </div>
                 <div className="notification-body">
-                  <p className="notif-title">{n.title}</p>
-                  {n.body && <p className="notif-text">{n.body}</p>}
+                  <p className="notif-title">{TYPE_LABELS[n.type] ?? n.type}</p>
+                  <p className="notif-text">{n.content_preview}</p>
                   <p className="notif-time">
                     {new Date(n.created_at).toLocaleString('zh-CN')}
                   </p>

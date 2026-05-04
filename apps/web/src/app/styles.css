@@ -334,6 +334,105 @@ button:disabled {
   min-width: 0;
 }
 
+.voice-strip .voice-strip-controls {
+  flex-direction: row;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.voice-strip .voice-strip-controls + .icon-button {
+  margin-left: 0 !important;
+}
+
+.voice-page {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  height: 100%;
+  padding: 24px;
+  background: #ffffff;
+}
+
+.voice-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #e4e5e1;
+}
+
+.voice-page-header h2 {
+  margin: 2px 0 0;
+  font-size: 20px;
+}
+
+.voice-kicker {
+  font-size: 12px;
+  font-weight: 700;
+  color: #2f8f83;
+  text-transform: uppercase;
+}
+
+.voice-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid #dfe5df;
+  border-radius: 8px;
+  background: #f7faf8;
+  color: #4a4b4d;
+}
+
+.voice-member-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.voice-member {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  padding: 10px 12px;
+  border: 1px solid #e4e5e1;
+  border-radius: 8px;
+}
+
+.voice-member-avatar {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  color: #f8faf8;
+  background: #3b6f8f;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.voice-member strong,
+.voice-member span {
+  display: block;
+}
+
+.voice-member span {
+  margin-top: 2px;
+  color: #6b6d70;
+  font-size: 12px;
+}
+
+.voice-member-icons {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+  color: #8b4b52;
+}
+
 .message-panel {
   display: flex;
   flex-direction: column;

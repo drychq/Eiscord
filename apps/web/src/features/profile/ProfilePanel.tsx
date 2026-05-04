@@ -1,19 +1,24 @@
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { updateProfileRequestSchema, type UpdateProfileRequest } from '@eiscord/shared';
+import {
+  updateProfileRequestSchema,
+  type UpdatePresenceRequest,
+  type UpdateProfileRequest,
+} from '@eiscord/shared';
 import { useAuthStore } from '../../shared/state/use-auth-store';
 import { useWorkspaceStore } from '../../shared/state/use-workspace-store';
 import { FormField } from '../../shared/components/FormField';
 import { formFieldProps } from '../../shared/components/form-field-props';
 import { Spinner } from '../../shared/components/Spinner';
 import { useLogoutMutation } from '../auth/use-auth-mutations';
-import { useUpdateProfileMutation } from './use-profile-queries';
+import { useUpdatePresenceMutation, useUpdateProfileMutation } from './use-profile-queries';
 
 export function ProfilePanel() {
   const { currentUser } = useAuthStore();
   const { isProfilePanelOpen, setProfilePanelOpen } = useWorkspaceStore();
   const logoutMutation = useLogoutMutation();
   const updateMutation = useUpdateProfileMutation();
+  const presenceMutation = useUpdatePresenceMutation();
 
   const {
     register,
@@ -42,6 +47,26 @@ export function ProfilePanel() {
         <div className="profile-readonly">
           <span>用户名</span>
           <strong>{currentUser.username}</strong>
+        </div>
+
+        <div className="profile-readonly">
+          <span>在线状态</span>
+          <select
+            className="form-input"
+            value={currentUser.presence_status}
+            disabled={presenceMutation.isPending}
+            onChange={(event) =>
+              presenceMutation.mutate({
+                desired_status: event.target.value as UpdatePresenceRequest['desired_status'],
+              })
+            }
+          >
+            <option value="online">在线</option>
+            <option value="idle">离开</option>
+            <option value="busy">忙碌</option>
+            <option value="invisible">隐身</option>
+            <option value="offline">离线</option>
+          </select>
         </div>
 
         <form onSubmit={handleSubmit((data) => updateMutation.mutate(data))} noValidate>

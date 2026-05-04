@@ -1,4 +1,6 @@
+import { useEffect } from 'react';
 import { useParams } from 'react-router-dom';
+import * as socket from '../../shared/api/socket-client';
 import {
   useChannelMessages,
   useSendChannelMessage,
@@ -23,6 +25,18 @@ export function ServerChannelsPage() {
   const deleteMutation = useDeleteMessage();
 
   const messages = data?.pages.flatMap((p) => p.items) ?? [];
+
+  useEffect(() => {
+    if (!channelId) {
+      return undefined;
+    }
+
+    socket.subscribe('channel', channelId);
+
+    return () => {
+      socket.unsubscribe('channel', channelId);
+    };
+  }, [channelId]);
 
   const handleSend = (content: string) => {
     if (!channelId) return;

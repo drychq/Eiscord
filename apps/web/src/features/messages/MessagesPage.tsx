@@ -1,4 +1,6 @@
+import { useEffect } from 'react';
 import { useParams } from 'react-router-dom';
+import * as socket from '../../shared/api/socket-client';
 import { useDmMessages, useSendDmMessage, useDeleteMessage } from './use-messages-queries';
 import { MessageList } from '../../shared/components/MessageList';
 import { MessageBubble } from '../../shared/components/MessageBubble';
@@ -19,6 +21,18 @@ export function MessagesPage() {
   const deleteMutation = useDeleteMessage();
 
   const messages = data?.pages.flatMap((p) => p.items) ?? [];
+
+  useEffect(() => {
+    if (!conversationId) {
+      return undefined;
+    }
+
+    socket.subscribe('dm', conversationId);
+
+    return () => {
+      socket.unsubscribe('dm', conversationId);
+    };
+  }, [conversationId]);
 
   const handleSend = (content: string) => {
     if (!conversationId) return;

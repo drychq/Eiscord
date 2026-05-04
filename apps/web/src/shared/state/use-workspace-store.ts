@@ -1,5 +1,4 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
 
 const RECENT_PATH_KEY = 'eiscord:recent-path';
 
@@ -24,6 +23,13 @@ export type WorkspaceState = {
   activeChannelId: string | null;
   activeDmId: string | null;
   activeVoiceChannelId: string | null;
+  activeVoiceSession: {
+    channel_id: string;
+    connection_status: string;
+    deafen_state: boolean;
+    mute_state: boolean;
+    session_id: string;
+  } | null;
   isServerSettingsOpen: boolean;
   isProfilePanelOpen: boolean;
   isMobileNavOpen: boolean;
@@ -33,6 +39,9 @@ export type WorkspaceState = {
   setActiveChannelId: (channelId: string | null) => void;
   setActiveDmId: (dmId: string | null) => void;
   setActiveVoiceChannelId: (voiceChannelId: string | null) => void;
+  setActiveVoiceSession: (
+    session: WorkspaceState['activeVoiceSession'],
+  ) => void;
   setServerSettingsOpen: (open: boolean) => void;
   setProfilePanelOpen: (open: boolean) => void;
   setMobileNavOpen: (open: boolean) => void;
@@ -44,6 +53,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   activeChannelId: null,
   activeDmId: null,
   activeVoiceChannelId: null,
+  activeVoiceSession: null,
   isServerSettingsOpen: false,
   isProfilePanelOpen: false,
   isMobileNavOpen: false,
@@ -53,7 +63,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   setActiveChannelId: (channelId) => set({ activeChannelId: channelId }),
   setActiveDmId: (dmId) => set({ activeDmId: dmId }),
   setActiveVoiceChannelId: (voiceChannelId) =>
-    set({ activeVoiceChannelId: voiceChannelId }),
+    set(
+      voiceChannelId === null
+        ? { activeVoiceChannelId: null, activeVoiceSession: null }
+        : { activeVoiceChannelId: voiceChannelId },
+    ),
+  setActiveVoiceSession: (session) =>
+    set({
+      activeVoiceChannelId: session?.channel_id ?? null,
+      activeVoiceSession: session,
+    }),
   setServerSettingsOpen: (open) => set({ isServerSettingsOpen: open }),
   setProfilePanelOpen: (open) => set({ isProfilePanelOpen: open }),
   setMobileNavOpen: (open) => set({ isMobileNavOpen: open }),

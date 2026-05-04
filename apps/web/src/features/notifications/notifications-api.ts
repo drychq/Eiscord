@@ -2,21 +2,19 @@ import { z } from 'zod';
 import { request } from '../../shared/api/http-client';
 
 const notificationSchema = z.object({
-  notification_id: z.string().uuid(),
-  recipient_id: z.string().uuid(),
-  type: z.string(),
-  title: z.string(),
-  body: z.string().nullable(),
-  reference_type: z.string().nullable(),
-  reference_id: z.string().uuid().nullable(),
-  is_read: z.boolean(),
+  content_preview: z.string(),
   created_at: z.string(),
+  is_read: z.boolean(),
+  notification_id: z.string().uuid(),
+  read_at: z.string().nullable(),
+  source_id: z.string().uuid(),
+  source_type: z.string(),
+  type: z.string(),
 });
 
 const notificationPageSchema = z.object({
   items: z.array(notificationSchema),
   next_cursor: z.string().nullable(),
-  has_more: z.boolean(),
 });
 
 export type Notification = z.infer<typeof notificationSchema>;
@@ -44,9 +42,9 @@ export function fetchNotifications(
 
 export function markNotificationsRead(
   data: { notification_ids?: string[]; mark_all?: boolean },
-): Promise<{ ok: true }> {
-  return request<{ ok: true }>('POST', '/notifications/read', {
+): Promise<{ updated_count: number }> {
+  return request<{ updated_count: number }>('POST', '/notifications/read', {
     body: data,
-    schema: z.object({ ok: z.literal(true) }),
+    schema: z.object({ updated_count: z.number() }),
   });
 }

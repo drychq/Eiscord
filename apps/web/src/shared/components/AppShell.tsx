@@ -9,7 +9,7 @@ import { ProfilePanel } from '../../features/profile/ProfilePanel';
 import { useViewport } from '../hooks/use-viewport';
 import { useAuthStore } from '../state/use-auth-store';
 import { useWorkspaceStore } from '../state/use-workspace-store';
-import { useRealtimePermissionSync } from '../hooks/use-realtime-sync';
+import { useRealtimeEventSync, useRealtimePermissionSync } from '../hooks/use-realtime-sync';
 import * as socket from '../api/socket-client';
 
 export function AppShell() {
@@ -21,6 +21,7 @@ export function AppShell() {
   const [showNav, setShowNav] = useState(false);
 
   useRealtimePermissionSync();
+  useRealtimeEventSync();
 
   useEffect(() => {
     const token = useAuthStore.getState().accessToken;
