@@ -361,11 +361,7 @@ export class PermissionsService {
       return denyDecision('not_server_member');
     }
 
-    const permissionAction =
-      input.resource.type === 'voice' && input.action === PermissionAction.SubscribeRealtime
-        ? PermissionAction.JoinVoice
-        : input.action;
-    const requiredBits = requiredChannelBits(permissionAction);
+    const requiredBits = requiredChannelBits(input.action);
 
     if (requiredBits === 0n) {
       return allowDecision();

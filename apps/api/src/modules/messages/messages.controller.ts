@@ -2,6 +2,8 @@ import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query, Req } from '@
 
 import { CurrentUser } from '../../common/auth/current-user.decorator';
 import type { AuthenticatedUserContext } from '../../common/auth/auth.types';
+import { PermissionAction } from '../../common/permissions/permission.types';
+import { RequirePermissionForParam } from '../../common/permissions/require-permission.decorator';
 import { getRequestId } from '../../common/request/request-id.util';
 import type { AuthenticatedRequest } from '../../common/request/request.types';
 import { DeleteMessageDto } from './dto/delete-message.dto';
@@ -15,6 +17,7 @@ export class MessagesController {
   constructor(private readonly messagesService: MessagesService) {}
 
   @Get('channels/:channel_id/messages')
+  @RequirePermissionForParam(PermissionAction.ViewChannel, 'channel', 'channel_id')
   loadChannelMessages(
     @CurrentUser() user: AuthenticatedUserContext,
     @Param('channel_id', ParseUUIDPipe) channelId: string,
@@ -24,6 +27,7 @@ export class MessagesController {
   }
 
   @Post('channels/:channel_id/messages')
+  @RequirePermissionForParam(PermissionAction.SendMessage, 'channel', 'channel_id')
   sendChannelMessage(
     @CurrentUser() user: AuthenticatedUserContext,
     @Param('channel_id', ParseUUIDPipe) channelId: string,

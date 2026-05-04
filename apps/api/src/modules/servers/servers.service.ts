@@ -10,8 +10,10 @@ import { PrismaService } from '../../common/persistence/prisma.service';
 import { PermissionAction } from '../../common/permissions/permission.types';
 import { PermissionsService } from '../../common/permissions/permissions.service';
 import { AuditService } from '../audit/audit.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { buildRealtimeRoom, buildUserRoom } from '../realtime/realtime.rooms';
 import { RealtimePublisher } from '../realtime/realtime.publisher';
+import { VoiceService } from '../voice/voice.service';
 import { AssignMemberRoleDto } from './dto/assign-member-role.dto';
 import { CreateServerDto } from './dto/create-server.dto';
 import { CreateRoleDto } from './dto/create-role.dto';
@@ -73,9 +75,11 @@ type ServerUserRow = {
 export class ServersService {
   constructor(
     private readonly auditService: AuditService,
+    private readonly notificationsService: NotificationsService,
     private readonly permissionsService: PermissionsService,
     private readonly prisma: PrismaService,
     private readonly realtimePublisher: RealtimePublisher,
+    private readonly voiceService: VoiceService,
   ) {}
 
   async createServer(
@@ -471,6 +475,13 @@ export class ServersService {
       },
       requestId,
     );
+    await this.voiceService.releaseUserActiveSessionForServer(
+      serverId,
+      user.userId,
+      'server_left',
+      requestId,
+    );
+    await this.forceMemberLeaveServerRooms(serverId, user.userId);
 
     return { ok: true };
   }
@@ -553,7 +564,29 @@ export class ServersService {
     this.publishMemberChanged(serverId, membershipId, `member_${dto.action}`, summary, requestId);
     await this.publishPermissionChanged(serverId, 'member', membershipId, [target.userId], requestId);
 
+    if (dto.action === 'mute' || dto.action === 'remove') {
+      const notifResult = await this.notificationsService.createNotification(this.prisma, {
+        contentPreview: dto.action === 'mute'
+          ? 'You have been muted in a server'
+          : 'You have been removed from a server',
+        dedupeKey: `member:${membershipId}:${dto.action}`,
+        sourceId: serverId,
+        sourceType: 'server',
+        type: 'PERMISSION_CHANGED',
+        userId: target.userId,
+      });
+      if (notifResult.created) {
+        this.notificationsService.publishCreated(notifResult.notification, requestId);
+      }
+    }
+
     if (dto.action === 'remove') {
+      await this.voiceService.releaseUserActiveSessionForServer(
+        serverId,
+        target.userId,
+        'member_removed',
+        requestId,
+      );
       await this.forceMemberLeaveServerRooms(serverId, target.userId);
     }
 
@@ -749,6 +782,20 @@ export class ServersService {
     this.publishMemberChanged(serverId, membershipId, 'role_assigned', toMemberSummary(member), requestId);
     await this.publishPermissionChanged(serverId, 'member', membershipId, [member.userId], requestId);
 
+    if (member.userId !== user.userId) {
+      const notifResult = await this.notificationsService.createNotification(this.prisma, {
+        contentPreview: 'Your roles have been updated',
+        dedupeKey: `role:${membershipId}:assign:${dto.role_id}`,
+        sourceId: serverId,
+        sourceType: 'server',
+        type: 'PERMISSION_CHANGED',
+        userId: member.userId,
+      });
+      if (notifResult.created) {
+        this.notificationsService.publishCreated(notifResult.notification, requestId);
+      }
+    }
+
     return toMemberSummary(member);
   }
 
@@ -781,6 +828,20 @@ export class ServersService {
     await this.auditRoleChange(user.userId, 'RemoveRole', roleId, requestId, membershipId);
     this.publishMemberChanged(serverId, membershipId, 'role_removed', toMemberSummary(member), requestId);
     await this.publishPermissionChanged(serverId, 'member', membershipId, [member.userId], requestId);
+
+    if (member.userId !== user.userId) {
+      const notifResult = await this.notificationsService.createNotification(this.prisma, {
+        contentPreview: 'Your roles have been updated',
+        dedupeKey: `role:${membershipId}:remove:${roleId}`,
+        sourceId: serverId,
+        sourceType: 'server',
+        type: 'PERMISSION_CHANGED',
+        userId: member.userId,
+      });
+      if (notifResult.created) {
+        this.notificationsService.publishCreated(notifResult.notification, requestId);
+      }
+    }
 
     return toMemberSummary(member);
   }
@@ -1200,6 +1261,13 @@ export class ServersService {
         requestId,
       );
     }
+
+    await this.voiceService.releaseUsersActiveSessionsWithoutJoinPermission(
+      serverId,
+      affectedUserIds,
+      'permission_removed',
+      requestId,
+    );
   }
 
   private async listServerUserIds(serverId: string): Promise<string[]> {

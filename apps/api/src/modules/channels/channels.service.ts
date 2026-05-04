@@ -10,8 +10,10 @@ import { PrismaService } from '../../common/persistence/prisma.service';
 import { PermissionAction } from '../../common/permissions/permission.types';
 import { PermissionsService } from '../../common/permissions/permissions.service';
 import { AuditService } from '../audit/audit.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { buildRealtimeRoom, buildUserRoom } from '../realtime/realtime.rooms';
 import { RealtimePublisher } from '../realtime/realtime.publisher';
+import { VoiceService } from '../voice/voice.service';
 import {
   ChannelRow,
   ChannelSummary,
@@ -39,9 +41,11 @@ type ServerUserRow = {
 export class ChannelsService {
   constructor(
     private readonly auditService: AuditService,
+    private readonly notificationsService: NotificationsService,
     private readonly permissionsService: PermissionsService,
     private readonly prisma: PrismaService,
     private readonly realtimePublisher: RealtimePublisher,
+    private readonly voiceService: VoiceService,
   ) {}
 
   async createChannel(
@@ -235,6 +239,13 @@ export class ChannelsService {
       targetId: channelId,
       targetType: 'channel',
     });
+    if (deleted.type === 'voice') {
+      await this.voiceService.releaseChannelActiveSessions(
+        deleted.id,
+        'channel_deleted',
+        requestId,
+      );
+    }
     this.publishChannelChanged(deleted, 'deleted', [], requestId);
     await this.publishPermissionChanged(deleted, 'channel', requestId);
 
@@ -414,6 +425,15 @@ export class ChannelsService {
 
     this.realtimePublisher.leaveUserRooms(deniedUsers, roomsToLeave);
 
+    if (channel.type === 'voice') {
+      await this.voiceService.releaseUsersActiveSessionsForChannel(
+        channel.id,
+        deniedUsers,
+        'permission_removed',
+        requestId,
+      );
+    }
+
     for (const userId of serverUsers) {
       this.realtimePublisher.publishToRoom(
         buildUserRoom(userId),
@@ -426,6 +446,18 @@ export class ChannelsService {
         },
         requestId,
       );
+
+      const notifResult = await this.notificationsService.createNotification(this.prisma, {
+        contentPreview: `Permissions changed for channel #${channel.name}`,
+        dedupeKey: `permission:${channel.id}:${userId}`,
+        sourceId: channel.id,
+        sourceType: 'channel',
+        type: 'PERMISSION_CHANGED',
+        userId,
+      });
+      if (notifResult.created) {
+        this.notificationsService.publishCreated(notifResult.notification, requestId);
+      }
     }
   }
 

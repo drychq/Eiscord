@@ -2,6 +2,8 @@ import { Body, Controller, Delete, Get, Param, ParseUUIDPipe, Patch, Post, Req }
 
 import { CurrentUser } from '../../common/auth/current-user.decorator';
 import type { AuthenticatedUserContext } from '../../common/auth/auth.types';
+import { PermissionAction } from '../../common/permissions/permission.types';
+import { RequirePermissionForParam } from '../../common/permissions/require-permission.decorator';
 import { getRequestId } from '../../common/request/request-id.util';
 import type { AuthenticatedRequest } from '../../common/request/request.types';
 import { AssignMemberRoleDto } from './dto/assign-member-role.dto';
@@ -65,6 +67,7 @@ export class ServersController {
   }
 
   @Patch(':server_id/members/:member_id')
+  @RequirePermissionForParam(PermissionAction.ManageMember, 'server', 'server_id')
   manageMember(
     @CurrentUser() user: AuthenticatedUserContext,
     @Param('server_id', ParseUUIDPipe) serverId: string,
@@ -84,6 +87,7 @@ export class ServersController {
   }
 
   @Post(':server_id/roles')
+  @RequirePermissionForParam(PermissionAction.ManageRole, 'server', 'server_id')
   createRole(
     @CurrentUser() user: AuthenticatedUserContext,
     @Param('server_id', ParseUUIDPipe) serverId: string,
@@ -94,6 +98,7 @@ export class ServersController {
   }
 
   @Patch(':server_id/roles/:role_id')
+  @RequirePermissionForParam(PermissionAction.ManageRole, 'server', 'server_id')
   updateRole(
     @CurrentUser() user: AuthenticatedUserContext,
     @Param('role_id', ParseUUIDPipe) roleId: string,
@@ -104,6 +109,7 @@ export class ServersController {
   }
 
   @Delete(':server_id/roles/:role_id')
+  @RequirePermissionForParam(PermissionAction.ManageRole, 'server', 'server_id')
   deleteRole(
     @CurrentUser() user: AuthenticatedUserContext,
     @Param('role_id', ParseUUIDPipe) roleId: string,
@@ -113,6 +119,7 @@ export class ServersController {
   }
 
   @Post(':server_id/members/:member_id/roles')
+  @RequirePermissionForParam(PermissionAction.ManageRole, 'server', 'server_id')
   assignRole(
     @CurrentUser() user: AuthenticatedUserContext,
     @Param('server_id', ParseUUIDPipe) serverId: string,
@@ -130,6 +137,7 @@ export class ServersController {
   }
 
   @Delete(':server_id/members/:member_id/roles/:role_id')
+  @RequirePermissionForParam(PermissionAction.ManageRole, 'server', 'server_id')
   removeRole(
     @CurrentUser() user: AuthenticatedUserContext,
     @Param('server_id', ParseUUIDPipe) serverId: string,

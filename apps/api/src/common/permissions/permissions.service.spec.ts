@@ -145,6 +145,108 @@ describe('PermissionsService', () => {
       }),
     ).rejects.toMatchObject<AppError>({ code: ErrorCode.PermissionDenied });
   });
+
+  describe('assertCanManageMember hierarchy', () => {
+    it('allows higher-priority member to manage lower-priority member', async () => {
+      prisma.$queryRaw.mockResolvedValueOnce([
+        serverContextRow({ highestPriority: 10, permissionBits: String(PermissionBit.ManageMember) }),
+      ]);
+      prisma.$queryRaw.mockResolvedValueOnce([
+        { highestPriority: 5, isOwner: false, membershipId: membershipId(), memberStatus: 'active', ownerId: userId(9), permissionBits: '0', roleIds: [roleId()], userId: userId(2) },
+      ]);
+
+      await expect(
+        service.assertCanManageMember(user, serverId(), membershipId()),
+      ).resolves.toBeDefined();
+    });
+
+    it('denies lower-priority member from managing higher-priority member', async () => {
+      prisma.$queryRaw.mockResolvedValueOnce([
+        serverContextRow({ highestPriority: 3, permissionBits: String(PermissionBit.ManageMember) }),
+      ]);
+      prisma.$queryRaw.mockResolvedValueOnce([
+        { highestPriority: 10, isOwner: false, membershipId: membershipId(), memberStatus: 'active', ownerId: userId(9), permissionBits: '0', roleIds: [roleId()], userId: userId(2) },
+      ]);
+
+      await expect(
+        service.assertCanManageMember(user, serverId(), membershipId()),
+      ).rejects.toMatchObject<AppError>({ code: ErrorCode.PermissionDenied });
+    });
+
+    it('allows owner to manage any member', async () => {
+      prisma.$queryRaw.mockResolvedValueOnce([
+        serverContextRow({ ownerId: user.userId, permissionBits: '0' }),
+      ]);
+      prisma.$queryRaw.mockResolvedValueOnce([
+        { highestPriority: 10, isOwner: false, membershipId: membershipId(), memberStatus: 'active', ownerId: user.userId, permissionBits: '0', roleIds: [roleId()], userId: userId(2) },
+      ]);
+
+      await expect(
+        service.assertCanManageMember(user, serverId(), membershipId()),
+      ).resolves.toBeDefined();
+    });
+
+    it('denies managing owner', async () => {
+      prisma.$queryRaw.mockResolvedValueOnce([
+        serverContextRow({ highestPriority: 10, permissionBits: String(PermissionBit.ManageMember) }),
+      ]);
+      prisma.$queryRaw.mockResolvedValueOnce([
+        { highestPriority: 0, isOwner: true, membershipId: membershipId(), memberStatus: 'active', ownerId: userId(2), permissionBits: '0', roleIds: [roleId()], userId: userId(2) },
+      ]);
+
+      await expect(
+        service.assertCanManageMember(user, serverId(), membershipId()),
+      ).rejects.toMatchObject<AppError>({ code: ErrorCode.PermissionDenied });
+    });
+  });
+
+  describe('assertCanMutateRole hierarchy', () => {
+    it('allows owner to mutate any role', async () => {
+      prisma.$queryRaw.mockResolvedValueOnce([
+        serverContextRow({ ownerId: user.userId, permissionBits: '0' }),
+      ]);
+      prisma.$queryRaw.mockResolvedValueOnce([
+        { id: roleId(), isDefault: false, name: 'Mod', permissionBits: '0', priority: 5, serverId: serverId() },
+      ]);
+
+      await expect(
+        service.assertCanMutateRole(user, serverId(), {
+          targetRoleId: roleId(),
+          desiredPermissionBits: BigInt(PermissionBit.ViewChannel),
+          desiredPriority: 5,
+        }),
+      ).resolves.toBeDefined();
+    });
+
+    it('denies non-owner from granting permissions they lack', async () => {
+      prisma.$queryRaw.mockResolvedValueOnce([
+        serverContextRow({ highestPriority: 10, permissionBits: String(PermissionBit.ViewChannel) }),
+      ]);
+      prisma.$queryRaw.mockResolvedValueOnce([
+        { id: roleId(), isDefault: false, name: 'Mod', permissionBits: '0', priority: 5, serverId: serverId() },
+      ]);
+
+      await expect(
+        service.assertCanMutateRole(user, serverId(), {
+          targetRoleId: roleId(),
+          desiredPermissionBits: BigInt(PermissionBit.ViewChannel | PermissionBit.ManageMember),
+        }),
+      ).rejects.toMatchObject<AppError>({ code: ErrorCode.PermissionDenied });
+    });
+
+    it('denies managing role at or above actor priority', async () => {
+      prisma.$queryRaw.mockResolvedValueOnce([
+        serverContextRow({ highestPriority: 5, permissionBits: String(PermissionBit.ManageRole) }),
+      ]);
+      prisma.$queryRaw.mockResolvedValueOnce([
+        { id: roleId(), isDefault: false, name: 'Admin', permissionBits: '0', priority: 10, serverId: serverId() },
+      ]);
+
+      await expect(
+        service.assertCanMutateRole(user, serverId(), { targetRoleId: roleId() }),
+      ).rejects.toMatchObject<AppError>({ code: ErrorCode.PermissionDenied });
+    });
+  });
 });
 
 function userId(index: number): string {

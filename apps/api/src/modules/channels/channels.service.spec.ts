@@ -4,7 +4,9 @@ import { AppError } from '../../common/errors/app-error';
 import { PrismaService } from '../../common/persistence/prisma.service';
 import { PermissionsService } from '../../common/permissions/permissions.service';
 import { AuditService } from '../audit/audit.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { RealtimePublisher } from '../realtime/realtime.publisher';
+import { VoiceService } from '../voice/voice.service';
 import { ChannelsService } from './channels.service';
 
 const now = new Date('2026-05-03T00:00:00.000Z');
@@ -12,6 +14,7 @@ const user = { accountStatus: 'active', sessionId: sessionId(), userId: userId()
 
 describe('ChannelsService', () => {
   let auditService: jest.Mocked<AuditService>;
+  let notificationsService: { createNotification: jest.Mock; publishCreated: jest.Mock };
   let prisma: {
     $executeRaw: jest.Mock;
     $queryRaw: jest.Mock;
@@ -19,6 +22,7 @@ describe('ChannelsService', () => {
   };
   let permissionsService: jest.Mocked<PermissionsService>;
   let realtimePublisher: jest.Mocked<RealtimePublisher>;
+  let voiceService: jest.Mocked<VoiceService>;
   let service: ChannelsService;
   let tx: { $executeRaw: jest.Mock; $queryRaw: jest.Mock };
 
@@ -35,6 +39,10 @@ describe('ChannelsService', () => {
       $queryRaw: jest.fn(),
       $transaction: jest.fn((callback: (transaction: typeof tx) => unknown) => callback(tx)),
     };
+    notificationsService = {
+      createNotification: jest.fn().mockResolvedValue({ created: false, notification: {} }),
+      publishCreated: jest.fn(),
+    };
     permissionsService = {
       assertAllowed: jest.fn().mockResolvedValue(undefined),
       listUsersWithChannelPermission: jest.fn().mockResolvedValue([userId()]),
@@ -43,11 +51,17 @@ describe('ChannelsService', () => {
       publishToRoom: jest.fn(),
       leaveUserRooms: jest.fn(),
     } as unknown as jest.Mocked<RealtimePublisher>;
+    voiceService = {
+      releaseChannelActiveSessions: jest.fn().mockResolvedValue([]),
+      releaseUsersActiveSessionsForChannel: jest.fn().mockResolvedValue([]),
+    } as unknown as jest.Mocked<VoiceService>;
     service = new ChannelsService(
       auditService,
+      notificationsService as unknown as NotificationsService,
       permissionsService,
       prisma as unknown as PrismaService,
       realtimePublisher,
+      voiceService,
     );
   });
 

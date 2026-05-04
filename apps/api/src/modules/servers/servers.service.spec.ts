@@ -4,7 +4,9 @@ import { AppError } from '../../common/errors/app-error';
 import { PrismaService } from '../../common/persistence/prisma.service';
 import { PermissionsService } from '../../common/permissions/permissions.service';
 import { AuditService } from '../audit/audit.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { RealtimePublisher } from '../realtime/realtime.publisher';
+import { VoiceService } from '../voice/voice.service';
 import { ServersService } from './servers.service';
 
 const now = new Date('2026-05-03T00:00:00.000Z');
@@ -13,6 +15,7 @@ const bob = { accountStatus: 'active', sessionId: 'session-2', userId: userId(2)
 
 describe('ServersService', () => {
   let auditService: jest.Mocked<AuditService>;
+  let notificationsService: { createNotification: jest.Mock; publishCreated: jest.Mock };
   let prisma: {
     $executeRaw: jest.Mock;
     $queryRaw: jest.Mock;
@@ -20,6 +23,7 @@ describe('ServersService', () => {
   };
   let permissionsService: jest.Mocked<PermissionsService>;
   let realtimePublisher: jest.Mocked<RealtimePublisher>;
+  let voiceService: jest.Mocked<VoiceService>;
   let service: ServersService;
   let tx: { $executeRaw: jest.Mock; $queryRaw: jest.Mock };
 
@@ -36,6 +40,10 @@ describe('ServersService', () => {
       $queryRaw: jest.fn(),
       $transaction: jest.fn((callback: (transaction: typeof tx) => unknown) => callback(tx)),
     };
+    notificationsService = {
+      createNotification: jest.fn().mockResolvedValue({ created: false, notification: {} }),
+      publishCreated: jest.fn(),
+    };
     permissionsService = {
       checkAllowed: jest.fn().mockResolvedValue({ allowed: true }),
     } as unknown as jest.Mocked<PermissionsService>;
@@ -43,11 +51,17 @@ describe('ServersService', () => {
       publishToRoom: jest.fn(),
       leaveUserRooms: jest.fn(),
     } as unknown as jest.Mocked<RealtimePublisher>;
+    voiceService = {
+      releaseUserActiveSessionForServer: jest.fn().mockResolvedValue(null),
+      releaseUsersActiveSessionsWithoutJoinPermission: jest.fn().mockResolvedValue([]),
+    } as unknown as jest.Mocked<VoiceService>;
     service = new ServersService(
       auditService,
+      notificationsService as unknown as NotificationsService,
       permissionsService,
       prisma as unknown as PrismaService,
       realtimePublisher,
+      voiceService,
     );
   });
 
@@ -164,6 +178,7 @@ describe('ServersService', () => {
     tx.$queryRaw.mockResolvedValueOnce([
       serverMembershipRow({ membershipId: membershipId(), ownerId: alice.userId }),
     ]);
+    prisma.$queryRaw.mockResolvedValueOnce([]);
 
     await expect(service.leaveServer(bob, serverId(), 'request-1')).resolves.toEqual({ ok: true });
 
@@ -175,6 +190,30 @@ describe('ServersService', () => {
       `server:${serverId()}`,
       RealtimeEvent.MemberChanged,
       expect.objectContaining({ change_type: 'left' }),
+      'request-1',
+    );
+  });
+
+  it('mutes a member via manageMember', async () => {
+    const targetUserId = userId(2);
+    permissionsService.assertCanManageMember = jest.fn().mockResolvedValue({
+      userId: targetUserId,
+      highestPriority: 0,
+    });
+    tx.$queryRaw.mockResolvedValueOnce([memberRow({ userId: targetUserId, memberStatus: 'muted' })]);
+    prisma.$queryRaw.mockResolvedValueOnce([memberRow({ userId: targetUserId, memberStatus: 'muted' })]);
+
+    await expect(
+      service.manageMember(alice, serverId(), membershipId(), { action: 'mute' }, 'request-1'),
+    ).resolves.toMatchObject({ member_status: 'muted' });
+
+    expect(auditService.record).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'ManageMember:mute' }),
+    );
+    expect(realtimePublisher.publishToRoom).toHaveBeenCalledWith(
+      expect.stringContaining('server:'),
+      RealtimeEvent.MemberChanged,
+      expect.objectContaining({ change_type: 'member_mute' }),
       'request-1',
     );
   });

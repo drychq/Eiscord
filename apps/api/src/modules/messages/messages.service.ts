@@ -405,6 +405,20 @@ export class MessagesService {
       scopeType: summary.scope_type as 'channel' | 'dm',
     }, requestId);
 
+    if (dto.operation === 'delete' && message.senderId !== user.userId) {
+      const notifResult = await this.notificationsService.createNotification(this.prisma, {
+        contentPreview: 'Your message was deleted by a moderator',
+        dedupeKey: `message:${messageId}:deleted`,
+        sourceId: messageId,
+        sourceType: 'message',
+        type: 'PERMISSION_CHANGED',
+        userId: message.senderId,
+      });
+      if (notifResult.created) {
+        this.notificationsService.publishCreated(notifResult.notification, requestId);
+      }
+    }
+
     return summary;
   }
 

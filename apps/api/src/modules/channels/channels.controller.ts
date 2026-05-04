@@ -2,6 +2,8 @@ import { Body, Controller, Delete, Param, ParseUUIDPipe, Patch, Post, Req } from
 
 import { CurrentUser } from '../../common/auth/current-user.decorator';
 import type { AuthenticatedUserContext } from '../../common/auth/auth.types';
+import { PermissionAction } from '../../common/permissions/permission.types';
+import { RequirePermissionForParam } from '../../common/permissions/require-permission.decorator';
 import { getRequestId } from '../../common/request/request-id.util';
 import type { AuthenticatedRequest } from '../../common/request/request.types';
 import { ChannelsService } from './channels.service';
@@ -13,6 +15,7 @@ export class ChannelsController {
   constructor(private readonly channelsService: ChannelsService) {}
 
   @Post('servers/:server_id/channels')
+  @RequirePermissionForParam(PermissionAction.ManageChannel, 'server', 'server_id')
   createChannel(
     @CurrentUser() user: AuthenticatedUserContext,
     @Param('server_id', ParseUUIDPipe) serverId: string,
@@ -23,6 +26,7 @@ export class ChannelsController {
   }
 
   @Patch('channels/:channel_id')
+  @RequirePermissionForParam(PermissionAction.ManageChannel, 'channel', 'channel_id')
   updateChannel(
     @CurrentUser() user: AuthenticatedUserContext,
     @Param('channel_id', ParseUUIDPipe) channelId: string,
@@ -33,6 +37,7 @@ export class ChannelsController {
   }
 
   @Delete('channels/:channel_id')
+  @RequirePermissionForParam(PermissionAction.ManageChannel, 'channel', 'channel_id')
   deleteChannel(
     @CurrentUser() user: AuthenticatedUserContext,
     @Param('channel_id', ParseUUIDPipe) channelId: string,
