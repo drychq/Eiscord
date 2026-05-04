@@ -8,7 +8,11 @@
       "Bash(pnpm --filter web test --run)",
       "Bash(pnpm --filter web build)",
       "Bash(git add *)",
-      "Bash(git commit *)"
+      "Bash(git commit *)",
+      "Bash(pnpm run *)",
+      "Bash(pnpm --filter web exec tsc --noEmit)",
+      "Bash(git -C /home/chq/Desktop/Eiscord log --oneline -20)",
+      "Bash(pnpm -r exec tsc --noEmit)"
     ]
   }
 }
