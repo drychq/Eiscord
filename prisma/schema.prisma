@@ -221,11 +221,29 @@ model Channel {
 
   server     Server      @relation(fields: [serverId], references: [id], onDelete: Cascade)
   messages   Message[]
+  permissionOverwrites PermissionOverwrite[]
   readStates ReadState[]
 
   @@index([serverId, sortOrder])
   @@index([serverId, type])
   @@map("channels")
+}
+
+model PermissionOverwrite {
+  id         String   @id @default(uuid()) @db.Uuid
+  channelId  String   @map("channel_id") @db.Uuid
+  targetType String   @map("target_type") @db.VarChar(20)
+  targetId   String   @map("target_id") @db.Uuid
+  allowBits  BigInt   @default(0) @map("allow_bits")
+  denyBits   BigInt   @default(0) @map("deny_bits")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  channel Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@unique([channelId, targetType, targetId])
+  @@index([targetType, targetId])
+  @@map("permission_overwrites")
 }
 
 model Message {
