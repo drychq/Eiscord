@@ -8,6 +8,7 @@ import { RequestIdMiddleware } from './common/request/request-id.middleware';
 import { validateEnvironment } from './common/config/env.validation';
 import { PersistenceModule } from './common/persistence/persistence.module';
 import { RateLimitGuard } from './common/rate-limit/rate-limit.guard';
+import { RedisModule } from './common/redis/redis.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { AttachmentsModule } from './modules/attachments/attachments.module';
 import { AuthModule } from './modules/auth/auth.module';
@@ -29,6 +30,7 @@ import { VoiceModule } from './modules/voice/voice.module';
       validate: validateEnvironment,
     }),
     PersistenceModule,
+    RedisModule,
     HealthModule,
     AttachmentsModule,
     AuthModule,

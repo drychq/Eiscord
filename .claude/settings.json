@@ -12,7 +12,14 @@
       "Bash(pnpm run *)",
       "Bash(pnpm --filter web exec tsc --noEmit)",
       "Bash(git -C /home/chq/Desktop/Eiscord log --oneline -20)",
-      "Bash(pnpm -r exec tsc --noEmit)"
+      "Bash(pnpm -r exec tsc --noEmit)",
+      "Bash(git -C /home/chq/Desktop/Eiscord diff -w --stat HEAD)",
+      "Bash(pnpm --filter @eiscord/api build)",
+      "Bash(pnpm --filter @eiscord/api test)",
+      "Bash(pnpm --filter @eiscord/api test -- --testPathPattern=\"permission.guard\")",
+      "Bash(pnpm --filter @eiscord/api test -- --testPathPattern=\"permissions.service\")",
+      "Bash(pnpm --filter @eiscord/api test -- --testPathPattern=\"realtime.gateway\")",
+      "Bash(pnpm --filter @eiscord/shared test)"
     ]
   }
 }
