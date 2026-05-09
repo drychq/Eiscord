@@ -36,12 +36,12 @@ pnpm dev
 M6 验收命令：
 
 ```bash
-pnpm test:e2e:api
-pnpm test:e2e:web
+pnpm e2e:api
+pnpm e2e:web
 pnpm perf:k6
 ```
 
-`test:e2e:*` 会重建 `eiscord_test` 测试库，不会复用开发库。`perf:k6` 依赖本机安装 k6，并默认使用 `pnpm db:seed` 写入的 Alice/Bob/Carol 演示数据。
+`e2e:*` 会重建 `eiscord_test` 测试库，不会复用开发库。`perf:k6` 依赖本机安装 k6，并默认使用 `pnpm db:seed` 写入的 Alice/Bob/Carol 演示数据。
 
 ## 环境变量
 

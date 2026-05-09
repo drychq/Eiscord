@@ -57,7 +57,7 @@ pnpm db:seed
 pnpm dev
 ```
 
-`pnpm dev` 会先构建 `@eiscord/shared` 与 `@eiscord/media`，随后启动 API/Web。API 进程会按需 spawn `apps/media/dist/main.js` 作为 mediasoup worker 子进程。
+`pnpm dev` 会先构建 `@eiscord/shared` 与 `@eiscord/media`，随后并行启动 API/Web。API 进程会按需 spawn `apps/media/dist/main.js` 作为 mediasoup worker 子进程。
 
 默认端口：
 
@@ -79,8 +79,8 @@ curl http://localhost:3000/api/v1/health
 M6 验收命令：
 
 ```bash
-pnpm test:e2e:api
-pnpm test:e2e:web
+pnpm e2e:api
+pnpm e2e:web
 pnpm perf:k6
 ```
 

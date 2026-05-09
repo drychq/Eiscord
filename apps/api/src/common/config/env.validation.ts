@@ -24,7 +24,10 @@ const environmentSchema = z.object({
   PRESENCE_SWEEP_INTERVAL_MS: z.coerce.number().int().positive().default(5000),
   PRESENCE_OFFLINE_GRACE_MS: z.coerce.number().int().positive().default(45000),
   MEDIASOUP_LISTEN_IP: z.string().ip().default('127.0.0.1'),
-  MEDIASOUP_ANNOUNCED_IP: z.string().ip().optional(),
+  MEDIASOUP_ANNOUNCED_IP: z.preprocess(
+    (v) => (v === '' ? undefined : v),
+    z.string().ip().optional(),
+  ),
   MEDIASOUP_RTC_MIN_PORT: z.coerce.number().int().positive().default(40000),
   MEDIASOUP_RTC_MAX_PORT: z.coerce.number().int().positive().default(40100),
   MEDIASOUP_NUM_WORKERS: z.coerce.number().int().positive().default(1),

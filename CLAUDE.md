@@ -6,13 +6,18 @@
 
 | 命令 | 说明 |
 |------|------|
-| `pnpm dev` | 启动 API + Web（先 build shared） |
+| `pnpm dev` | 启动 API + Web（先构建 shared、media） |
 | `pnpm dev:api` / `pnpm dev:web` | 单独启动 |
 | `pnpm test` | 运行所有测试 |
+| `pnpm check` | 质量门：typecheck + lint + test |
+| `pnpm e2e` | 全量 E2E（API + Web） |
+| `pnpm e2e:api` / `pnpm e2e:web` / `pnpm e2e:voice` | 单项 E2E |
 | `pnpm db:generate` | 重新生成 Prisma Client |
 | `pnpm db:migrate` | 创建并应用迁移 |
+| `pnpm db:seed` | 写入演示数据 |
+| `pnpm db:reset` | 重建开发库（drop → migrate → seed） |
 | `pnpm build` | 构建所有子包 |
-| `docker compose up -d` | 启动 PostgreSQL / Redis / MinIO |
+| `pnpm infra:up` / `pnpm infra:down` | 启动/停止 Docker 服务 |
 
 ## 关键路径
 

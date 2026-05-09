@@ -146,7 +146,7 @@
 - AC-01 至 AC-06 全部通过。
 - AC-E1 至 AC-E8 全部通过。
 - AC-N1 至 AC-N5 有可执行验证方式。
-- 命令入口：`pnpm test:e2e:api`、`pnpm test:e2e:web`、`pnpm perf:k6`。
+- 命令入口：`pnpm e2e:api`、`pnpm e2e:web`、`pnpm perf:k6`。
 
 ## 联调顺序
 
