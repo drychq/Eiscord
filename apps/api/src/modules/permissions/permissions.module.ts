@@ -1,5 +1,4 @@
 import { Module } from '@nestjs/common';
-import { APP_GUARD } from '@nestjs/core';
 
 import { PermissionGuard } from '../../common/permissions/permission.guard';
 import { PermissionsService } from '../../common/permissions/permissions.service';
@@ -12,11 +11,7 @@ import { PermissionsController } from './permissions.controller';
   providers: [
     PermissionsService,
     PermissionGuard,
-    {
-      provide: APP_GUARD,
-      useExisting: PermissionGuard,
-    },
   ],
-  exports: [PermissionsService],
+  exports: [PermissionGuard, PermissionsService],
 })
 export class PermissionsModule {}

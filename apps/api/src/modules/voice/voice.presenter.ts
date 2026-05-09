@@ -5,7 +5,12 @@ export type VoiceSessionRow = {
   deafenState: boolean;
   id: string;
   joinedAt: Date;
+  mediaState: string;
   muteState: boolean;
+  producerId: string | null;
+  recvTransportId: string | null;
+  routerId: string | null;
+  sendTransportId: string | null;
   updatedAt: Date;
   userId: string;
   userNickname: string;
@@ -17,6 +22,7 @@ export type VoiceSessionSummary = {
   connection_status: string;
   deafen_state: boolean;
   joined_at: string;
+  media_state: string;
   member: {
     avatar_attachment_id: string | null;
     nickname: string;
@@ -24,6 +30,7 @@ export type VoiceSessionSummary = {
     username: string;
   };
   mute_state: boolean;
+  producer_id: string | null;
   session_id: string;
   updated_at: string;
   user_id: string;
@@ -35,6 +42,7 @@ export function toVoiceSessionSummary(row: VoiceSessionRow): VoiceSessionSummary
     connection_status: row.connectionStatus,
     deafen_state: row.deafenState,
     joined_at: row.joinedAt.toISOString(),
+    media_state: row.mediaState,
     member: {
       avatar_attachment_id: row.avatarAttachmentId,
       nickname: row.userNickname,
@@ -42,6 +50,7 @@ export function toVoiceSessionSummary(row: VoiceSessionRow): VoiceSessionSummary
       username: row.username,
     },
     mute_state: row.muteState,
+    producer_id: row.producerId,
     session_id: row.id,
     updated_at: row.updatedAt.toISOString(),
     user_id: row.userId,

@@ -42,6 +42,14 @@ export class VoiceController {
     return this.voiceService.leaveSession(user, sessionId, getRequestId(request));
   }
 
+  @Get('sessions/:session_id/ice-servers')
+  refreshIceServers(
+    @CurrentUser() user: AuthenticatedUserContext,
+    @Param('session_id', ParseUUIDPipe) sessionId: string,
+  ) {
+    return this.voiceService.refreshIceServers(user, sessionId);
+  }
+
   @Patch('sessions/:session_id/state')
   updateState(
     @CurrentUser() user: AuthenticatedUserContext,

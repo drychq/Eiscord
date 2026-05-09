@@ -1,6 +1,7 @@
-import { HttpStatus, Injectable } from '@nestjs/common';
+import { HttpStatus, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 
-import { ErrorCode, RealtimeEvent } from '@eiscord/shared';
+import { ErrorCode, JoinVoiceMediaResponse, RealtimeEvent, VoiceActiveProducer } from '@eiscord/shared';
 
 import { AuthenticatedUserContext } from '../../common/auth/auth.types';
 import { AppError } from '../../common/errors/app-error';
@@ -8,6 +9,8 @@ import { PrismaService } from '../../common/persistence/prisma.service';
 import { PermissionAction } from '../../common/permissions/permission.types';
 import { PermissionsService } from '../../common/permissions/permissions.service';
 import { AuditService } from '../audit/audit.service';
+import { MediaSignalingService } from '../media-signaling/media-signaling.service';
+import { TurnCredentialService } from '../media-signaling/turn-credential.service';
 import { buildRealtimeRoom } from '../realtime/realtime.rooms';
 import { RealtimePublisher } from '../realtime/realtime.publisher';
 import { JoinVoiceChannelDto } from './dto/join-voice-channel.dto';
@@ -25,21 +28,60 @@ type VoiceChannelRow = {
   serverId: string;
 };
 
+type VoiceRoomCountRow = {
+  count: bigint | number | string;
+};
+
+type VoiceActiveProducerRow = {
+  channelId: string;
+  muteState: boolean;
+  producerId: string;
+  userId: string;
+};
+
+export type JoinVoiceChannelResult = VoiceSessionSummary & {
+  media: JoinVoiceMediaResponse;
+};
+
 @Injectable()
-export class VoiceService {
+export class VoiceService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(VoiceService.name);
+  private negotiationSweepTimer: ReturnType<typeof setInterval> | null = null;
+
   constructor(
     private readonly auditService: AuditService,
+    private readonly configService: ConfigService,
+    private readonly mediaSignalingService: MediaSignalingService,
     private readonly permissionsService: PermissionsService,
     private readonly prisma: PrismaService,
     private readonly realtimePublisher: RealtimePublisher,
+    private readonly turnCredentialService: TurnCredentialService,
   ) {}
+
+  onModuleInit() {
+    if (process.env.NODE_ENV === 'test' && process.env.REALTIME_SWEEP_IN_TEST !== 'true') {
+      return;
+    }
+
+    const intervalMs = this.configService.get<number>('VOICE_NEGOTIATION_SWEEP_INTERVAL_MS') ?? 5000;
+    this.negotiationSweepTimer = setInterval(() => {
+      void this.sweepNegotiationTimeouts();
+    }, intervalMs);
+  }
+
+  onModuleDestroy() {
+    if (this.negotiationSweepTimer) {
+      clearInterval(this.negotiationSweepTimer);
+      this.negotiationSweepTimer = null;
+    }
+  }
 
   async joinChannel(
     user: AuthenticatedUserContext,
     channelId: string,
     dto: JoinVoiceChannelDto,
     requestId?: string,
-  ): Promise<VoiceSessionSummary> {
+  ): Promise<JoinVoiceChannelResult> {
     await this.permissionsService.assertAllowed({
       action: PermissionAction.JoinVoice,
       requestId,
@@ -47,6 +89,9 @@ export class VoiceService {
       user,
     });
     await this.getActiveVoiceChannel(channelId);
+    await this.assertRoomCapacity(channelId, user.userId);
+
+    const negotiationTimeoutMs = this.configService.get<number>('VOICE_NEGOTIATION_TIMEOUT_MS') ?? 30000;
 
     const result = await this.prisma.$transaction(async (tx) => {
       const previous = await this.getActiveSessionForUserInternal(tx, user.userId);
@@ -61,14 +106,18 @@ export class VoiceService {
           user_id,
           mute_state,
           deafen_state,
-          connection_status
+          connection_status,
+          media_state,
+          negotiation_deadline
         )
         VALUES (
           ${channelId}::uuid,
           ${user.userId}::uuid,
           ${dto.initial_mute_state ?? false},
           ${dto.initial_deafen_state ?? false},
-          'connected'
+          'connecting',
+          'negotiating',
+          NOW() + (${negotiationTimeoutMs}::int * INTERVAL '1 millisecond')
         )
         RETURNING
           id,
@@ -77,6 +126,11 @@ export class VoiceService {
           mute_state AS "muteState",
           deafen_state AS "deafenState",
           connection_status AS "connectionStatus",
+          media_state AS "mediaState",
+          router_id AS "routerId",
+          send_transport_id AS "sendTransportId",
+          recv_transport_id AS "recvTransportId",
+          producer_id AS "producerId",
           joined_at AS "joinedAt",
           updated_at AS "updatedAt",
           (SELECT username FROM users WHERE id = ${user.userId}::uuid) AS "username",
@@ -89,7 +143,19 @@ export class VoiceService {
 
     if (result.previous) {
       this.publishVoiceLeft(result.previous, 'switch_channel', requestId);
+      void this.mediaSignalingService.releaseSession(result.previous.id, 'switch_channel').catch((error) => {
+        this.logger.warn(`Failed to release previous voice session: ${String(error)}`);
+      });
     }
+
+    const router = await this.mediaSignalingService.prepareRouter(channelId);
+    await this.prisma.$executeRaw`
+      UPDATE voice_sessions
+      SET router_id = ${router.routerId}, updated_at = NOW()
+      WHERE id = ${result.created.id}::uuid
+        AND ended_at IS NULL
+    `;
+    const activeProducers = await this.listActiveProducersForChannel(this.prisma, channelId);
 
     this.publishVoiceJoined(result.created, requestId);
 
@@ -102,7 +168,15 @@ export class VoiceService {
       targetType: 'voice_channel',
     });
 
-    return toVoiceSessionSummary(result.created);
+    return {
+      ...toVoiceSessionSummary(result.created),
+      media: {
+        active_producers: activeProducers,
+        ice_servers: [this.turnCredentialService.signCredential(user.userId)],
+        router_rtp_capabilities: router.rtpCapabilities,
+        signaling_channel: buildRealtimeRoom('voice', channelId),
+      },
+    };
   }
 
   async listChannelSessions(
@@ -118,6 +192,26 @@ export class VoiceService {
     const rows = await this.listActiveSessionsForChannel(this.prisma, channelId);
 
     return rows.map(toVoiceSessionSummary);
+  }
+
+  async refreshIceServers(user: AuthenticatedUserContext, sessionId: string) {
+    const current = await this.getActiveSessionById(this.prisma, sessionId);
+
+    if (!current) {
+      throw new AppError(ErrorCode.ResourceNotFound, 'Voice session was not found.', HttpStatus.NOT_FOUND);
+    }
+
+    if (current.userId !== user.userId) {
+      throw new AppError(
+        ErrorCode.PermissionDenied,
+        'Cannot refresh ICE for another user voice session.',
+        HttpStatus.FORBIDDEN,
+      );
+    }
+
+    return {
+      ice_servers: [this.turnCredentialService.signCredential(user.userId)],
+    };
   }
 
   async leaveSession(
@@ -141,6 +235,9 @@ export class VoiceService {
 
     await this.prisma.$transaction(async (tx) => {
       await this.endSession(tx, sessionId);
+    });
+    await this.mediaSignalingService.releaseSession(sessionId, 'manual_leave').catch((error) => {
+      this.logger.warn(`Failed to release voice session media plane: ${String(error)}`);
     });
     this.publishVoiceLeft(current, 'manual_leave', requestId);
 
@@ -204,12 +301,26 @@ export class VoiceService {
         mute_state AS "muteState",
         deafen_state AS "deafenState",
         connection_status AS "connectionStatus",
+        media_state AS "mediaState",
+        router_id AS "routerId",
+        send_transport_id AS "sendTransportId",
+        recv_transport_id AS "recvTransportId",
+        producer_id AS "producerId",
         joined_at AS "joinedAt",
         updated_at AS "updatedAt",
         (SELECT username FROM users WHERE id = voice_sessions.user_id) AS "username",
         (SELECT nickname FROM users WHERE id = voice_sessions.user_id) AS "userNickname",
         (SELECT avatar_attachment_id FROM users WHERE id = voice_sessions.user_id) AS "avatarAttachmentId"
     `;
+
+    if (dto.mute_state !== undefined && dto.mute_state !== current.muteState) {
+      const op = dto.mute_state
+        ? this.mediaSignalingService.pauseProducer(updated.producerId)
+        : this.mediaSignalingService.resumeProducer(updated.producerId);
+      await op.catch((error) => {
+        this.logger.warn(`Failed to toggle producer state: ${String(error)}`);
+      });
+    }
 
     this.publishVoiceStateChanged(updated, requestId);
 
@@ -239,6 +350,7 @@ export class VoiceService {
     await this.prisma.$transaction(async (tx) => {
       await this.endSession(tx, current.id);
     });
+    await this.mediaSignalingService.releaseSession(current.id, reason).catch(() => undefined);
     this.publishVoiceLeft(current, reason, requestId);
 
     return toVoiceSessionSummary(current);
@@ -259,6 +371,7 @@ export class VoiceService {
     await this.prisma.$transaction(async (tx) => {
       await this.endSession(tx, current.id);
     });
+    await this.mediaSignalingService.releaseSession(current.id, reason).catch(() => undefined);
     this.publishVoiceLeft(current, reason, requestId);
 
     return toVoiceSessionSummary(current);
@@ -306,6 +419,7 @@ export class VoiceService {
     });
 
     for (const session of targeted) {
+      await this.mediaSignalingService.releaseSession(session.id, reason).catch(() => undefined);
       this.publishVoiceLeft(session, reason, requestId);
     }
 
@@ -353,6 +467,7 @@ export class VoiceService {
     });
 
     for (const session of toRelease) {
+      await this.mediaSignalingService.releaseSession(session.id, reason).catch(() => undefined);
       this.publishVoiceLeft(session, reason, requestId);
     }
 
@@ -377,10 +492,57 @@ export class VoiceService {
     });
 
     for (const session of current) {
+      await this.mediaSignalingService.releaseSession(session.id, reason).catch(() => undefined);
       this.publishVoiceLeft(session, reason, requestId);
     }
 
     return current.map(toVoiceSessionSummary);
+  }
+
+  async sweepNegotiationTimeouts(): Promise<VoiceSessionSummary[]> {
+    const expired = await this.prisma.$queryRaw<VoiceSessionRow[]>`
+      SELECT
+        vs.id,
+        vs.channel_id AS "channelId",
+        vs.user_id AS "userId",
+        vs.mute_state AS "muteState",
+        vs.deafen_state AS "deafenState",
+        vs.connection_status AS "connectionStatus",
+        vs.media_state AS "mediaState",
+        vs.router_id AS "routerId",
+        vs.send_transport_id AS "sendTransportId",
+        vs.recv_transport_id AS "recvTransportId",
+        vs.producer_id AS "producerId",
+        vs.joined_at AS "joinedAt",
+        vs.updated_at AS "updatedAt",
+        u.username,
+        u.nickname AS "userNickname",
+        u.avatar_attachment_id AS "avatarAttachmentId"
+      FROM voice_sessions vs
+      INNER JOIN users u ON u.id = vs.user_id
+      WHERE vs.ended_at IS NULL
+        AND vs.media_state IN ('negotiating', 'reconnecting')
+        AND vs.negotiation_deadline IS NOT NULL
+        AND vs.negotiation_deadline < NOW()
+      LIMIT 50
+    `;
+
+    if (expired.length === 0) {
+      return [];
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      for (const session of expired) {
+        await this.endSession(tx, session.id);
+      }
+    });
+
+    for (const session of expired) {
+      await this.mediaSignalingService.releaseSession(session.id, 'signaling_timeout').catch(() => undefined);
+      this.publishVoiceLeft(session, 'signaling_timeout');
+    }
+
+    return expired.map(toVoiceSessionSummary);
   }
 
   private async getActiveVoiceChannel(channelId: string): Promise<VoiceChannelRow> {
@@ -404,6 +566,22 @@ export class VoiceService {
     return channel;
   }
 
+  private async assertRoomCapacity(channelId: string, userId: string): Promise<void> {
+    const [row] = await this.prisma.$queryRaw<VoiceRoomCountRow[]>`
+      SELECT COUNT(*)::text AS "count"
+      FROM voice_sessions
+      WHERE channel_id = ${channelId}::uuid
+        AND user_id <> ${userId}::uuid
+        AND ended_at IS NULL
+    `;
+    const activeCount = Number(row?.count ?? 0);
+    const maxParticipants = this.configService.get<number>('VOICE_MAX_PARTICIPANTS_PER_ROOM') ?? 20;
+
+    if (Number.isFinite(activeCount) && activeCount >= maxParticipants) {
+      throw new AppError(ErrorCode.Conflict, 'Voice channel is full.', HttpStatus.CONFLICT);
+    }
+  }
+
   private async getActiveSessionById(
     tx: Pick<PrismaService, '$queryRaw'>,
     sessionId: string,
@@ -416,6 +594,11 @@ export class VoiceService {
         vs.mute_state AS "muteState",
         vs.deafen_state AS "deafenState",
         vs.connection_status AS "connectionStatus",
+        vs.media_state AS "mediaState",
+        vs.router_id AS "routerId",
+        vs.send_transport_id AS "sendTransportId",
+        vs.recv_transport_id AS "recvTransportId",
+        vs.producer_id AS "producerId",
         vs.joined_at AS "joinedAt",
         vs.updated_at AS "updatedAt",
         u.username,
@@ -449,6 +632,11 @@ export class VoiceService {
         vs.mute_state AS "muteState",
         vs.deafen_state AS "deafenState",
         vs.connection_status AS "connectionStatus",
+        vs.media_state AS "mediaState",
+        vs.router_id AS "routerId",
+        vs.send_transport_id AS "sendTransportId",
+        vs.recv_transport_id AS "recvTransportId",
+        vs.producer_id AS "producerId",
         vs.joined_at AS "joinedAt",
         vs.updated_at AS "updatedAt",
         u.username,
@@ -479,6 +667,11 @@ export class VoiceService {
         vs.mute_state AS "muteState",
         vs.deafen_state AS "deafenState",
         vs.connection_status AS "connectionStatus",
+        vs.media_state AS "mediaState",
+        vs.router_id AS "routerId",
+        vs.send_transport_id AS "sendTransportId",
+        vs.recv_transport_id AS "recvTransportId",
+        vs.producer_id AS "producerId",
         vs.joined_at AS "joinedAt",
         vs.updated_at AS "updatedAt",
         u.username,
@@ -509,6 +702,11 @@ export class VoiceService {
         vs.mute_state AS "muteState",
         vs.deafen_state AS "deafenState",
         vs.connection_status AS "connectionStatus",
+        vs.media_state AS "mediaState",
+        vs.router_id AS "routerId",
+        vs.send_transport_id AS "sendTransportId",
+        vs.recv_transport_id AS "recvTransportId",
+        vs.producer_id AS "producerId",
         vs.joined_at AS "joinedAt",
         vs.updated_at AS "updatedAt",
         u.username,
@@ -520,6 +718,32 @@ export class VoiceService {
         AND vs.ended_at IS NULL
       ORDER BY vs.joined_at ASC
     `;
+  }
+
+  private async listActiveProducersForChannel(
+    tx: Pick<PrismaService, '$queryRaw'>,
+    channelId: string,
+  ): Promise<VoiceActiveProducer[]> {
+    const rows = await tx.$queryRaw<VoiceActiveProducerRow[]>`
+      SELECT
+        channel_id AS "channelId",
+        user_id AS "userId",
+        producer_id AS "producerId",
+        mute_state AS "muteState"
+      FROM voice_sessions
+      WHERE channel_id = ${channelId}::uuid
+        AND ended_at IS NULL
+        AND producer_id IS NOT NULL
+      ORDER BY joined_at ASC
+    `;
+
+    return rows.map((row) => ({
+      channel_id: row.channelId,
+      kind: 'audio',
+      paused: row.muteState,
+      producer_id: row.producerId,
+      user_id: row.userId,
+    }));
   }
 
   private async listActiveSessionsForUsersInServer(
@@ -535,6 +759,11 @@ export class VoiceService {
         vs.mute_state AS "muteState",
         vs.deafen_state AS "deafenState",
         vs.connection_status AS "connectionStatus",
+        vs.media_state AS "mediaState",
+        vs.router_id AS "routerId",
+        vs.send_transport_id AS "sendTransportId",
+        vs.recv_transport_id AS "recvTransportId",
+        vs.producer_id AS "producerId",
         vs.joined_at AS "joinedAt",
         vs.updated_at AS "updatedAt",
         u.username,
@@ -556,6 +785,8 @@ export class VoiceService {
       UPDATE voice_sessions
       SET
         connection_status = 'disconnected',
+        media_state = 'idle',
+        negotiation_deadline = NULL,
         ended_at = COALESCE(ended_at, NOW()),
         updated_at = NOW()
       WHERE id = ${sessionId}::uuid
@@ -595,6 +826,7 @@ export class VoiceService {
         channel_id: row.channelId,
         connection_status: row.connectionStatus,
         deafen_state: row.deafenState,
+        media_state: row.mediaState,
         mute_state: row.muteState,
         session_id: row.id,
         updated_at: row.updatedAt.toISOString(),

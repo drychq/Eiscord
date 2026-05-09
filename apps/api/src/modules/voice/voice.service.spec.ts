@@ -1,8 +1,12 @@
+import { ConfigService } from '@nestjs/config';
+
 import { RealtimeEvent } from '@eiscord/shared';
 
 import { PrismaService } from '../../common/persistence/prisma.service';
 import { PermissionsService } from '../../common/permissions/permissions.service';
 import { AuditService } from '../audit/audit.service';
+import { MediaSignalingService } from '../media-signaling/media-signaling.service';
+import { TurnCredentialService } from '../media-signaling/turn-credential.service';
 import { RealtimePublisher } from '../realtime/realtime.publisher';
 import { VoiceService } from './voice.service';
 
@@ -11,16 +15,32 @@ const user = { accountStatus: 'active' as const, sessionId: sessionId(), userId:
 
 describe('VoiceService', () => {
   let auditService: jest.Mocked<AuditService>;
+  let configService: { get: jest.Mock };
+  let mediaSignalingService: jest.Mocked<MediaSignalingService>;
   let permissionsService: jest.Mocked<PermissionsService>;
-  let prisma: { $queryRaw: jest.Mock; $transaction: jest.Mock };
+  let prisma: { $executeRaw: jest.Mock; $queryRaw: jest.Mock; $transaction: jest.Mock };
   let realtimePublisher: jest.Mocked<RealtimePublisher>;
   let service: VoiceService;
   let tx: { $executeRaw: jest.Mock; $queryRaw: jest.Mock };
+  let turnCredentialService: jest.Mocked<TurnCredentialService>;
 
   beforeEach(() => {
     auditService = {
       record: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<AuditService>;
+    configService = {
+      get: jest.fn((key: string) => {
+        if (key === 'VOICE_NEGOTIATION_TIMEOUT_MS') return 30_000;
+        if (key === 'VOICE_NEGOTIATION_SWEEP_INTERVAL_MS') return 5_000;
+        return undefined;
+      }),
+    };
+    mediaSignalingService = {
+      pauseProducer: jest.fn().mockResolvedValue(undefined),
+      prepareRouter: jest.fn().mockResolvedValue({ routerId: 'router-1', rtpCapabilities: { codecs: [] } }),
+      releaseSession: jest.fn().mockResolvedValue(undefined),
+      resumeProducer: jest.fn().mockResolvedValue(undefined),
+    } as unknown as jest.Mocked<MediaSignalingService>;
     permissionsService = {
       assertAllowed: jest.fn().mockResolvedValue(undefined),
       checkAllowed: jest.fn().mockResolvedValue({ allowed: true }),
@@ -30,6 +50,7 @@ describe('VoiceService', () => {
       $queryRaw: jest.fn(),
     };
     prisma = {
+      $executeRaw: jest.fn().mockResolvedValue(1),
       $queryRaw: jest.fn(),
       $transaction: jest.fn((callback: (transaction: typeof tx) => unknown) => callback(tx)),
     };
@@ -37,41 +58,70 @@ describe('VoiceService', () => {
       leaveUserRooms: jest.fn(),
       publishToRoom: jest.fn(),
     } as unknown as jest.Mocked<RealtimePublisher>;
+    turnCredentialService = {
+      signCredential: jest.fn().mockReturnValue({
+        credential: 'credential',
+        credential_type: 'password',
+        ttl_seconds: 300,
+        urls: ['turn:localhost:3478?transport=udp'],
+        username: '1714915200:user',
+      }),
+    } as unknown as jest.Mocked<TurnCredentialService>;
     service = new VoiceService(
       auditService,
+      configService as unknown as ConfigService,
+      mediaSignalingService,
       permissionsService,
       prisma as unknown as PrismaService,
       realtimePublisher,
+      turnCredentialService,
     );
   });
 
-  it('automatically switches an existing voice session before joining the new channel', async () => {
+  it('joins a voice channel with mediasoup negotiation metadata and TURN credentials', async () => {
     prisma.$queryRaw.mockResolvedValueOnce([{ channelId: channelId(2), serverId: serverId() }]);
-    tx.$queryRaw.mockResolvedValueOnce([voiceSessionRow({ channelId: channelId(1), id: sessionId(1) })]);
+    prisma.$queryRaw.mockResolvedValueOnce([{ count: '1' }]);
+    tx.$queryRaw.mockResolvedValueOnce([]);
     tx.$queryRaw.mockResolvedValueOnce([
-      voiceSessionRow({ channelId: channelId(2), id: sessionId(2), muteState: true }),
+      voiceSessionRow({ channelId: channelId(2), id: sessionId(2), mediaState: 'negotiating' }),
+    ]);
+    prisma.$queryRaw.mockResolvedValueOnce([
+      {
+        channelId: channelId(2),
+        muteState: false,
+        producerId: 'producer-existing',
+        userId: userId(2),
+      },
     ]);
 
-    await expect(
-      service.joinChannel(
-        user,
-        channelId(2),
-        { initial_deafen_state: false, initial_mute_state: true },
-        'request-1',
-      ),
-    ).resolves.toMatchObject({
-      channel_id: channelId(2),
-      mute_state: true,
-      session_id: sessionId(2),
-    });
-
-    expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
-    expect(realtimePublisher.publishToRoom).toHaveBeenCalledWith(
-      `voice:${channelId(1)}`,
-      RealtimeEvent.VoiceMemberLeft,
-      expect.objectContaining({ reason: 'switch_channel', user_id: userId(1) }),
+    const result = await service.joinChannel(
+      user,
+      channelId(2),
+      { initial_deafen_state: false, initial_mute_state: false },
       'request-1',
     );
+
+    expect(result).toMatchObject({
+      channel_id: channelId(2),
+      media: {
+        active_producers: [
+          {
+            channel_id: channelId(2),
+            kind: 'audio',
+            paused: false,
+            producer_id: 'producer-existing',
+            user_id: userId(2),
+          },
+        ],
+        ice_servers: [{ credential: 'credential', credential_type: 'password' }],
+        router_rtp_capabilities: { codecs: [] },
+        signaling_channel: `voice:${channelId(2)}`,
+      },
+      media_state: 'negotiating',
+      session_id: sessionId(2),
+    });
+    expect(mediaSignalingService.prepareRouter).toHaveBeenCalledWith(channelId(2));
+    expect(turnCredentialService.signCredential).toHaveBeenCalledWith(user.userId);
     expect(realtimePublisher.publishToRoom).toHaveBeenCalledWith(
       `voice:${channelId(2)}`,
       RealtimeEvent.VoiceMemberJoined,
@@ -80,27 +130,82 @@ describe('VoiceService', () => {
     );
   });
 
-  it('updates voice state and publishes VoiceStateChanged', async () => {
-    prisma.$queryRaw.mockResolvedValueOnce([voiceSessionRow({ muteState: false })]);
-    prisma.$queryRaw.mockResolvedValueOnce([voiceSessionRow({ muteState: true })]);
+  it('switches to a new voice channel and releases the previous mediasoup session', async () => {
+    prisma.$queryRaw.mockResolvedValueOnce([{ channelId: channelId(2), serverId: serverId() }]);
+    prisma.$queryRaw.mockResolvedValueOnce([{ count: '0' }]);
+    tx.$queryRaw.mockResolvedValueOnce([voiceSessionRow({ channelId: channelId(1), id: sessionId(1) })]);
+    tx.$queryRaw.mockResolvedValueOnce([
+      voiceSessionRow({ channelId: channelId(2), id: sessionId(2), mediaState: 'negotiating' }),
+    ]);
+    prisma.$queryRaw.mockResolvedValueOnce([]);
 
-    await expect(
-      service.updateState(user, sessionId(1), { mute_state: true }, 'request-2'),
-    ).resolves.toMatchObject({ mute_state: true });
+    await service.joinChannel(user, channelId(2), {}, 'request-2');
 
+    expect(mediaSignalingService.releaseSession).toHaveBeenCalledWith(sessionId(1), 'switch_channel');
     expect(realtimePublisher.publishToRoom).toHaveBeenCalledWith(
       `voice:${channelId(1)}`,
-      RealtimeEvent.VoiceStateChanged,
-      expect.objectContaining({ mute_state: true, session_id: sessionId(1) }),
+      RealtimeEvent.VoiceMemberLeft,
+      expect.objectContaining({ reason: 'switch_channel', user_id: userId(1) }),
       'request-2',
     );
   });
 
-  it('leaves missing sessions idempotently', async () => {
-    prisma.$queryRaw.mockResolvedValueOnce([]);
+  it('rejects joining when the voice channel reaches its participant limit', async () => {
+    prisma.$queryRaw.mockResolvedValueOnce([{ channelId: channelId(2), serverId: serverId() }]);
+    prisma.$queryRaw.mockResolvedValueOnce([{ count: '20' }]);
 
-    await expect(service.leaveSession(user, sessionId(1))).resolves.toEqual({ ok: true });
-    expect(tx.$executeRaw).not.toHaveBeenCalled();
+    await expect(service.joinChannel(user, channelId(2), {}, 'request-full')).rejects.toThrow(
+      'Voice channel is full.',
+    );
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('toggles producer pause when mute state flips', async () => {
+    prisma.$queryRaw.mockResolvedValueOnce([voiceSessionRow({ muteState: false, producerId: 'producer-1' })]);
+    prisma.$queryRaw.mockResolvedValueOnce([
+      voiceSessionRow({ muteState: true, producerId: 'producer-1' }),
+    ]);
+
+    await service.updateState(user, sessionId(1), { mute_state: true }, 'request-3');
+
+    expect(mediaSignalingService.pauseProducer).toHaveBeenCalledWith('producer-1');
+    expect(realtimePublisher.publishToRoom).toHaveBeenCalledWith(
+      `voice:${channelId(1)}`,
+      RealtimeEvent.VoiceStateChanged,
+      expect.objectContaining({ mute_state: true, session_id: sessionId(1) }),
+      'request-3',
+    );
+  });
+
+  it('releases the mediasoup session when leaving manually', async () => {
+    prisma.$queryRaw.mockResolvedValueOnce([voiceSessionRow({})]);
+
+    await service.leaveSession(user, sessionId(1), 'request-4');
+
+    expect(mediaSignalingService.releaseSession).toHaveBeenCalledWith(sessionId(1), 'manual_leave');
+  });
+
+  it('sweeps expired negotiations and broadcasts signaling timeout', async () => {
+    prisma.$queryRaw.mockResolvedValueOnce([voiceSessionRow({ id: sessionId(9), mediaState: 'negotiating' })]);
+
+    await service.sweepNegotiationTimeouts();
+
+    expect(mediaSignalingService.releaseSession).toHaveBeenCalledWith(sessionId(9), 'signaling_timeout');
+    expect(realtimePublisher.publishToRoom).toHaveBeenCalledWith(
+      `voice:${channelId(1)}`,
+      RealtimeEvent.VoiceMemberLeft,
+      expect.objectContaining({ reason: 'signaling_timeout' }),
+      undefined,
+    );
+  });
+
+  it('refreshes ICE servers for the session owner', async () => {
+    prisma.$queryRaw.mockResolvedValueOnce([voiceSessionRow({})]);
+
+    const result = await service.refreshIceServers(user, sessionId(1));
+
+    expect(result.ice_servers).toHaveLength(1);
+    expect(turnCredentialService.signCredential).toHaveBeenCalledWith(user.userId);
   });
 });
 
@@ -128,7 +233,12 @@ function voiceSessionRow(overrides: Record<string, unknown> = {}) {
     deafenState: false,
     id: sessionId(1),
     joinedAt: now,
+    mediaState: 'negotiating',
     muteState: false,
+    producerId: null,
+    recvTransportId: null,
+    routerId: null,
+    sendTransportId: null,
     updatedAt: now,
     userId: userId(1),
     userNickname: 'Alice',

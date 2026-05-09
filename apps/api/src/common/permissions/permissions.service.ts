@@ -635,6 +635,10 @@ function requiredChannelBits(action: PermissionAction): bigint {
       return BigInt(PermissionBit.ViewChannel | PermissionBit.SendMessage);
     case PermissionAction.JoinVoice:
       return BigInt(PermissionBit.ViewChannel | PermissionBit.JoinVoice);
+    case PermissionAction.SpeakVoice:
+      return BigInt(PermissionBit.ViewChannel | PermissionBit.JoinVoice | PermissionBit.SpeakVoice);
+    case PermissionAction.ListenVoice:
+      return BigInt(PermissionBit.ViewChannel | PermissionBit.JoinVoice | PermissionBit.ListenVoice);
     case PermissionAction.ManageChannel:
       return BigInt(PermissionBit.ManageChannel);
     case PermissionAction.ManageMessage:
