@@ -23,7 +23,7 @@ const channelSummarySchema = z.object({
         deny_bits: z.string(),
         overwrite_id: z.string().uuid(),
         target_id: z.string().uuid(),
-        target_type: z.string(),
+        target_type: z.enum(['role', 'member']),
       }),
     )
     .default([]),

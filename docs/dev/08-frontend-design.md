@@ -35,6 +35,7 @@
 | 本地 UI | Zustand | 当前社区、当前频道、打开的设置面板、语音控制条。 |
 | 表单 | React Hook Form + Zod | 登录、注册、资料、频道、角色配置。 |
 | 实时连接 | 自定义 Socket client | 连接 `/realtime`，分发事件到查询缓存。 |
+| 语音媒体 | 自定义 hook + Zustand | mediasoup-client `Device`、send/recv `Transport`、`Producer`、`Consumer` 引用，本地音轨、输入/输出设备、音量计、active speaker 列表。 |
 
 实时事件只更新当前用户有权可见的缓存。收到 `PermissionChanged` 后强制刷新社区详情、频道列表和权限摘要。
 
@@ -56,7 +57,7 @@
 | 消息区 | 历史消息、未读定位、发送框、附件入口、提及提示。 |
 | 成员区 | 在线成员、离线成员、角色摘要、语音成员状态。 |
 | 顶部栏 | 当前频道名、通知入口、搜索入口 P1。 |
-| 语音控制条 | 当前语音频道、静音、闭麦、离开。 |
+| 语音控制条 | 当前语音频道、静音、闭麦、离开、输入设备选择、输出设备选择、输入音量条、active speaker 高亮、重连提示、PTT (P1)。 |
 
 频道栏和管理入口必须按服务端返回的权限摘要控制显示。
 
@@ -102,12 +103,18 @@
 
 ### 语音状态
 
-1. 用户点击语音频道。
-2. 调用 `JoinVoiceChannel`。
-3. 显示语音控制条和成员状态列表。
-4. 切换静音或闭麦时调用 `UpdateVoiceState`。
-5. 收到 `VoiceStateChanged` 后更新成员标识。
-6. 离开、断线或权限失效时移除语音控制条。
+1. 用户点击语音频道，调用 `JoinVoiceChannel`，获得 `session_id`、`media.router_rtp_capabilities` 与 `media.ice_servers`。
+2. 基于 mediasoup-client 初始化 `Device`，加载 RTP capabilities。
+3. 通过 Socket emit `VoiceTransportCreated` 两次，分别建立 send/recv `WebRtcTransport`，缓存 ICE/DTLS 参数。
+4. 调用 `getUserMedia({ audio: true })` 获取本地麦克风音轨，处理 `NotAllowedError`（权限被拒）与 `NotFoundError`（无设备）。
+5. 在 send Transport 上 produce 音轨，发送 `VoiceProducerCreated`；服务端校验 `SPEAK_VOICE` 通过后返回 `producer_id`。
+6. 对 `JoinVoiceChannel.media.active_producers`、轮询到的 `sessions[].producer_id` 和后续 `VoiceProducerCreated` 广播逐个 emit `VoiceConsumerCreated` 创建本地 Consumer，随后 emit `VoiceConsumerResumed` 恢复服务端 Consumer，并将远端音轨绑定到隐藏 `<audio>` 元素。
+7. 自动播放策略：当前桌面 E2E 使用用户手势/浏览器策略允许自动播放；移动端兜底按钮作为 P1 交互增强。
+8. 静音切换：关闭/恢复本地麦克风 track，同时调用 `PATCH /voice/sessions/{id}/state`，服务端同步 `Producer.pause/resume`。
+9. 闭麦切换：将所有远端 `<audio>` 元素静音，并 `PATCH state` 同步 `deafen_state`。
+10. 收到 `VoiceActiveSpeaker` 时高亮当前发言成员（边框 + 图标 + aria-live 文本）。
+11. TURN 凭证在 join 和 transport 创建时下发；长会话刷新接口已保留，当前客户端在重新加入/重协商时获取新凭证。
+12. 离开 / 断线 / 收到 `VoiceProducerClosed(reason=permission_lost)` 时关闭所有 Transport、释放音轨、移除控制条；收到 `reason=worker_died` 时自动重新加入一次。
 
 ## 消息体验
 
@@ -127,12 +134,16 @@
 | `CONFLICT` | 按业务场景展示重复申请、重复加入或幂等冲突。 |
 | `RATE_LIMITED` | 禁用提交按钮并展示稍后重试。 |
 | `DEPENDENCY_UNAVAILABLE` | 对附件、通知等非核心能力展示降级提示。 |
+| `VOICE_DEVICE_DENIED` | 引导用户在浏览器权限设置中授予麦克风访问。 |
+| `VOICE_NEGOTIATION_TIMEOUT` | 自动重试一次媒体协商，仍失败则回退到加入失败并清理控制条。 |
+| `VOICE_TURN_UNAVAILABLE` | 提示对称 NAT 环境无法穿透，建议切换网络或稍后重试。 |
 
 ## 响应式设计
 
 - 桌面端使用社区栏、频道栏、消息区和成员区并列布局。
 - 移动端使用底部或顶部入口切换社区、频道、消息和成员。
 - 移动端核心任务“注册登录、加入社区、发送消息、加入语音频道”的主要路径不超过 3 次关键点击。
+- 移动端语音控制条移至底部固定栏，至少包含静音、闭麦、离开三按钮，配合系统层音量键。
 - 消息输入框、语音控制条和通知入口必须在移动端可访问。
 
 ## 可访问性与可用性
@@ -141,4 +152,4 @@
 - 表单错误聚焦到对应字段。
 - 消息列表支持键盘滚动和输入框快捷发送。
 - 色彩不能作为权限或状态的唯一表达，在线、静音、闭麦等状态同时使用图标或文字。
-
+- active speaker 高亮同时使用边框、图标与 `aria-live="polite"` 文本通告，不依赖颜色；说话停止时清除。

@@ -5,6 +5,7 @@ import { loginRequestSchema, type LoginRequest } from '@eiscord/shared';
 import { FormField } from '../../shared/components/FormField';
 import { formFieldProps } from '../../shared/components/form-field-props';
 import { Spinner } from '../../shared/components/Spinner';
+import { formatErrorMessage } from '../../shared/utils/error-message';
 import { useLoginMutation } from './use-auth-mutations';
 
 export function LoginPage() {
@@ -33,7 +34,7 @@ export function LoginPage() {
 
         {mutation.error && (
           <div className="auth-error" role="alert">
-            {mutation.error instanceof Error ? mutation.error.message : '登录失败，请重试'}
+            {formatErrorMessage(mutation.error)}
           </div>
         )}
 

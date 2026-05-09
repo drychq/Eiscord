@@ -30,7 +30,7 @@
 | 私聊 | `dm:{conversation_id}` | 是会话参与者。 |
 | 社区 | `server:{server_id}` | 是社区有效成员。 |
 | 文本频道 | `channel:{channel_id}` | 有查看频道权限。 |
-| 语音频道 | `voice:{channel_id}` | 当前处于语音会话，或有权查看语音成员列表。 |
+| 语音频道 | `voice:{channel_id}` | 当前处于语音会话，或有权查看语音成员列表；同时承载媒体信令请求/响应与 active speaker 广播。 |
 
 取消订阅使用 `Unsubscribe`，连接断开时服务端自动移除全部房间。
 
@@ -250,7 +250,7 @@
 }
 ```
 
-本事件只表示状态加入，不承诺真实音频媒体流已经建立。
+本事件表示状态加入；客户端随后完成 mediasoup 媒体协商，最终连接由 `VoiceStateChanged(connection_status=connected, media_state=connected)` 同步。
 
 ### VoiceMemberLeft
 
@@ -283,11 +283,166 @@
   "mute_state": true,
   "deafen_state": false,
   "connection_status": "connected",
+  "media_state": "connected",
   "updated_at": "2026-05-01T12:00:00.000Z"
 }
 ```
 
 状态变化同步时间不超过 3 秒。
+
+## 媒体信令事件
+
+媒体信令事件均承载于 `voice:{channel_id}` 房间，由客户端 mediasoup-client 与服务端 `MediaSignalingModule` 协商。请求-响应类事件复用 Socket.IO `ack` 机制，事件信封中的 `request_id` 关联客户端请求与服务端响应。所有 Producer 创建必须 `kind === 'audio'`，video 与 screen 直接拒绝。
+
+### VoiceRouterCapabilities
+
+方向：client → server（请求）/ server → client（响应）。
+
+请求：`{ "channel_id": "uuid", "session_id": "uuid" }`
+
+响应：
+
+```json
+{
+  "router_id": "string",
+  "rtp_capabilities": { }
+}
+```
+
+服务端校验 `JOIN_VOICE` 后返回，Router 不存在时按需创建。
+
+### VoiceTransportCreated
+
+方向：client → server（请求）/ server → client（响应）。
+
+请求：
+
+```json
+{
+  "session_id": "uuid",
+  "direction": "send"
+}
+```
+
+响应：
+
+```json
+{
+  "transport_id": "string",
+  "ice_parameters": { },
+  "ice_candidates": [ ],
+  "dtls_parameters": { },
+  "ice_servers": [ ]
+}
+```
+
+每个会话创建 `direction=send` 与 `direction=recv` 各一次。
+
+### VoiceTransportConnect
+
+方向：client → server。
+
+载荷：`{ "session_id": "uuid", "transport_id": "string", "dtls_parameters": { } }`
+
+响应：`{ "ok": true }`。服务端必须校验 `transport_id` 属于 `session_id` 对应的当前用户会话；失败需返回错误码并允许客户端重连一次。
+
+### VoiceProducerCreated
+
+方向：client → server（请求）/ server → 同房间客户端（广播）。
+
+请求：
+
+```json
+{
+  "session_id": "uuid",
+  "transport_id": "string",
+  "kind": "audio",
+  "rtp_parameters": { }
+}
+```
+
+服务端校验 `SPEAK_VOICE`、`kind === 'audio'`，并确认 `transport_id` 是该会话的 send Transport；校验通过后返回 `{ "producer_id": "string" }` 并广播：
+
+```json
+{
+  "channel_id": "uuid",
+  "user_id": "uuid",
+  "producer_id": "string",
+  "kind": "audio",
+  "paused": false,
+  "created_at": "2026-05-01T12:00:00.000Z"
+}
+```
+
+### VoiceConsumerCreated
+
+方向：client → server（请求）/ server → client（响应）。
+
+请求：
+
+```json
+{
+  "session_id": "uuid",
+  "producer_id": "string",
+  "rtp_capabilities": { }
+}
+```
+
+响应：
+
+```json
+{
+  "consumer_id": "string",
+  "kind": "audio",
+  "rtp_parameters": { },
+  "producer_paused": false
+}
+```
+
+服务端校验 `LISTEN_VOICE`（默认随 `JOIN_VOICE` 隐含），通过后以 `paused=true` 创建服务端 Consumer。客户端完成本地 `recvTransport.consume()` 后必须发送 `VoiceConsumerResumed`，避免 RTP 在浏览器 m-section 就绪前到达。
+
+### VoiceConsumerResumed
+
+方向：client → server。
+
+载荷：`{ "session_id": "uuid", "consumer_id": "string" }`
+
+响应：`{ "ok": true }`。服务端校验 `LISTEN_VOICE`，并确认 Consumer 属于该会话的 recv Transport 后调用 mediasoup `consumer.resume()`。
+
+### VoiceProducerClosed
+
+方向：server → 同房间客户端。
+
+载荷：
+
+```json
+{
+  "channel_id": "uuid",
+  "user_id": "uuid",
+  "producer_id": "string",
+  "reason": "manual_leave",
+  "closed_at": "2026-05-01T12:00:00.000Z"
+}
+```
+
+`reason` 取值：`manual_leave | signaling_timeout | worker_died | permission_lost`。客户端在 `worker_died` 时必须重新加入语音频道并协商新的 Transport 与 Producer。
+
+### VoiceActiveSpeaker
+
+方向：server → 同房间客户端。
+
+载荷：
+
+```json
+{
+  "channel_id": "uuid",
+  "user_id": "uuid",
+  "audio_level": -32.5,
+  "observed_at": "2026-05-01T12:00:00.000Z"
+}
+```
+
+由 mediasoup AudioLevelObserver 触发，服务端节流不超过每秒 2 次；用户停止说话时发送一次 `user_id: null` 表示静默。
 
 ## 客户端事件
 
@@ -317,7 +472,8 @@ P0 写操作不通过客户端 Socket 事件直接执行，统一走 HTTP API，
 - `MessageCreated` 正常网络下 1 秒内到达目标客户端。
 - `UnreadUpdated` 和 `NotificationCreated` 2 秒内同步。
 - `VoiceStateChanged` 3 秒内同步。
+- 媒体信令一次完整协商（`JoinVoiceChannel` 成功 → `media_state=connected`）正常网络下 P95 不超过 3 秒。
+- `VoiceActiveSpeaker` 端到端延迟不超过 500 ms，节流频率不超过每秒 2 次。
 - 事件发布必须在数据库事务提交后执行。
 - 事件重复接收必须幂等。
 - 权限变化后，后续业务事件不得继续发给已无权用户。
-

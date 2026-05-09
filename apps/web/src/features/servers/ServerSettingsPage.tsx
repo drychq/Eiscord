@@ -246,8 +246,8 @@ function MembersTab({
   const assignMutation = useAssignRole(serverId);
   const removeRoleMutation = useRemoveRole(serverId);
 
-  const online = members.filter((m) => m.user.presence_status !== 'OFFLINE');
-  const offline = members.filter((m) => m.user.presence_status === 'OFFLINE');
+  const online = members.filter((m) => m.user.presence_status.toLowerCase() !== 'offline');
+  const offline = members.filter((m) => m.user.presence_status.toLowerCase() === 'offline');
 
   const isOwnerMember = (m: MemberSummary) => m.user.user_id === ownerId;
 
@@ -296,7 +296,7 @@ function MembersTab({
                         >
                           <Shield size={12} />
                         </button>
-                        {member.member_status === 'MUTED' ? (
+                        {member.member_status.toLowerCase() === 'muted' ? (
                           <button
                             className="tiny-button"
                             onClick={() => {

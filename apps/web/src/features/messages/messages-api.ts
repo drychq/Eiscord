@@ -5,20 +5,37 @@ const messageSchema = z.object({
   message_id: z.string().uuid(),
   channel_id: z.string().uuid().nullable(),
   conversation_id: z.string().uuid().nullable(),
-  sender_id: z.string().uuid(),
   content: z.string().nullable(),
-  attachment_ids: z.array(z.string().uuid()),
-  mention_user_ids: z.array(z.string().uuid()),
-  client_message_id: z.string().nullable(),
+  sender: z.object({
+    avatar_attachment_id: z.string().uuid().nullable(),
+    nickname: z.string(),
+    user_id: z.string().uuid(),
+    username: z.string(),
+  }),
+  attachments: z.array(z.object({
+    attachment_id: z.string().uuid(),
+    file_name: z.string(),
+    mime_type: z.string(),
+    size_bytes: z.number(),
+  })),
+  mentions: z.array(z.string().uuid()),
   visibility: z.string(),
   created_at: z.string(),
+});
+
+const readStateSchema = z.object({
+  channel_id: z.string().uuid().nullable(),
+  conversation_id: z.string().uuid().nullable(),
+  last_read_message_id: z.string().uuid().nullable(),
+  scope_type: z.string(),
+  unread_count: z.number(),
   updated_at: z.string(),
 });
 
 const messagePageSchema = z.object({
   items: z.array(messageSchema),
   next_cursor: z.string().nullable(),
-  has_more: z.boolean(),
+  read_state: readStateSchema,
 });
 
 export type Message = z.infer<typeof messageSchema>;

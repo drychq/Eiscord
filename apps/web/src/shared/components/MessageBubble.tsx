@@ -9,9 +9,10 @@ type MessageBubbleProps = {
 
 export function MessageBubble({ message, onRetract, onDelete }: MessageBubbleProps) {
   const currentUserId = useAuthStore((s) => s.currentUser?.user_id);
-  const isOwn = message.sender_id === currentUserId;
-  const isWithdrawn = message.visibility === 'WITHDRAWN';
-  const isDeleted = message.visibility === 'DELETED';
+  const isOwn = message.sender.user_id === currentUserId;
+  const visibility = message.visibility.toLowerCase();
+  const isWithdrawn = visibility === 'withdrawn';
+  const isDeleted = visibility === 'deleted';
 
   const time = new Date(message.created_at).toLocaleTimeString('zh-CN', {
     hour: '2-digit',
@@ -42,14 +43,14 @@ export function MessageBubble({ message, onRetract, onDelete }: MessageBubblePro
     );
   }
 
-  const initial = (message.content ?? '?').charAt(0).toUpperCase();
+  const initial = message.sender.nickname.charAt(0).toUpperCase();
 
   return (
     <div className="message-row">
       <div className="avatar">{initial}</div>
       <div>
         <div className="message-meta">
-          <strong className="message-author">{isOwn ? '我' : '用户'}</strong>
+          <strong className="message-author">{isOwn ? '我' : message.sender.nickname}</strong>
           <span>{time}</span>
         </div>
         <p>{message.content}</p>

@@ -27,6 +27,7 @@
 | M3 频道、消息和未读 | 文本频道、消息发送、历史加载、未读。 | FR-11、FR-13、FR-14、FR-18 |
 | M4 权限与管理 | 角色、频道覆盖、成员管理、消息删除。 | FR-10、FR-12、FR-15、FR-19、FR-20 |
 | M5 实时与语音状态 | Socket 事件、在线状态、通知、语音状态同步。 | FR-05、FR-16、FR-17、FR-18 |
+| M5.5 语音媒体平面 | mediasoup SFU、Opus 多人音频、TURN 凭证、客户端协商、Worker 崩溃恢复。 | FR-16、FR-17 |
 | M6 验收加固 | 异常场景、非功能指标、端到端验收。 | AC、AC-E、AC-N |
 
 ## M1 工程与账号基础
@@ -109,20 +110,43 @@
 - 语音状态 3 秒内同步。
 - 断线超时后在线状态和语音会话释放。
 
+## M5.5 语音媒体平面
+
+交付：
+
+- 新增 `apps/media`：mediasoup Worker 启动入口，包含进程池管理、健康检查、崩溃自动重启。
+- 新增 `MediaSignalingModule`：Router/Transport/Producer/Consumer 编排，AudioLevelObserver active speaker 检测，TURN HMAC 凭证签发。
+- 扩展 `VoiceModule`：加入流程联动媒体协商，30 秒协商超时释放 `VoiceSession`，断线/权限失效关闭 Producer 与 Transport。
+- 扩展 `PermissionsModule`：新增 `SPEAK_VOICE`、`LISTEN_VOICE` 权限位，频道覆盖支持「闭麦房」与「禁听」。
+- 前端集成 mediasoup-client：Device 初始化、send/recv Transport 管理、`getUserMedia`、active speaker UI、已存在 Producer 消费、崩溃后自动重新加入。
+- 增加 docker-compose 服务：`mediasoup`（暴露 RTC UDP 端口段）与 `coturn`（挂载 `docker/coturn/turnserver.conf`）。
+- 共享类型补：`VoiceMediaState`、媒体信令事件常量。
+
+验收：
+
+- 同一语音频道 4 名成员同时加入，相互可听到对方真实音频（Playwright 双 context + 合成音轨验证 RTP 解码与音量包络）。
+- 切换静音/闭麦，对端 1 秒内停止收到对应音频；服务端 `Producer.pause` 状态正确同步。
+- mediasoup Worker 主动 kill 后，受影响成员收到 `worker_died`，旧会话结束，并自动重新加入生成新的 `VoiceSession`。
+- 服务端无录音文件落盘，`docker exec` 检查工作目录与日志中无音频持久化痕迹。
+- 协商完整完成（join → connected）P95 不超过 3 秒（AC-N2）。
+- 单房间 ≥4 人时端到端音频丢包率 ≤3%、jitter ≤30 ms（AC-N6）。
+
 ## M6 验收加固
 
 交付：
 
-- 编写端到端测试覆盖核心验收路径。
-- 编写权限矩阵测试和异常流程测试。
-- 加入基础压测脚本和日志追踪检查。
-- 完善演示数据和本地启动说明。
+- 编写 API+Socket 端到端测试覆盖核心验收路径。
+- 编写 Playwright 浏览器端到端测试覆盖注册登录、好友私聊、社区频道、语音状态和权限拒绝路径。
+- 编写权限矩阵测试和 AC-E1 至 AC-E8 异常流程测试。
+- 加入 `scripts/k6/m6-realtime-load.js` 基础压测脚本，验证消息、Socket 在线和语音状态链路。
+- 完善 `prisma/seed.ts` 幂等演示数据和本地启动说明。
 
 验收：
 
 - AC-01 至 AC-06 全部通过。
 - AC-E1 至 AC-E8 全部通过。
 - AC-N1 至 AC-N5 有可执行验证方式。
+- 命令入口：`pnpm test:e2e:api`、`pnpm test:e2e:web`、`pnpm perf:k6`。
 
 ## 联调顺序
 
@@ -133,9 +157,11 @@
 5. 未读与通知。
 6. 权限守卫和频道覆盖。
 7. Socket 连接和事件分发。
-8. 语音状态。
-9. 附件访问控制。
-10. 端到端验收。
+8. 语音状态（加入/退出/静音/闭麦/断线释放）。
+9. 语音媒体协商（mediasoup Router/Transport/Producer/Consumer + TURN）。
+10. mediasoup Worker 崩溃恢复与客户端重协商。
+11. 附件访问控制。
+12. 端到端验收。
 
 ## P1 延后能力
 
@@ -149,8 +175,8 @@
 
 ## 不进入 v1 的能力
 
-- 真实多人语音媒体流。
 - 屏幕共享和直播。
+- 服务端录音、混音和语音转写。
 - 机器人平台和开放接口市场。
 - 商业化订阅、广告投放和付费会员。
 - 复杂内容审核和独立运营后台。

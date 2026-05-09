@@ -21,6 +21,8 @@
 | `MANAGE_MESSAGE` | 删除他人频道消息。 |
 | `MANAGE_CHANNEL` | 创建、编辑、排序或删除频道。 |
 | `JOIN_VOICE` | 加入语音频道状态房间。 |
+| `SPEAK_VOICE` | 在语音频道发送音频，对应 mediasoup audio Producer 创建。 |
+| `LISTEN_VOICE` | 接收语音频道音频，默认随 `JOIN_VOICE` 隐含；用于实现「禁听」。 |
 | `MANAGE_MEMBER` | 移除、禁言或恢复成员。 |
 | `MANAGE_ROLE` | 创建、修改、删除角色或分配成员角色。 |
 | `CREATE_INVITE` | 创建社区邀请。 |
@@ -37,7 +39,7 @@
 | 普通成员 | 通过默认角色和分配角色获得基础访问能力。 |
 | 访客/非成员 | 只能访问登录、注册和邀请预览。 |
 
-管理动作比较使用最高角色 `priority`。操作者最高角色优先级必须高于目标成员最高角色优先级，所有者除外。
+管理动作比较使用最高角色 `priority`。操作者最高角色优先级必须高于目标成员最高角色优先级，所有者除外。管理员可在频道覆盖中拒绝目标角色或成员的 `SPEAK_VOICE` 实现「闭麦房」，拒绝 `LISTEN_VOICE` 实现「禁听」。
 
 ## 权限计算
 
@@ -87,6 +89,7 @@ target_resource
 | 附件访问 | 返回下载地址前校验附件所属业务资源的访问权限。 |
 | 历史消息 | 查询前校验会话或频道查看权限，查询结果过滤删除和无权内容。 |
 | 管理动作 | 执行前校验操作权限和角色优先级。 |
+| 媒体信令 | mediasoup Transport connect/produce 前校验 session 归属；Producer 创建前校验 `SPEAK_VOICE` 与 `kind === 'audio'`；Consumer 创建/恢复前校验 `LISTEN_VOICE`；TURN 凭证签发前校验 `JOIN_VOICE`。 |
 
 前端隐藏按钮不能作为安全边界。即使客户端展示错误，服务端仍必须拒绝越权请求。
 
@@ -122,8 +125,19 @@ target_resource
 | 创建邀请 | 用户、社区 |
 | 附件初始化 | 用户、文件大小总量 |
 | Socket 连接 | 用户、IP |
+| 媒体信令 | 用户、频道；限制 Producer/Consumer 创建频次与 Transport 重建频次 |
+| TURN 凭证签发 | 用户；防止凭证滥用与 NAT 嗅探 |
 
 触发限流返回 `RATE_LIMITED`，并记录请求摘要。
+
+### 媒体安全
+
+- 媒体面强制 DTLS-SRTP，不接受明文 RTP。
+- 入站 Producer 强制 `kind === 'audio'`；视频与屏幕共享轨直接拒绝并审计。
+- TURN 使用基于 `TURN_SHARED_SECRET` 的短 TTL HMAC 凭证（默认 5 分钟），由 `GET /voice/sessions/{id}/ice-servers` 续签；禁止前端持久化或硬编码长效凭证。
+- 服务端不录音、不混音、不转写；mediasoup 不接入 RecordingPlugin、PlainTransport RTP 转发或 ffmpeg 录制管道。
+- mediasoup 信令端口仅在受信任内网监听；UDP 媒体端口段（默认 40000-40100）只对外开放必要范围。
+- coturn 禁用静态用户与长效共享密钥的纯文本登录，仅支持 HMAC 时间凭证。
 
 ## 审计
 
@@ -136,6 +150,7 @@ target_resource
 - 角色创建、修改、删除、分配。
 - 消息删除或管理员删除他人消息。
 - 附件访问拒绝。
+- 权限拒绝 `SPEAK_VOICE` 或 `LISTEN_VOICE`、Producer 异常关闭（`worker_died` / `permission_lost`）、TURN 凭证签发失败。
 
 审计字段至少包含操作者、目标资源、动作、结果、失败原因、请求 ID 和创建时间。日志保留不少于 180 天。
 
@@ -152,7 +167,7 @@ target_resource
 | 验收项 | 设计覆盖 |
 |---|---|
 | AC-04 权限控制有效 | 统一权限服务、频道覆盖、管理动作角色比较。 |
+| AC-03 语音状态与媒体协商 | `JOIN_VOICE` / `SPEAK_VOICE` / `LISTEN_VOICE` 双轨校验、Producer kind 限制、TURN 凭证签发。 |
 | AC-E5 非成员或无权访问频道 | HTTP、Socket、附件和历史消息统一校验。 |
 | AC-E7 越权管理动作 | 管理权限位和角色优先级比较。 |
 | AC-N4 权限与隐私保护 | 服务端拦截、对象存储私有化、审计记录。 |
-

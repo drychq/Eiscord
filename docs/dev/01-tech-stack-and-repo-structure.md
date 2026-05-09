@@ -13,6 +13,8 @@ Eiscord 采用 TypeScript 单仓库方案，前后端共享类型和校验规则
 | 缓存与状态 | Redis | 承载会话摘要、在线状态、Socket 房间辅助状态、限流和短期去重。 |
 | 实时通信 | Socket.IO | 提供命名空间、房间、重连和事件语义，满足消息、未读、状态同步。 |
 | 对象存储 | MinIO/S3 兼容接口 | 本地可运行，后续可替换为云端 S3 兼容存储。 |
+| 媒体 SFU | mediasoup | 自托管 TypeScript Worker，提供多人音频路由；mediasoup-client 完成浏览器侧协商。 |
+| ICE/TURN | coturn | 提供 STUN/TURN 与短 TTL HMAC 凭证，覆盖对称 NAT 场景。 |
 | 本地编排 | Docker Compose | 一条命令拉起 PostgreSQL、Redis、MinIO 和服务端依赖。 |
 | 测试 | Vitest、React Testing Library、Jest、Supertest、Playwright | 分别覆盖前端组件、后端单测/API、端到端流程。 |
 
@@ -23,6 +25,7 @@ Eiscord/
   apps/
     web/                  # React + Vite 客户端
     api/                  # NestJS HTTP API 与 Socket.IO 网关
+    media/                # mediasoup Worker 进程入口（由 API spawn 的 Node 子进程，承载 SFU 路由）
   packages/
     shared/               # 共享类型、枚举、DTO schema、事件载荷类型
     config/               # eslint、tsconfig、prettier 等共享配置
@@ -33,6 +36,7 @@ Eiscord/
   docker/
     minio/                # 本地对象存储初始化配置
     postgres/             # 数据库初始化配置
+    coturn/               # TURN 服务器配置（turnserver.conf）
   docs/
     dev/                  # 开发方案文档集
   docker-compose.yml
@@ -56,7 +60,8 @@ NestJS 中按业务能力拆分模块：
 | `MessagesModule` | 消息发送、历史加载、撤回、删除、附件引用。 | FR-13、FR-14、FR-15 |
 | `NotificationsModule` | 通知生成、已读、未读计数。 | FR-18 |
 | `PermissionsModule` | 角色、成员角色、频道覆盖、统一权限计算。 | FR-12、FR-19、FR-20 |
-| `VoiceModule` | 语音频道成员状态、静音、闭麦、断线释放。 | FR-16、FR-17 |
+| `VoiceModule` | 语音频道成员状态、静音、闭麦、断线释放、SFU 房间生命周期编排。 | FR-16、FR-17 |
+| `MediaSignalingModule` | mediasoup Router/Transport/Producer/Consumer 编排、AudioLevelObserver、TURN 凭证签发。 | FR-16、FR-17 |
 | `RealtimeModule` | Socket.IO 网关、房间订阅、事件分发。 | FR-05、FR-13、FR-18 |
 | `AuditModule` | 安全、权限和管理动作审计。 | NFR-12、NFR-14 |
 
@@ -93,9 +98,9 @@ apps/web/src/
 
 `packages/shared` 输出以下内容：
 
-- 枚举：`ChannelType`、`PresenceStatus`、`FriendshipStatus`、`MessageVisibility`、`VoiceConnectionStatus`、`NotificationType`。
+- 枚举：`ChannelType`、`PresenceStatus`、`FriendshipStatus`、`MessageVisibility`、`VoiceConnectionStatus`、`VoiceMediaState`（`idle | negotiating | connected | reconnecting | failed`）、`NotificationType`。
 - DTO schema：使用 Zod 定义 HTTP 请求、响应和 WebSocket 事件载荷。
-- 事件名常量：与 SRS 保持一致，例如 `MessageCreated`、`UnreadUpdated`、`PermissionChanged`。
+- 事件名常量：与 SRS 保持一致，例如 `MessageCreated`、`UnreadUpdated`、`PermissionChanged`，并新增媒体信令事件 `VoiceRouterCapabilities`、`VoiceTransportCreated`、`VoiceTransportConnect`、`VoiceProducerCreated`、`VoiceConsumerCreated`、`VoiceConsumerResumed`、`VoiceProducerClosed`、`VoiceActiveSpeaker`。
 - 错误码常量：统一映射 HTTP 状态和前端提示。
 
 后端以 schema 校验请求和响应，前端以同一 schema 校验服务端返回，避免接口文档和实现分离。
@@ -113,6 +118,15 @@ apps/web/src/
 | `PUBLIC_REALTIME_URL` | 前端访问 Socket.IO 的基地址。 |
 | `UPLOAD_MAX_BYTES` | 附件、头像、社区图标上传大小限制。 |
 | `SERVER_MEMBER_LIMIT` | 单社区成员上限，默认 5000。 |
+| `MEDIASOUP_LISTEN_IP` | mediasoup Worker 监听地址，本地 `127.0.0.1`。 |
+| `MEDIASOUP_ANNOUNCED_IP` | 客户端可达的公网/内网 IP，用于 ICE 候选。 |
+| `MEDIASOUP_RTC_MIN_PORT` | mediasoup RTC UDP 端口段下界，默认 `40000`。 |
+| `MEDIASOUP_RTC_MAX_PORT` | mediasoup RTC UDP 端口段上界，默认 `40100`。 |
+| `MEDIASOUP_NUM_WORKERS` | mediasoup Worker 进程数，默认等于 CPU 核数。 |
+| `TURN_URL` | coturn 服务地址，例如 `turn:turn.example.com:3478?transport=udp`。 |
+| `TURN_SHARED_SECRET` | coturn HMAC 凭证签发密钥。 |
+| `TURN_CREDENTIAL_TTL_SECONDS` | TURN 凭证有效期，默认 `300`。 |
+| `VOICE_MAX_PARTICIPANTS_PER_ROOM` | 单语音频道最大成员数，默认 `20`，加入前由 API 校验。 |
 
 配置由服务端启动时加载，并通过配置服务注入业务模块。文件上传限制、通知开关和社区成员上限需要支持运行期刷新，满足 NFR-16。
 
@@ -123,4 +137,4 @@ apps/web/src/
 - 消息、权限、成员、角色、语音会话等跨实体写入必须放在数据库事务中。
 - 后端日志必须包含 `request_id` 或 `event_id`，以满足失败请求 5 分钟内定位的要求。
 - 前端不得把权限判断作为唯一安全边界，隐藏按钮只是体验优化，最终判断必须由服务端完成。
-
+- mediasoup Worker 进程崩溃后，服务端关闭受影响语音会话并广播 `worker_died`；客户端自动重新加入并协商新的 Transport 与 Producer。

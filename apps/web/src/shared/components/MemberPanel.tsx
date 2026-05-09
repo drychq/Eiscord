@@ -6,7 +6,7 @@ import type { MemberSummary } from '../../features/servers/servers-api';
 import { Spinner } from './Spinner';
 
 function MemberItem({ member }: { member: MemberSummary }) {
-  const statusLabel = member.user.presence_status === 'ONLINE' ? '在线' : '离线';
+  const statusLabel = member.user.presence_status.toLowerCase() === 'online' ? '在线' : '离线';
   const roleLabel = member.role_ids.length > 1 ? ` · ${member.role_ids.length} 个角色` : '';
 
   return (
@@ -38,8 +38,8 @@ export function MemberPanel() {
 
   if (!serverId) return null;
 
-  const online = members?.filter((m) => m.user.presence_status === 'ONLINE') ?? [];
-  const offline = members?.filter((m) => m.user.presence_status !== 'ONLINE') ?? [];
+  const online = members?.filter((m) => m.user.presence_status.toLowerCase() === 'online') ?? [];
+  const offline = members?.filter((m) => m.user.presence_status.toLowerCase() !== 'online') ?? [];
 
   return (
     <aside className="member-panel" aria-label="成员">

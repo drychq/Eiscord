@@ -1,17 +1,20 @@
 import { useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import { Navigate, useParams } from 'react-router-dom';
 import * as socket from '../../shared/api/socket-client';
 import {
   useChannelMessages,
   useSendChannelMessage,
   useDeleteMessage,
 } from '../messages/use-messages-queries';
+import { useServerDetail } from './use-servers-queries';
 import { MessageList } from '../../shared/components/MessageList';
 import { MessageBubble } from '../../shared/components/MessageBubble';
 import { MessageComposer } from '../../shared/components/MessageComposer';
 
 export function ServerChannelsPage() {
-  const { channelId } = useParams<{ channelId: string }>();
+  const { serverId, channelId } = useParams<{ channelId: string; serverId: string }>();
+  const resolvedChannelId = isUuid(channelId) ? channelId : null;
+  const { data: server } = useServerDetail(!resolvedChannelId ? (serverId ?? null) : null);
 
   const {
     data,
@@ -19,27 +22,27 @@ export function ServerChannelsPage() {
     isFetchingNextPage,
     hasNextPage,
     fetchNextPage,
-  } = useChannelMessages(channelId ?? null);
+  } = useChannelMessages(resolvedChannelId);
 
-  const sendMutation = useSendChannelMessage(channelId ?? '');
+  const sendMutation = useSendChannelMessage(resolvedChannelId ?? '');
   const deleteMutation = useDeleteMessage();
 
   const messages = data?.pages.flatMap((p) => p.items) ?? [];
 
   useEffect(() => {
-    if (!channelId) {
+    if (!resolvedChannelId) {
       return undefined;
     }
 
-    socket.subscribe('channel', channelId);
+    socket.subscribe('channel', resolvedChannelId);
 
     return () => {
-      socket.unsubscribe('channel', channelId);
+      socket.unsubscribe('channel', resolvedChannelId);
     };
-  }, [channelId]);
+  }, [resolvedChannelId]);
 
   const handleSend = (content: string) => {
-    if (!channelId) return;
+    if (!resolvedChannelId) return;
     sendMutation.mutate({ content });
   };
 
@@ -50,6 +53,21 @@ export function ServerChannelsPage() {
   const handleDelete = (messageId: string) => {
     deleteMutation.mutate({ messageId, operation: 'delete' });
   };
+
+  if (!resolvedChannelId) {
+    const firstTextChannel = server?.channels.find(
+      (item) => item.type === 'text' || item.type === 'TEXT',
+    );
+
+    if (serverId && firstTextChannel) {
+      return (
+        <Navigate
+          to={`/app/servers/${serverId}/channels/${firstTextChannel.channel_id}`}
+          replace
+        />
+      );
+    }
+  }
 
   return (
     <>
@@ -73,4 +91,8 @@ export function ServerChannelsPage() {
       <MessageComposer onSend={handleSend} disabled={sendMutation.isPending} />
     </>
   );
+}
+
+function isUuid(value: string | undefined): value is string {
+  return !!value && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }

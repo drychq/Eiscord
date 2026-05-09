@@ -238,12 +238,15 @@
 | `channelId` | 语音频道。 |
 | `userId` | 用户。 |
 | `joinedAt` | 加入时间。 |
-| `muteState` | 是否静音。 |
-| `deafenState` | 是否闭麦。 |
+| `muteState` | 是否静音（控制 mediasoup Producer 的 pause/resume）。 |
+| `deafenState` | 是否闭麦（前端关闭 Consumer 音频元素）。 |
 | `connectionStatus` | `connecting`、`connected`、`disconnected`。 |
+| `mediaState` | `idle | negotiating | connected | reconnecting | failed`，反映 mediasoup 协商阶段。 |
+| `producerId` | 当前 audio Producer 的 mediasoup ID，运行期值，可空。 |
+| `mediaRegion` | 媒体路由分区占位，默认 `local`，预留多区扩展。 |
 | `endedAt` | 结束时间。 |
 
-约束：同一用户同一时刻只允许一个有效语音会话；该实体只表示状态，不表示真实媒体流。
+约束：同一用户同一时刻只允许一个有效语音会话；该实体表示成员状态与当前媒体协商引用。mediasoup 资源 ID 仅作为运行期引用，可由 Redis 重建；服务端不录音、不混音、不转写。
 
 ### Notification
 
@@ -296,6 +299,15 @@
 | Channel - VoiceSession | 一对多 | 语音频道包含当前成员状态。 |
 | User - Notification | 一对多 | 用户接收通知。 |
 
+mediasoup 的 `Router`、`WebRtcTransport`、`Producer`、`Consumer` 不进入 PostgreSQL，仅以下列 Redis 键索引（重启后可重建）：
+
+- `voice:router:{channelId}` → Router ID 与所在 Worker。
+- `voice:transport:{sessionId}:send` / `voice:transport:{sessionId}:recv` → Transport ID 与 ICE/DTLS 状态。
+- `voice:producer:{sessionId}` → 当前 audio Producer ID。
+- `voice:consumer:{sessionId}:{producerId}` → Consumer ID。
+
+TURN 凭证为短 TTL HMAC，不落库；签发记录由审计日志覆盖。
+
 ## 索引建议
 
 | 表 | 索引 |
@@ -308,7 +320,7 @@
 | `channels` | `(server_id, sort_order)`、`(server_id, type)` |
 | `messages` | `(channel_id, created_at)`、`(conversation_id, created_at)`、`(sender_id, client_message_id)` |
 | `read_states` | `(user_id, channel_id)` unique、`(user_id, conversation_id)` unique |
-| `voice_sessions` | partial unique active session on `user_id` |
+| `voice_sessions` | partial unique active session on `user_id`、`(channel_id, media_state)` |
 | `notifications` | `(user_id, is_read, created_at)`、`dedupe_key` unique |
 | `audit_logs` | `(request_id)`、`(actor_id, created_at)`、`(target_type, target_id)` |
 
@@ -321,4 +333,4 @@
 - 消息撤回或删除后保留元数据用于审计和未读修正，不再以普通消息展示。
 - 附件资源替换或消息删除后可以进入隐藏或待清理状态，访问仍需权限。
 - 通知来源失效后可保留摘要，但不得继续暴露受限内容。
-
+- mediasoup Worker 进程退出后，所有相关 `VoiceSession.mediaState` 置为 `failed` 并设置 `endedAt`；服务端广播 `worker_died`，客户端重新加入后创建新的 `VoiceSession` 与媒体资源。

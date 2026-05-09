@@ -10,7 +10,7 @@ type Tab = 'friends' | 'pending' | 'add';
 
 function FriendItem({ friendship, onDm }: { friendship: FriendshipSummary; onDm: (conversationId: string) => void }) {
   const { friend, conversation_id } = friendship;
-  const statusLabel = friend.presence_status === 'ONLINE' ? '在线' : '离线';
+  const statusLabel = friend.presence_status.toLowerCase() === 'online' ? '在线' : '离线';
 
   return (
     <li className="friend-item">
@@ -97,8 +97,8 @@ export function FriendsPage() {
   const { data: dms, isLoading: dmsLoading } = useDmConversations();
   const createRequest = useCreateFriendRequest();
 
-  const accepted = friendships?.filter((f) => f.status === 'ACCEPTED') ?? [];
-  const pending = friendships?.filter((f) => f.status === 'PENDING') ?? [];
+  const accepted = friendships?.filter((f) => f.status.toLowerCase() === 'accepted') ?? [];
+  const pending = friendships?.filter((f) => f.status.toLowerCase() === 'pending') ?? [];
 
   const tabs: { key: Tab; label: string; icon: typeof Users }[] = [
     { key: 'friends', label: `好友 (${accepted.length})`, icon: Users },

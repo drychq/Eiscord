@@ -11,7 +11,6 @@ export function useLoginMutation() {
   const navigate = useNavigate();
   const location = useLocation();
   const { setSession } = useAuthStore();
-  const { pushToast } = useToastStore();
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -33,9 +32,6 @@ export function useLoginMutation() {
 
       const from = (location.state as { from?: { pathname: string } })?.from?.pathname;
       navigate(from ?? '/app', { replace: true });
-    },
-    onError: (error) => {
-      pushToast({ kind: 'error', message: formatErrorMessage(error), ttl: 5000 });
     },
   });
 }

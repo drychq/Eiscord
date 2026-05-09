@@ -25,6 +25,7 @@ Eiscord/
   apps/
     web/                  # React + Vite 客户端
     api/                  # NestJS HTTP API 与 Socket.IO 网关骨架
+    media/                # API 启动的 mediasoup Worker 子进程入口
   packages/
     shared/               # 共享枚举、事件名、错误码和 Zod schema
     config/               # 共享 tsconfig、eslint、prettier 配置
@@ -51,8 +52,12 @@ pnpm install
 cp .env.example .env
 docker compose up -d postgres redis minio minio-init
 pnpm db:generate
+pnpm db:migrate
+pnpm db:seed
 pnpm dev
 ```
+
+`pnpm dev` 会先构建 `@eiscord/shared` 与 `@eiscord/media`，随后启动 API/Web。API 进程会按需 spawn `apps/media/dist/main.js` 作为 mediasoup worker 子进程。
 
 默认端口：
 
@@ -61,6 +66,7 @@ pnpm dev
 | API | `http://localhost:3000/api/v1` |
 | Web | `http://localhost:5173` |
 | MinIO Console | `http://localhost:9001` |
+| coturn | `turn:localhost:3478?transport=udp` |
 
 API 冒烟接口：
 
@@ -68,10 +74,20 @@ API 冒烟接口：
 curl http://localhost:3000/api/v1/health
 ```
 
+演示账号由 `pnpm db:seed` 写入：`alice`、`bob`、`carol`，密码均为 `DemoPass1`。其中 Alice 是 `Course Discussion` 社区所有者，Bob 是好友和版主，Carol 是普通成员。
+
+M6 验收命令：
+
+```bash
+pnpm test:e2e:api
+pnpm test:e2e:web
+pnpm perf:k6
+```
+
+E2E 命令会重建 `eiscord_test` 测试库。`perf:k6` 需要本机安装 k6。
+
 ## 当前范围
 
-本仓库当前落地 `docs/dev/01-tech-stack-and-repo-structure.md` 对应的工程骨架，以及 `docs/dev/02-system-architecture.md` 对应的架构底座：统一 API 响应与错误信封、请求 ID、Prisma 服务封装、审计服务骨架、鉴权/权限/限流守卫骨架、`/realtime` Socket.IO 网关和实时事件发布器。
-
-账号、好友、社区、频道、消息、权限计算、通知和语音状态等业务实现会按后续开发文档继续补充。当前默认 token verifier 不接受任何 access token，受控实时订阅也会在真实权限计算接入前拒绝。
+本仓库当前已落地 `docs/dev/03-module-design.md` 中 M1 至 M6 的 P0 范围：账号鉴权、好友与私聊、社区成员、频道消息、附件、通知未读、权限管理、实时事件、在线状态、语音状态，以及验收加固脚本和演示数据。
 
 完整本地验证需要 Node.js、Corepack/pnpm 和 Docker。若 `docker` 不在 PATH 中，容器依赖服务需要等 Docker Desktop 安装并可用后再启动。

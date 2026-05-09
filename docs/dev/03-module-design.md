@@ -11,7 +11,7 @@
 | 消息与附件模块 | 文本消息写入、历史加载、附件元数据、提及、消息撤回和删除。 | FR-13 至 FR-15 | Message、Attachment、ReadState |
 | 通知与未读模块 | 通知生成、通知已读、频道和私聊未读计数、实时角标同步。 | FR-07、FR-13、FR-14、FR-18 | Notification、ReadState |
 | 权限模块 | 角色、成员角色、频道覆盖规则、统一权限计算和越权拦截。 | FR-12、FR-19、FR-20 | Role、Membership、PermissionOverwrite |
-| 语音状态模块 | 语音频道加入、退出、静音、闭麦、断线释放。 | FR-16、FR-17 | VoiceSession、Channel |
+| 语音模块 | 语音频道加入、退出、静音、闭麦、断线释放、媒体信令编排和 SFU 房间生命周期。 | FR-16、FR-17 | VoiceSession、Channel、VoiceRouter（Redis）、VoiceTransport（Redis） |
 | 审计与支撑模块 | 关键动作审计、失败请求追踪、配置限制、日志与监控接口。 | FR-02、FR-10、FR-15、FR-20、NFR-08 至 NFR-16 | AuditLog |
 
 ## 实施任务拆分
@@ -26,8 +26,9 @@
 | M2 社区与成员骨架 | 已实现 | FR-08、FR-09 | 社区创建、默认角色、默认频道、邀请加入和退出限制。 | M1 用户与审计。 | AC-02、AC-E4。 |
 | M3 频道、消息和未读 | 已实现 | FR-11、FR-13、FR-14、FR-18 | 频道 CRUD、文本/私聊消息、游标分页、`ReadState`、通知基础记录、附件预签名上传与受保护访问。 | M2 社区、私聊和权限基础。 | AC-02、AC-05、AC-E6。 |
 | M4 权限与管理 | 已实现 | FR-10、FR-12、FR-15、FR-19、FR-20 | 角色 CRUD、成员角色分配、频道权限覆盖、统一 CheckPermission、成员移除/禁言/恢复、消息撤回/管理员删除。`@RequirePermissionForParam` 已接入 4 个 Controller（14 个端点）。前端频道覆盖编辑 UI（复用 PermissionBitEditor）。测试: PermissionGuard(6)、权限层级(7)、ServersService(2)。 | M2/M3 资源模型。 | AC-04、AC-E5、AC-E7、AC-N4。 |
-| M5 实时与语音状态 | 基本实现 | FR-05、FR-16、FR-17、FR-18 | `/realtime` 订阅权限、13 个服务端事件发布、在线状态(Presence+Redis)、通知同步(5 类: 好友/私聊/提及/成员管理/权限变更)、语音状态会话(CRUD+约束)。重连补偿流程(服务端 SyncState + 客户端重连缓存刷新)。测试: RealtimeGateway(14)、PresenceService(5)。 | M3 消息/通知、M4 权限。 | AC-03、AC-05、AC-06、AC-N1、AC-N2。 |
-| M6 验收加固 | 待实现 | AC、AC-E、AC-N | E2E、权限矩阵、异常流程、压测脚本、演示数据和启动说明。 | M1 至 M5。 | AC-01 至 AC-06、AC-E1 至 AC-E8、AC-N1 至 AC-N5。 |
+| M5 实时与语音状态 | 已实现 | FR-05、FR-16、FR-17、FR-18 | `/realtime` 订阅权限、13 个服务端事件发布、在线状态(Presence+Redis)、通知同步(5 类: 好友/私聊/提及/成员管理/权限变更)、语音状态会话(CRUD+约束)。重连补偿流程(服务端 SyncState + 客户端重连缓存刷新)。测试: RealtimeGateway(14)、PresenceService(5)。 | M3 消息/通知、M4 权限。 | AC-03、AC-05、AC-06、AC-N1、AC-N2。 |
+| M5.5 语音媒体平面 | 已实现 | FR-16、FR-17 | `apps/media`（API spawn 的 mediasoup Worker 子进程与健康检查）、`MediaSignalingModule`（Router/Transport/Producer/Consumer 编排、AudioLevelObserver、TURN HMAC 凭证签发）、客户端 mediasoup-client 基础集成、已存在 Producer 消费、Worker 崩溃后自动重新加入、docker-compose 增加可选 `mediasoup` 调试服务与 `coturn`。Producer 强制 `kind=audio`，服务端不录音/混音/转写。 | M5 实时与权限、M4 权限位扩展（SPEAK_VOICE/LISTEN_VOICE）。 | AC-03、AC-N2、AC-N6。 |
+| M6 验收加固 | 已实现 | AC、AC-E、AC-N | API+Socket E2E、Playwright 浏览器 E2E、权限矩阵测试、异常流程测试、k6 压测脚本、幂等演示数据和本地验收说明。测试: API E2E(AC/AC-E/AC-N4)、Playwright(核心用户路径)、k6(AC-N1/AC-N2/AC-N3 可执行验证)。 | M1 至 M5。 | AC-01 至 AC-06、AC-E1 至 AC-E8、AC-N1 至 AC-N5。 |
 
 ## 账号与身份模块
 
@@ -185,21 +186,33 @@
 - 权限拒绝返回统一错误并记录必要审计。
 - 实时订阅、附件访问和历史消息加载同样必须调用权限校验。
 
-## 语音状态模块
+## 语音模块
 
 ### 加入与退出 FR-16
 
 - 接口：`JoinVoiceChannel`、`LeaveVoiceChannel`
 - 一个用户同一时刻只允许存在一个有效 `VoiceSession`。
-- 加入前检查频道类型、成员身份和加入权限。
-- 断线、退出社区、权限移除或频道删除时释放语音会话。
+- 加入前检查频道类型、成员身份和 `JOIN_VOICE` 权限。
+- 加入成功后必须在 30 秒内完成 mediasoup 媒体协商，否则服务端释放会话并广播 `VoiceMemberLeft(reason=signaling_timeout)`。
+- 断线、退出社区、权限移除或频道删除时释放语音会话，关闭对应 Transport/Producer 并清理 Redis 运行期键。
 
 ### 状态同步 FR-17
 
 - 接口：`UpdateVoiceState`
-- 状态：静音、闭麦、连接中、已连接、断开。
-- 事件：`VoiceStateChanged`、必要时 `VoiceMemberLeft`
-- 同步目标：同语音频道成员和有权查看该语音频道成员列表的用户。
+- 状态：静音 `muteState`、闭麦 `deafenState`、连接状态 `connectionStatus`（`connecting`/`connected`/`disconnected`）、媒体状态 `mediaState`（`idle | negotiating | connected | reconnecting | failed`）。
+- 静音切换 = 服务端调用 mediasoup `Producer.pause/resume`；闭麦 = 客户端关闭所有 Consumer 音频元素并标记 `deafenState`。
+- 事件：`VoiceStateChanged`、必要时 `VoiceMemberLeft`、`VoiceProducerClosed`。
+- 同步目标：同语音频道成员和有权查看该语音频道成员列表的用户，状态可达时间不超过 3 秒。
+
+### 媒体信令 FR-16/FR-17
+
+- 由 `MediaSignalingModule` 实现，复用 `/realtime` Socket.IO 命名空间承载请求-响应事件。
+- 拓扑：1 个 mediasoup Worker 进程池 → 每个语音频道分配 1 个 Router → 每个用户 1 个 send Transport + 1 个 recv Transport → 每个发言者 1 个 audio Producer，每个监听者按发言者数量创建 Consumer。
+- RTP capabilities 协商通过 `VoiceRouterCapabilities`；Transport 创建/连接通过 `VoiceTransportCreated` / `VoiceTransportConnect`；Producer/Consumer 生命周期通过 `VoiceProducerCreated` / `VoiceConsumerCreated` / `VoiceConsumerResumed` / `VoiceProducerClosed`。
+- Producer 创建前强制校验 `SPEAK_VOICE` 权限与 `kind === 'audio'`，video 与 screen 直接拒绝。
+- active speaker 检测使用 mediasoup AudioLevelObserver，结果由服务端节流（≤2 次/秒）后通过 `VoiceActiveSpeaker` 广播。
+- TURN 凭证由服务端基于 `TURN_SHARED_SECRET` 用 HMAC 签发，TTL 默认 5 分钟，临近过期由客户端调用 `GET /voice/sessions/{id}/ice-servers` 续签。
+- Worker 崩溃恢复：进程退出后服务端关闭受影响 `VoiceSession`，广播 `VoiceProducerClosed(reason=worker_died)` 与 `VoiceMemberLeft(reason=worker_died)`；客户端收到后自动重新加入并走完整协商。
 
 ## 审计与支撑模块
 

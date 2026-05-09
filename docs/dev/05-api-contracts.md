@@ -396,7 +396,9 @@
 
 对应 `CheckPermission`，仅供内部管理界面、调试和测试使用。业务接口必须在服务端内部调用权限服务，不能依赖前端主动请求此接口完成安全控制。
 
-## 语音状态
+## 语音
+
+本节覆盖语音状态命令与媒体凭证签发。媒体协商（Transport/Producer/Consumer）通过 `/realtime` Socket 事件完成，详见 `06-realtime-events.md` §媒体信令事件；HTTP 仅承担状态命令、加入/离开和 TURN 凭证签发。
 
 ### `POST /voice/channels/{channel_id}/join`
 
@@ -411,11 +413,43 @@
 }
 ```
 
-同一用户已有其他有效语音会话时，服务端先释放旧会话再加入新频道，或返回明确冲突。v1 推荐自动切换并发布旧频道 `VoiceMemberLeft`。
+响应：
+
+```json
+{
+  "session_id": "uuid",
+  "channel_id": "uuid",
+  "media": {
+    "router_rtp_capabilities": { },
+    "active_producers": [
+      {
+        "channel_id": "uuid",
+        "user_id": "uuid",
+        "producer_id": "string",
+        "kind": "audio",
+        "paused": false
+      }
+    ],
+    "ice_servers": [
+      {
+        "urls": ["turn:turn.example.com:3478?transport=udp"],
+        "username": "1714915200:user-uuid",
+        "credential": "<hmac-base64>",
+        "credential_type": "password",
+        "ttl_seconds": 300
+      }
+    ],
+    "signaling_channel": "voice:{channel_id}"
+  }
+}
+```
+
+同一用户已有其他有效语音会话时，服务端先释放旧会话再加入新频道，或返回明确冲突。v1 推荐自动切换并发布旧频道 `VoiceMemberLeft`。30 秒内未完成媒体协商，服务端释放会话并广播 `VoiceMemberLeft(reason=signaling_timeout)`。
+`active_producers` 用于让后加入成员主动创建 Consumer，避免只依赖加入后的广播事件。
 
 ### `POST /voice/sessions/{session_id}/leave`
 
-对应 `LeaveVoiceChannel`。重复离开必须幂等。
+对应 `LeaveVoiceChannel`。重复离开必须幂等，服务端同步关闭对应 Transport/Producer 并清理 Redis 运行期键。
 
 ### `PATCH /voice/sessions/{session_id}/state`
 
@@ -430,6 +464,12 @@
   "connection_status": "connected"
 }
 ```
+
+服务端在 `mute_state` 切换时调用 mediasoup `Producer.pause/resume`；`deafen_state` 由客户端关闭本地 Consumer 解码并通过本接口同步状态。
+
+### `GET /voice/sessions/{session_id}/ice-servers`
+
+刷新 TURN 凭证。当前客户端在重新加入/重协商时获取新凭证；本接口保留给后续长会话刷新使用。响应载荷与 `JoinVoiceChannel` 的 `media.ice_servers` 一致。频繁调用会触发限流。
 
 ## 接口到需求映射
 
@@ -449,9 +489,8 @@
 | FR-13 | `POST /channels/{id}/messages`、`POST /dm-conversations/{id}/messages` |
 | FR-14 | `GET /channels/{id}/messages`、`POST /read-states` |
 | FR-15 | `POST /messages/{id}/delete` |
-| FR-16 | `POST /voice/channels/{id}/join`、`POST /voice/sessions/{id}/leave` |
-| FR-17 | `PATCH /voice/sessions/{id}/state` |
+| FR-16 | `POST /voice/channels/{id}/join`、`POST /voice/sessions/{id}/leave`、`GET /voice/sessions/{id}/ice-servers` + Socket 媒体信令事件（`VoiceRouterCapabilities`、`VoiceTransportCreated`、`VoiceTransportConnect`、`VoiceProducerCreated`、`VoiceConsumerCreated`、`VoiceConsumerResumed`、`VoiceProducerClosed`） |
+| FR-17 | `PATCH /voice/sessions/{id}/state` + Socket 媒体信令事件（`VoiceStateChanged`、`VoiceActiveSpeaker`） |
 | FR-18 | `GET /notifications`、`POST /notifications/read` |
 | FR-19 | `POST/PATCH /roles`、成员角色接口 |
 | FR-20 | 所有受控接口的服务端权限拦截 |
-
