@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { voiceMediaStateSchema } from './voice-media';
+
 export const voiceConnectionStatusSchema = z.enum([
   'connecting',
   'connected',
@@ -34,6 +36,7 @@ export const voiceSessionSummarySchema = z.object({
   connection_status: voiceConnectionStatusSchema,
   deafen_state: z.boolean(),
   joined_at: z.string().datetime({ offset: true }),
+  media_state: voiceMediaStateSchema,
   member: z.object({
     avatar_attachment_id: z.string().uuid().nullable(),
     nickname: z.string().min(1),
@@ -41,6 +44,7 @@ export const voiceSessionSummarySchema = z.object({
     username: z.string().min(1),
   }),
   mute_state: z.boolean(),
+  producer_id: z.string().min(1).nullable(),
   session_id: z.string().uuid(),
   updated_at: z.string().datetime({ offset: true }),
   user_id: z.string().uuid(),

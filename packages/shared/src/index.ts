@@ -9,3 +9,4 @@ export * from './schemas/health';
 export * from './schemas/realtime';
 export * from './schemas/user';
 export * from './schemas/voice';
+export * from './schemas/voice-media';

@@ -11,6 +11,14 @@ export const RealtimeEvent = {
   VoiceMemberJoined: 'VoiceMemberJoined',
   VoiceMemberLeft: 'VoiceMemberLeft',
   VoiceStateChanged: 'VoiceStateChanged',
+  VoiceRouterCapabilities: 'VoiceRouterCapabilities',
+  VoiceTransportCreated: 'VoiceTransportCreated',
+  VoiceTransportConnect: 'VoiceTransportConnect',
+  VoiceProducerCreated: 'VoiceProducerCreated',
+  VoiceConsumerCreated: 'VoiceConsumerCreated',
+  VoiceConsumerResumed: 'VoiceConsumerResumed',
+  VoiceProducerClosed: 'VoiceProducerClosed',
+  VoiceActiveSpeaker: 'VoiceActiveSpeaker',
   SyncState: 'SyncState',
 } as const;
 

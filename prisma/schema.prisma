@@ -344,21 +344,28 @@ model Notification {
 }
 
 model VoiceSession {
-  id               String    @id @default(uuid()) @db.Uuid
-  channelId        String    @map("channel_id") @db.Uuid
-  userId           String    @map("user_id") @db.Uuid
-  muteState        Boolean   @default(false) @map("mute_state")
-  deafenState      Boolean   @default(false) @map("deafen_state")
-  connectionStatus String    @default("connecting") @map("connection_status") @db.VarChar(32)
-  joinedAt         DateTime  @default(now()) @map("joined_at") @db.Timestamptz(6)
-  endedAt          DateTime? @map("ended_at") @db.Timestamptz(6)
-  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id                  String    @id @default(uuid()) @db.Uuid
+  channelId           String    @map("channel_id") @db.Uuid
+  userId              String    @map("user_id") @db.Uuid
+  muteState           Boolean   @default(false) @map("mute_state")
+  deafenState         Boolean   @default(false) @map("deafen_state")
+  connectionStatus    String    @default("connecting") @map("connection_status") @db.VarChar(32)
+  mediaState          String    @default("idle") @map("media_state") @db.VarChar(32)
+  negotiationDeadline DateTime? @map("negotiation_deadline") @db.Timestamptz(6)
+  routerId            String?   @map("router_id") @db.VarChar(64)
+  sendTransportId     String?   @map("send_transport_id") @db.VarChar(64)
+  recvTransportId     String?   @map("recv_transport_id") @db.VarChar(64)
+  producerId          String?   @map("producer_id") @db.VarChar(64)
+  joinedAt            DateTime  @default(now()) @map("joined_at") @db.Timestamptz(6)
+  endedAt             DateTime? @map("ended_at") @db.Timestamptz(6)
+  updatedAt           DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   channel Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([channelId, endedAt])
   @@index([userId, endedAt])
+  @@index([mediaState, negotiationDeadline])
   @@map("voice_sessions")
 }
 

@@ -8,12 +8,18 @@ export const PermissionBit = {
   ManageRole: 64,
   CreateInvite: 128,
   ViewAudit: 256,
+  SpeakVoice: 512,
+  ListenVoice: 1024,
 } as const;
 
 export type PermissionBit = (typeof PermissionBit)[keyof typeof PermissionBit];
 
 export const DEFAULT_MEMBER_PERMISSION_BITS =
-  PermissionBit.ViewChannel | PermissionBit.SendMessage | PermissionBit.JoinVoice;
+  PermissionBit.ViewChannel |
+  PermissionBit.SendMessage |
+  PermissionBit.JoinVoice |
+  PermissionBit.SpeakVoice |
+  PermissionBit.ListenVoice;
 
 export const ALL_PERMISSION_BITS = Object.values(PermissionBit).reduce(
   (bits, bit) => bits | bit,

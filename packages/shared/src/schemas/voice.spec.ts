@@ -40,6 +40,7 @@ describe('voice schemas', () => {
         connection_status: 'connected',
         deafen_state: false,
         joined_at: '2026-05-04T00:00:00.000Z',
+        media_state: 'connected',
         member: {
           avatar_attachment_id: null,
           nickname: 'Alice',
@@ -47,6 +48,7 @@ describe('voice schemas', () => {
           username: 'alice',
         },
         mute_state: false,
+        producer_id: null,
         session_id: '00000000-0000-4000-8000-000000000003',
         updated_at: '2026-05-04T00:00:01.000Z',
         user_id: '00000000-0000-4000-8000-000000000002',
