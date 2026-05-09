@@ -49,7 +49,7 @@ type SocketSuccessPayload = {
   server_time?: string;
 };
 
-const PRESENCE_SWEEP_INTERVAL_MS = 5_000;
+const DEFAULT_PRESENCE_SWEEP_INTERVAL_MS = 5_000;
 
 @WebSocketGateway({
   cors: {
@@ -79,10 +79,10 @@ export class RealtimeGateway
   afterInit(server: Server) {
     this.publisher.bindServer(server);
 
-    if (process.env.NODE_ENV !== 'test' && !this.presenceSweepTimer) {
+    if (shouldStartPresenceSweep() && !this.presenceSweepTimer) {
       this.presenceSweepTimer = setInterval(() => {
         void this.sweepPresenceAndVoice();
-      }, PRESENCE_SWEEP_INTERVAL_MS);
+      }, getPresenceSweepIntervalMs());
     }
   }
 
@@ -123,6 +123,8 @@ export class RealtimeGateway
       result: 'success',
       targetId: socket.id,
       targetType: 'socket_connection',
+    }).catch((error) => {
+      this.logger.warn(`Failed to record realtime connect audit: ${String(error)}`);
     });
   }
 
@@ -142,6 +144,8 @@ export class RealtimeGateway
       result: 'success',
       targetId: socket.id,
       targetType: 'socket_connection',
+    }).catch((error) => {
+      this.logger.warn(`Failed to record realtime disconnect audit: ${String(error)}`);
     });
   }
 
@@ -387,4 +391,16 @@ function mapScopeToResourceType(scopeType: RealtimeScopeType): PermissionResourc
     'Unsupported realtime subscription scope.',
     HttpStatus.BAD_REQUEST,
   );
+}
+
+function shouldStartPresenceSweep(): boolean {
+  return process.env.NODE_ENV !== 'test' || process.env.REALTIME_SWEEP_IN_TEST === 'true';
+}
+
+function getPresenceSweepIntervalMs(): number {
+  const configured = Number(process.env.PRESENCE_SWEEP_INTERVAL_MS);
+
+  return Number.isInteger(configured) && configured > 0
+    ? configured
+    : DEFAULT_PRESENCE_SWEEP_INTERVAL_MS;
 }

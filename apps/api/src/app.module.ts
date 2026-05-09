@@ -2,8 +2,10 @@ import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 
+import { AccessTokenGuard } from './common/auth/access-token.guard';
 import { ApiExceptionFilter } from './common/http/api-exception.filter';
 import { ApiResponseInterceptor } from './common/http/api-response.interceptor';
+import { PermissionGuard } from './common/permissions/permission.guard';
 import { RequestIdMiddleware } from './common/request/request-id.middleware';
 import { validateEnvironment } from './common/config/env.validation';
 import { PersistenceModule } from './common/persistence/persistence.module';
@@ -16,6 +18,7 @@ import { ChannelsModule } from './modules/channels/channels.module';
 import { FriendsModule } from './modules/friends/friends.module';
 import { HealthModule } from './modules/health/health.module';
 import { MessagesModule } from './modules/messages/messages.module';
+import { MediaSignalingModule } from './modules/media-signaling/media-signaling.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { PermissionsModule } from './modules/permissions/permissions.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
@@ -42,6 +45,7 @@ import { VoiceModule } from './modules/voice/voice.module';
     NotificationsModule,
     PermissionsModule,
     VoiceModule,
+    MediaSignalingModule,
     RealtimeModule,
     AuditModule,
   ],
@@ -53,6 +57,14 @@ import { VoiceModule } from './modules/voice/voice.module';
     {
       provide: APP_INTERCEPTOR,
       useClass: ApiResponseInterceptor,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: AccessTokenGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: PermissionGuard,
     },
     {
       provide: APP_GUARD,

@@ -4,6 +4,7 @@ import {
   ExceptionFilter,
   HttpException,
   HttpStatus,
+  Logger,
 } from '@nestjs/common';
 import { Response } from 'express';
 
@@ -17,6 +18,8 @@ import { isRecord } from '../utils/is-record';
 
 @Catch()
 export class ApiExceptionFilter implements ExceptionFilter {
+  private readonly logger = new Logger(ApiExceptionFilter.name);
+
   catch(exception: unknown, host: ArgumentsHost) {
     if (host.getType() !== 'http') {
       throw exception;
@@ -26,6 +29,11 @@ export class ApiExceptionFilter implements ExceptionFilter {
     const request = context.getRequest<RequestWithId>();
     const response = context.getResponse<Response>();
     const normalized = normalizeException(exception);
+
+    if (!(exception instanceof AppError) && !(exception instanceof HttpException)) {
+      this.logger.error(formatUnknownException(exception));
+    }
+
     const body = createApiErrorResponse({
       code: normalized.code,
       message: normalized.message,
@@ -35,6 +43,14 @@ export class ApiExceptionFilter implements ExceptionFilter {
 
     response.status(normalized.httpStatus).json(body);
   }
+}
+
+function formatUnknownException(exception: unknown): string {
+  if (exception instanceof Error) {
+    return exception.stack ?? exception.message;
+  }
+
+  return String(exception);
 }
 
 type NormalizedException = {

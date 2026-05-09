@@ -12,7 +12,10 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
   constructor(private readonly configService: ConfigService<Environment, true>) {}
 
   async onModuleInit() {
-    if (process.env.NODE_ENV === 'test' || process.env.REDIS_SKIP_CONNECT === 'true') {
+    if (
+      process.env.REDIS_SKIP_CONNECT === 'true' ||
+      (process.env.NODE_ENV === 'test' && process.env.REDIS_CONNECT_IN_TEST !== 'true')
+    ) {
       return;
     }
 

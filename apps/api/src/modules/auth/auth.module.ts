@@ -1,5 +1,4 @@
 import { Module } from '@nestjs/common';
-import { APP_GUARD } from '@nestjs/core';
 
 import { AccessTokenGuard } from '../../common/auth/access-token.guard';
 import { TOKEN_VERIFIER } from '../../common/auth/auth.types';
@@ -23,10 +22,6 @@ import { TokenService } from './token.service';
       useExisting: PrismaTokenVerifier,
     },
     AccessTokenGuard,
-    {
-      provide: APP_GUARD,
-      useExisting: AccessTokenGuard,
-    },
   ],
   exports: [AccessTokenGuard, AuthService, TOKEN_VERIFIER],
 })

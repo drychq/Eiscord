@@ -13,7 +13,7 @@ import { RealtimePublisher } from './realtime.publisher';
 
 const CONNECTION_TTL_SECONDS = 75;
 const CONNECTION_TTL_MS = CONNECTION_TTL_SECONDS * 1000;
-const OFFLINE_GRACE_MS = 45_000;
+const DEFAULT_OFFLINE_GRACE_MS = 45_000;
 const CONNECTION_EXPIRATIONS_KEY = 'presence:connection_expirations';
 const OFFLINE_CANDIDATES_KEY = 'presence:offline_candidates';
 
@@ -57,6 +57,8 @@ export class PresenceService {
   }
 
   async markDisconnected(user: AuthenticatedUserContext, connectionId: string): Promise<void> {
+    const offlineGraceMs = getOfflineGraceMs();
+
     await this.redis.execute(async (client) => {
       await client.srem(userConnectionsKey(user.userId), connectionId);
       await client.del(connectionKey(connectionId));
@@ -65,7 +67,7 @@ export class PresenceService {
       const activeCount = await client.scard(userConnectionsKey(user.userId));
 
       if (activeCount === 0) {
-        await client.zadd(OFFLINE_CANDIDATES_KEY, String(Date.now() + OFFLINE_GRACE_MS), user.userId);
+        await client.zadd(OFFLINE_CANDIDATES_KEY, String(Date.now() + offlineGraceMs), user.userId);
       }
     });
   }
@@ -136,7 +138,7 @@ export class PresenceService {
         const activeCount = await client.scard(userConnectionsKey(userId));
 
         if (activeCount === 0) {
-          await client.zadd(OFFLINE_CANDIDATES_KEY, String(now + OFFLINE_GRACE_MS), userId);
+          await client.zadd(OFFLINE_CANDIDATES_KEY, String(now + getOfflineGraceMs()), userId);
         }
       }
 
@@ -313,4 +315,10 @@ function parseConnectionMember(member: string): { connectionId: string; userId: 
     connectionId: member.slice(separatorIndex + 1),
     userId: member.slice(0, separatorIndex),
   };
+}
+
+function getOfflineGraceMs(): number {
+  const configured = Number(process.env.PRESENCE_OFFLINE_GRACE_MS);
+
+  return Number.isInteger(configured) && configured > 0 ? configured : DEFAULT_OFFLINE_GRACE_MS;
 }
