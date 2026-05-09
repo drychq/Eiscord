@@ -63,6 +63,35 @@ services:
       - ./docker/minio/create-bucket.sh:/create-bucket.sh:ro
     entrypoint: ["/bin/sh", "/create-bucket.sh"]
 
+  coturn:
+    image: coturn/coturn:latest
+    container_name: eiscord-coturn
+    network_mode: host
+    volumes:
+      - ./docker/coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+    command: ["-c", "/etc/coturn/turnserver.conf"]
+    restart: unless-stopped
+
+  mediasoup:
+    image: node:22-bookworm-slim
+    container_name: eiscord-mediasoup
+    working_dir: /app
+    network_mode: host
+    environment:
+      MEDIASOUP_LISTEN_IP: ${MEDIASOUP_LISTEN_IP:-127.0.0.1}
+      MEDIASOUP_ANNOUNCED_IP: ${MEDIASOUP_ANNOUNCED_IP:-}
+      MEDIASOUP_NUM_WORKERS: ${MEDIASOUP_NUM_WORKERS:-1}
+      MEDIASOUP_RTC_MIN_PORT: ${MEDIASOUP_RTC_MIN_PORT:-40000}
+      MEDIASOUP_RTC_MAX_PORT: ${MEDIASOUP_RTC_MAX_PORT:-40100}
+      MEDIA_HEALTH_PORT: 3001
+    volumes:
+      - .:/app
+    command: ["node", "apps/media/dist/main.js"]
+    depends_on:
+      - postgres
+      - redis
+    restart: unless-stopped
+
 volumes:
   postgres-data:
   redis-data:

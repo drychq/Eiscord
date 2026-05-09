@@ -5,6 +5,6 @@ export default defineConfig({
   plugins: [react()],
   envPrefix: 'PUBLIC_',
   server: {
-    port: 5173,
+    port: Number(process.env.PORT ?? 5173),
   },
 });

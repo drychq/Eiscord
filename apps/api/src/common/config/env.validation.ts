@@ -19,6 +19,21 @@ const environmentSchema = z.object({
   UPLOAD_MAX_BYTES: z.coerce.number().int().positive().default(10485760),
   SERVER_MEMBER_LIMIT: z.coerce.number().int().positive().default(5000),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('debug'),
+  REDIS_CONNECT_IN_TEST: z.enum(['true', 'false']).default('false'),
+  REALTIME_SWEEP_IN_TEST: z.enum(['true', 'false']).default('false'),
+  PRESENCE_SWEEP_INTERVAL_MS: z.coerce.number().int().positive().default(5000),
+  PRESENCE_OFFLINE_GRACE_MS: z.coerce.number().int().positive().default(45000),
+  MEDIASOUP_LISTEN_IP: z.string().ip().default('127.0.0.1'),
+  MEDIASOUP_ANNOUNCED_IP: z.string().ip().optional(),
+  MEDIASOUP_RTC_MIN_PORT: z.coerce.number().int().positive().default(40000),
+  MEDIASOUP_RTC_MAX_PORT: z.coerce.number().int().positive().default(40100),
+  MEDIASOUP_NUM_WORKERS: z.coerce.number().int().positive().default(1),
+  TURN_URL: z.string().min(1).default('turn:localhost:3478?transport=udp'),
+  TURN_SHARED_SECRET: z.string().min(1).default('change-me-turn'),
+  TURN_CREDENTIAL_TTL_SECONDS: z.coerce.number().int().positive().default(300),
+  VOICE_MAX_PARTICIPANTS_PER_ROOM: z.coerce.number().int().positive().default(20),
+  VOICE_NEGOTIATION_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
+  VOICE_NEGOTIATION_SWEEP_INTERVAL_MS: z.coerce.number().int().positive().default(5000),
 });
 
 export type Environment = z.infer<typeof environmentSchema>;

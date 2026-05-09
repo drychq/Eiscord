@@ -7,8 +7,8 @@ module.exports = {
   },
   rootDir: '.',
   testEnvironment: 'node',
-  testMatch: ['<rootDir>/src/**/*.spec.ts'],
-  testPathIgnorePatterns: ['<rootDir>/src/e2e/', '\\.e2e\\.spec\\.ts$'],
+  testMatch: ['<rootDir>/src/**/*.e2e.spec.ts'],
+  testTimeout: 30000,
   transform: {
     '^.+\\.ts$': '<rootDir>/jest.transformer.cjs',
   },

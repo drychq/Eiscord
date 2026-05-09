@@ -8,16 +8,23 @@
     "node": ">=22.0.0"
   },
   "scripts": {
-    "dev": "pnpm --filter @eiscord/shared build && pnpm --parallel --filter @eiscord/api --filter @eiscord/web dev",
-    "dev:api": "pnpm --filter @eiscord/shared build && pnpm --filter @eiscord/api dev",
+    "dev": "pnpm --filter @eiscord/shared build && pnpm --filter @eiscord/media build && pnpm --parallel --filter @eiscord/api --filter @eiscord/web dev",
+    "dev:api": "pnpm --filter @eiscord/shared build && pnpm --filter @eiscord/media build && pnpm --filter @eiscord/api dev",
     "dev:web": "pnpm --filter @eiscord/shared build && pnpm --filter @eiscord/web dev",
     "build": "pnpm -r --if-present build",
     "typecheck": "pnpm --filter @eiscord/shared build && pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",
+    "test:e2e:api": "pnpm --filter @eiscord/shared build && pnpm db:test:reset && DATABASE_URL=postgresql://eiscord:eiscord@localhost:5432/eiscord_test REDIS_CONNECT_IN_TEST=true REALTIME_SWEEP_IN_TEST=true PRESENCE_SWEEP_INTERVAL_MS=100 PRESENCE_OFFLINE_GRACE_MS=120 pnpm --filter @eiscord/api test:e2e",
+    "test:e2e:web": "pnpm --filter @eiscord/shared build && pnpm --filter @eiscord/media build && pnpm prepare:e2e:audio && pnpm db:test:reset && DATABASE_URL=postgresql://eiscord:eiscord@localhost:5432/eiscord_test pnpm db:seed && pnpm exec playwright test",
+    "test:e2e:voice": "pnpm --filter @eiscord/shared build && pnpm --filter @eiscord/media build && pnpm prepare:e2e:audio && pnpm db:test:reset && DATABASE_URL=postgresql://eiscord:eiscord@localhost:5432/eiscord_test pnpm db:seed && pnpm exec playwright test tests/e2e/voice-media.spec.ts",
+    "test:e2e": "pnpm test:e2e:api && pnpm test:e2e:web",
+    "perf:k6": "k6 run scripts/k6/m6-realtime-load.js",
+    "prepare:e2e:audio": "node scripts/generate-test-audio.mjs",
     "lint": "pnpm -r --if-present lint",
     "format": "prettier --write \"**/*.{ts,tsx,js,cjs,mjs,json,md,css,yml,yaml}\"",
     "db:generate": "prisma generate --schema=prisma/schema.prisma",
     "db:migrate": "prisma migrate dev --schema=prisma/schema.prisma",
+    "db:test:reset": "docker compose up -d postgres redis minio minio-init && docker compose exec -T postgres sh -lc 'dropdb -U eiscord --if-exists eiscord_test && createdb -U eiscord eiscord_test' && DATABASE_URL=postgresql://eiscord:eiscord@localhost:5432/eiscord_test pnpm db:generate && DATABASE_URL=postgresql://eiscord:eiscord@localhost:5432/eiscord_test pnpm exec prisma migrate deploy --schema=prisma/schema.prisma",
     "db:seed": "tsx prisma/seed.ts"
   },
   "dependencies": {

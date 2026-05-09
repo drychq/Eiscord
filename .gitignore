@@ -50,3 +50,7 @@ Thumbs.db
 # Editor temporary files
 *.swp
 *.swo
+
+.claude/settings.json
+
+tests/e2e/fixtures/audio
