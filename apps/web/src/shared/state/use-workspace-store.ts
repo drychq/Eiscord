@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 
+import type { JoinVoiceMediaResponse } from '@eiscord/shared';
+
 const RECENT_PATH_KEY = 'eiscord:recent-path';
 
 function loadRecentPath(): string | null {
@@ -29,7 +31,9 @@ export type WorkspaceState = {
     deafen_state: boolean;
     mute_state: boolean;
     session_id: string;
+    user_id: string;
   } | null;
+  pendingVoiceMedia: JoinVoiceMediaResponse | null;
   isServerSettingsOpen: boolean;
   isProfilePanelOpen: boolean;
   isMobileNavOpen: boolean;
@@ -42,6 +46,7 @@ export type WorkspaceState = {
   setActiveVoiceSession: (
     session: WorkspaceState['activeVoiceSession'],
   ) => void;
+  setPendingVoiceMedia: (media: JoinVoiceMediaResponse | null) => void;
   setServerSettingsOpen: (open: boolean) => void;
   setProfilePanelOpen: (open: boolean) => void;
   setMobileNavOpen: (open: boolean) => void;
@@ -54,6 +59,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   activeDmId: null,
   activeVoiceChannelId: null,
   activeVoiceSession: null,
+  pendingVoiceMedia: null,
   isServerSettingsOpen: false,
   isProfilePanelOpen: false,
   isMobileNavOpen: false,
@@ -65,14 +71,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   setActiveVoiceChannelId: (voiceChannelId) =>
     set(
       voiceChannelId === null
-        ? { activeVoiceChannelId: null, activeVoiceSession: null }
+        ? { activeVoiceChannelId: null, activeVoiceSession: null, pendingVoiceMedia: null }
         : { activeVoiceChannelId: voiceChannelId },
     ),
   setActiveVoiceSession: (session) =>
     set({
       activeVoiceChannelId: session?.channel_id ?? null,
       activeVoiceSession: session,
+      ...(session ? {} : { pendingVoiceMedia: null }),
     }),
+  setPendingVoiceMedia: (media) => set({ pendingVoiceMedia: media }),
   setServerSettingsOpen: (open) => set({ isServerSettingsOpen: open }),
   setProfilePanelOpen: (open) => set({ isProfilePanelOpen: open }),
   setMobileNavOpen: (open) => set({ isMobileNavOpen: open }),

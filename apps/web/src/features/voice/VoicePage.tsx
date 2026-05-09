@@ -6,7 +6,7 @@ export function VoicePage() {
     <EmptyState
       icon={Mic2}
       title="语音状态"
-      description="语音状态同步即将在 M5 上线"
+      description="进入社区的语音频道即可加入多人音频对讲（mediasoup-client 已上线）"
     />
   );
 }

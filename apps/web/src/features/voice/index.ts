@@ -3,6 +3,7 @@ export {
   joinVoiceChannel,
   leaveVoiceSession,
   listVoiceSessions,
+  refreshVoiceIceServers,
   updateVoiceState,
 } from './voice-api';
-export type { VoiceSession } from './voice-api';
+export type { JoinVoiceChannelResponse, VoiceSession } from './voice-api';

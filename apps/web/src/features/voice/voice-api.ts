@@ -1,8 +1,12 @@
 import {
+  iceServerSchema,
   joinVoiceChannelRequestSchema,
+  joinVoiceMediaResponseSchema,
   updateVoiceStateRequestSchema,
   voiceSessionSummarySchema,
+  type IceServer,
   type JoinVoiceChannelRequest,
+  type JoinVoiceMediaResponse,
   type UpdateVoiceStateRequest,
   type VoiceSessionSummary,
 } from '@eiscord/shared';
@@ -16,6 +20,16 @@ export type JoinVoiceInput = JoinVoiceChannelRequest;
 
 export type UpdateVoiceStateInput = UpdateVoiceStateRequest;
 
+export type JoinVoiceChannelResponse = VoiceSession & {
+  media: JoinVoiceMediaResponse;
+};
+
+const joinVoiceChannelResponseSchema = voiceSessionSummarySchema.and(
+  z.object({ media: joinVoiceMediaResponseSchema }),
+);
+
+const refreshIceServersResponseSchema = z.object({ ice_servers: z.array(iceServerSchema) });
+
 export function listVoiceSessions(channelId: string): Promise<VoiceSession[]> {
   return request<VoiceSession[]>('GET', `/voice/channels/${channelId}/sessions`, {
     schema: z.array(voiceSessionSummarySchema),
@@ -25,12 +39,12 @@ export function listVoiceSessions(channelId: string): Promise<VoiceSession[]> {
 export function joinVoiceChannel(
   channelId: string,
   input: JoinVoiceInput = {},
-): Promise<VoiceSession> {
+): Promise<JoinVoiceChannelResponse> {
   const body = joinVoiceChannelRequestSchema.parse(input);
 
-  return request<VoiceSession>('POST', `/voice/channels/${channelId}/join`, {
+  return request<JoinVoiceChannelResponse>('POST', `/voice/channels/${channelId}/join`, {
     body,
-    schema: voiceSessionSummarySchema,
+    schema: joinVoiceChannelResponseSchema,
   });
 }
 
@@ -51,3 +65,10 @@ export function updateVoiceState(
     schema: voiceSessionSummarySchema,
   });
 }
+
+export function refreshVoiceIceServers(sessionId: string): Promise<{ ice_servers: IceServer[] }> {
+  return request<{ ice_servers: IceServer[] }>('GET', `/voice/sessions/${sessionId}/ice-servers`, {
+    schema: refreshIceServersResponseSchema,
+  });
+}
+

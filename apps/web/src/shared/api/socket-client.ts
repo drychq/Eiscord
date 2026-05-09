@@ -5,9 +5,16 @@ import { useToastStore } from '../state/use-toast-store';
 
 type EventHandler = (payload: unknown) => void;
 
+type PendingAck = {
+  reject: (error: Error) => void;
+  resolve: (value: unknown) => void;
+  timer: ReturnType<typeof setTimeout>;
+};
+
 let socket: Socket | null = null;
 const eventHandlers = new Map<string, Set<EventHandler>>();
 const subscriptions = new Set<string>();
+const pendingAcks = new Set<PendingAck>();
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
 let onPermissionChangedCallback: (() => void) | null = null;
@@ -160,6 +167,11 @@ export function disconnect(options: { clearSubscriptions?: boolean } = {}): void
     clearInterval(heartbeatTimer);
     heartbeatTimer = null;
   }
+  for (const pending of pendingAcks) {
+    clearTimeout(pending.timer);
+    pending.reject(new Error('REALTIME_DISCONNECTED'));
+  }
+  pendingAcks.clear();
   if (socket) {
     socket.removeAllListeners();
     socket.disconnect();
@@ -199,6 +211,45 @@ export function off(eventName: string, handler: EventHandler): void {
 
 export function isConnected(): boolean {
   return socket?.connected ?? false;
+}
+
+type AckEnvelope = {
+  data?: unknown;
+  error?: { code?: string; message?: string; details?: Record<string, unknown> };
+  request_id?: string;
+  server_time?: string;
+};
+
+export function request<T>(event: string, payload: unknown, timeoutMs = 8000): Promise<T> {
+  if (!socket || !socket.connected) {
+    return Promise.reject(new Error('REALTIME_NOT_CONNECTED'));
+  }
+
+  return new Promise<T>((resolve, reject) => {
+    const pending: PendingAck = {
+      resolve: resolve as (value: unknown) => void,
+      reject,
+      timer: setTimeout(() => {
+        pendingAcks.delete(pending);
+        reject(new Error('REALTIME_REQUEST_TIMEOUT'));
+      }, timeoutMs),
+    };
+    pendingAcks.add(pending);
+
+    socket!.emit(event, payload, (response: AckEnvelope) => {
+      clearTimeout(pending.timer);
+      pendingAcks.delete(pending);
+
+      if (response && response.error) {
+        const code = response.error.code ?? 'UNKNOWN_ERROR';
+        const message = response.error.message ?? 'Realtime request failed';
+        reject(new Error(`[${code}] ${message}`));
+        return;
+      }
+
+      resolve((response?.data ?? response) as T);
+    });
+  });
 }
 
 function scopeKey(scopeType: RealtimeScopeType, scopeId: string): string {

@@ -89,6 +89,9 @@ export function useRealtimeEventSync() {
     socket.on('VoiceMemberJoined', invalidateVoice);
     socket.on('VoiceStateChanged', invalidateVoice);
     socket.on('VoiceMemberLeft', handleVoiceLeft);
+    socket.on('VoiceProducerCreated', invalidateVoice);
+    socket.on('VoiceProducerClosed', invalidateVoice);
+    socket.on('VoiceActiveSpeaker', invalidateVoice);
 
     return () => {
       socket.off('MessageCreated', invalidateMessages);
@@ -101,6 +104,9 @@ export function useRealtimeEventSync() {
       socket.off('VoiceMemberJoined', invalidateVoice);
       socket.off('VoiceStateChanged', invalidateVoice);
       socket.off('VoiceMemberLeft', handleVoiceLeft);
+      socket.off('VoiceProducerCreated', invalidateVoice);
+      socket.off('VoiceProducerClosed', invalidateVoice);
+      socket.off('VoiceActiveSpeaker', invalidateVoice);
     };
   }, [queryClient]);
 }

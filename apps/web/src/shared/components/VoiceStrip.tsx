@@ -4,6 +4,7 @@ import {
   useLeaveVoiceSession,
   useUpdateVoiceState,
 } from '../../features/voice/use-voice-queries';
+import { voiceClient } from '../../features/voice/voice-client';
 
 export function VoiceStrip() {
   const { activeVoiceChannelId, activeVoiceSession, setActiveVoiceChannelId } = useWorkspaceStore();
@@ -13,6 +14,35 @@ export function VoiceStrip() {
   if (!activeVoiceChannelId) return null;
 
   const sessionId = activeVoiceSession?.session_id;
+
+  const handleMuteToggle = () => {
+    if (!sessionId || !activeVoiceSession) return;
+    const nextMuted = !activeVoiceSession.mute_state;
+    voiceClient.setMuted(nextMuted);
+    updateVoice.mutate({
+      input: { mute_state: nextMuted },
+      sessionId,
+    });
+  };
+
+  const handleDeafenToggle = () => {
+    if (!sessionId || !activeVoiceSession) return;
+    const nextDeafened = !activeVoiceSession.deafen_state;
+    voiceClient.setDeafened(nextDeafened);
+    updateVoice.mutate({
+      input: { deafen_state: nextDeafened },
+      sessionId,
+    });
+  };
+
+  const handleLeave = () => {
+    void voiceClient.stop('manual_leave');
+    if (sessionId) {
+      leaveVoice.mutate(sessionId);
+    } else {
+      setActiveVoiceChannelId(null);
+    }
+  };
 
   return (
     <div className="voice-strip">
@@ -27,13 +57,7 @@ export function VoiceStrip() {
             className="icon-button"
             type="button"
             aria-label="切换静音"
-            onClick={() =>
-              sessionId &&
-              updateVoice.mutate({
-                input: { mute_state: !activeVoiceSession.mute_state },
-                sessionId,
-              })
-            }
+            onClick={handleMuteToggle}
           >
             {activeVoiceSession.mute_state ? <MicOff size={15} /> : <Mic size={15} />}
           </button>
@@ -41,13 +65,7 @@ export function VoiceStrip() {
             className="icon-button"
             type="button"
             aria-label="切换闭麦"
-            onClick={() =>
-              sessionId &&
-              updateVoice.mutate({
-                input: { deafen_state: !activeVoiceSession.deafen_state },
-                sessionId,
-              })
-            }
+            onClick={handleDeafenToggle}
           >
             {activeVoiceSession.deafen_state ? <VolumeX size={15} /> : <Headphones size={15} />}
           </button>
@@ -57,13 +75,7 @@ export function VoiceStrip() {
         className="icon-button"
         type="button"
         aria-label="退出语音"
-        onClick={() => {
-          if (sessionId) {
-            leaveVoice.mutate(sessionId);
-          } else {
-            setActiveVoiceChannelId(null);
-          }
-        }}
+        onClick={handleLeave}
         style={{ marginLeft: 'auto', background: 'transparent', borderColor: 'rgba(255,255,255,0.3)', color: '#fff' }}
       >
         <PhoneOff size={16} />

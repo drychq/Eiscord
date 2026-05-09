@@ -17,6 +17,7 @@ export function useVoiceSessions(channelId: string | null) {
     queryKey: ['voice', channelId],
     queryFn: () => listVoiceSessions(channelId!),
     enabled: !!channelId,
+    refetchInterval: 1000,
     staleTime: 5_000,
   });
 }
@@ -27,8 +28,11 @@ export function useJoinVoiceChannel(channelId: string) {
 
   return useMutation({
     mutationFn: (input: JoinVoiceInput = {}) => joinVoiceChannel(channelId, input),
-    onSuccess: (session) => {
-      useWorkspaceStore.getState().setActiveVoiceSession(session);
+    onSuccess: (response) => {
+      const { media, ...session } = response;
+      const workspace = useWorkspaceStore.getState();
+      workspace.setActiveVoiceSession(session);
+      workspace.setPendingVoiceMedia(media);
       queryClient.invalidateQueries({ queryKey: ['voice'] });
       pushToast({ kind: 'success', message: '已加入语音频道', ttl: 2500 });
     },
