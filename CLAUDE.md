@@ -4,20 +4,27 @@
 
 ## 常用命令
 
+完整脚本说明见 [README.md](README.md#脚本参考)。以下表格仅列出日常开发常用入口。
+
 | 命令 | 说明 |
 |------|------|
-| `pnpm dev` | 启动 API + Web（先构建 shared、media） |
-| `pnpm dev:api` / `pnpm dev:web` | 单独启动 |
-| `pnpm test` | 运行所有测试 |
-| `pnpm check` | 质量门：typecheck + lint + test |
-| `pnpm e2e` | 全量 E2E（API + Web） |
-| `pnpm e2e:api` / `pnpm e2e:web` / `pnpm e2e:voice` | 单项 E2E |
+| `pnpm setup` | 一键初始化：.env + 起 Docker + 迁移 + seed |
+| `pnpm dev` | 并行启动 API + Web（先构建 shared、media） |
+| `pnpm dev:api` / `pnpm dev:web` | 单独启动 API 或 Web |
+| `pnpm deps:build` | 构建 `@eiscord/shared`、`@eiscord/media` |
+| `pnpm check` | 质量门：typecheck → lint → test |
+| `pnpm test` / `pnpm lint` / `pnpm format` | 测试 / 静态检查 / 格式化 |
 | `pnpm db:generate` | 重新生成 Prisma Client |
-| `pnpm db:migrate` | 创建并应用迁移 |
+| `pnpm db:migrate` | 创建并应用迁移（dev） |
 | `pnpm db:seed` | 写入演示数据 |
 | `pnpm db:reset` | 重建开发库（drop → migrate → seed） |
+| `pnpm db:test:reset` | 重建 `eiscord_test` 测试库（不 seed） |
+| `pnpm e2e` | 全量 E2E（单次前置 + API + Web） |
+| `pnpm e2e:api` / `pnpm e2e:web` / `pnpm e2e:voice` | 单项 E2E |
+| `pnpm e2e:audio` | 生成语音 E2E 所需的合成音频 |
 | `pnpm build` | 构建所有子包 |
-| `pnpm infra:up` / `pnpm infra:down` | 启动/停止 Docker 服务 |
+| `pnpm infra:up` / `pnpm infra:down` | 启动 / 停止 Docker 依赖服务 |
+| `pnpm perf:k6` | K6 实时负载压测（需本机 k6） |
 
 ## 关键路径
 
