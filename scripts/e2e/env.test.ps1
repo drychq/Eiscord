@@ -1,0 +1,5 @@
+$env:DATABASE_URL                = "postgresql://eiscord:eiscord@localhost:5432/eiscord_test"
+$env:REDIS_CONNECT_IN_TEST       = "true"
+$env:REALTIME_SWEEP_IN_TEST      = "true"
+$env:PRESENCE_SWEEP_INTERVAL_MS  = "100"
+$env:PRESENCE_OFFLINE_GRACE_MS   = "120"

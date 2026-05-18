@@ -1,10 +1,10 @@
-#!/usr/bin/env bash
 # 运行全部 E2E（API + Web）。前置：docker 服务可用。产出：单次 deps:build/test-reset，依次执行 API E2E 与 Web E2E。
-set -euo pipefail
-bash scripts/deps/build.sh
+$ErrorActionPreference = "Stop"
+
+& "$PSScriptRoot/../deps/build.ps1"
 pnpm e2e:audio
-bash scripts/db/test-reset.sh
-source scripts/e2e/env.test.sh
+& "$PSScriptRoot/../db/test-reset.ps1"
+. "$PSScriptRoot/env.test.ps1"
 
 pnpm --filter @eiscord/api test:e2e
 
