@@ -8,7 +8,7 @@ datasource db {
 }
 
 model User {
-  id                 String   @id @default(uuid()) @db.Uuid
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   username           String   @unique @db.VarChar(32)
   emailOrPhone       String   @unique @map("email_or_phone") @db.VarChar(320)
   passwordHash       String   @map("password_hash") @db.VarChar(256)
@@ -18,7 +18,7 @@ model User {
   accountStatus      String   @default("active") @map("account_status") @db.VarChar(32)
   presenceStatus     String   @default("offline") @map("presence_status") @db.VarChar(32)
   createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt          DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedAt          DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   avatarAttachment Attachment?          @relation("UserAvatar", fields: [avatarAttachmentId], references: [id], onDelete: SetNull)
   attachments      Attachment[]         @relation("AttachmentOwner")
@@ -43,7 +43,7 @@ model User {
 }
 
 model AuthSession {
-  id               String    @id @default(uuid()) @db.Uuid
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId           String    @map("user_id") @db.Uuid
   refreshTokenHash String    @unique @map("refresh_token_hash") @db.VarChar(128)
   clientDeviceName String?   @map("client_device_name") @db.VarChar(120)
@@ -52,7 +52,7 @@ model AuthSession {
   revokedAt        DateTime? @map("revoked_at") @db.Timestamptz(6)
   lastUsedAt       DateTime? @map("last_used_at") @db.Timestamptz(6)
   createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -62,7 +62,7 @@ model AuthSession {
 }
 
 model Attachment {
-  id         String   @id @default(uuid()) @db.Uuid
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   ownerId    String   @map("owner_id") @db.Uuid
   storageKey String   @map("storage_key") @db.VarChar(512)
   fileName   String   @map("file_name") @db.VarChar(255)
@@ -82,12 +82,12 @@ model Attachment {
 }
 
 model Friendship {
-  id          String   @id @default(uuid()) @db.Uuid
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   requesterId String   @map("requester_id") @db.Uuid
   addresseeId String   @map("addressee_id") @db.Uuid
   status      String   @default("pending") @db.VarChar(32)
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   requester User @relation("FriendshipRequester", fields: [requesterId], references: [id], onDelete: Cascade)
   addressee User @relation("FriendshipAddressee", fields: [addresseeId], references: [id], onDelete: Cascade)
@@ -98,12 +98,12 @@ model Friendship {
 }
 
 model DirectConversation {
-  id             String   @id @default(uuid()) @db.Uuid
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   participantAId String   @map("participant_a_id") @db.Uuid
   participantBId String   @map("participant_b_id") @db.Uuid
   lastMessageId  String?  @map("last_message_id") @db.Uuid
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   participantA User        @relation("DirectConversationA", fields: [participantAId], references: [id], onDelete: Cascade)
   participantB User        @relation("DirectConversationB", fields: [participantBId], references: [id], onDelete: Cascade)
@@ -117,14 +117,14 @@ model DirectConversation {
 }
 
 model Server {
-  id               String   @id @default(uuid()) @db.Uuid
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   ownerId          String   @map("owner_id") @db.Uuid
   name             String   @db.VarChar(80)
   iconAttachmentId String?  @map("icon_attachment_id") @db.Uuid
   description      String?  @db.VarChar(280)
   status           String   @default("active") @db.VarChar(32)
   createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedAt        DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   owner          User         @relation("ServerOwner", fields: [ownerId], references: [id], onDelete: Cascade)
   iconAttachment Attachment?  @relation("ServerIcon", fields: [iconAttachmentId], references: [id], onDelete: SetNull)
@@ -138,7 +138,7 @@ model Server {
 }
 
 model Invitation {
-  id          String    @id @default(uuid()) @db.Uuid
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   serverId    String    @map("server_id") @db.Uuid
   code        String    @unique @db.VarChar(32)
   createdById String    @map("created_by_id") @db.Uuid
@@ -147,7 +147,7 @@ model Invitation {
   usedCount   Int       @default(0) @map("used_count")
   status      String    @default("active") @db.VarChar(32)
   createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   server    Server @relation(fields: [serverId], references: [id], onDelete: Cascade)
   createdBy User   @relation("InvitationCreator", fields: [createdById], references: [id], onDelete: Cascade)
@@ -157,14 +157,14 @@ model Invitation {
 }
 
 model Membership {
-  id           String   @id @default(uuid()) @db.Uuid
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   serverId     String   @map("server_id") @db.Uuid
   userId       String   @map("user_id") @db.Uuid
   nickInServer String?  @map("nick_in_server") @db.VarChar(64)
   memberStatus String   @default("active") @map("member_status") @db.VarChar(32)
   joinedAt     DateTime @default(now()) @map("joined_at") @db.Timestamptz(6)
   createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   server Server           @relation(fields: [serverId], references: [id], onDelete: Cascade)
   user   User             @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -176,7 +176,7 @@ model Membership {
 }
 
 model Role {
-  id             String   @id @default(uuid()) @db.Uuid
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   serverId       String   @map("server_id") @db.Uuid
   name           String   @db.VarChar(80)
   permissionBits BigInt   @default(0) @map("permission_bits")
@@ -184,7 +184,7 @@ model Role {
   priority       Int      @default(0)
   isDefault      Boolean  @default(false) @map("is_default")
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   server      Server           @relation(fields: [serverId], references: [id], onDelete: Cascade)
   memberships MembershipRole[]
@@ -210,7 +210,7 @@ model MembershipRole {
 }
 
 model Channel {
-  id        String   @id @default(uuid()) @db.Uuid
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   serverId  String   @map("server_id") @db.Uuid
   name      String   @db.VarChar(80)
   type      String   @db.VarChar(20)
@@ -218,7 +218,7 @@ model Channel {
   sortOrder Int      @default(0) @map("sort_order")
   status    String   @default("active") @db.VarChar(32)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   server     Server      @relation(fields: [serverId], references: [id], onDelete: Cascade)
   messages   Message[]
@@ -232,14 +232,14 @@ model Channel {
 }
 
 model PermissionOverwrite {
-  id         String   @id @default(uuid()) @db.Uuid
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   channelId  String   @map("channel_id") @db.Uuid
   targetType String   @map("target_type") @db.VarChar(20)
   targetId   String   @map("target_id") @db.Uuid
   allowBits  BigInt   @default(0) @map("allow_bits")
   denyBits   BigInt   @default(0) @map("deny_bits")
   createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedAt  DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   channel Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
 
@@ -249,7 +249,7 @@ model PermissionOverwrite {
 }
 
 model Message {
-  id              String    @id @default(uuid()) @db.Uuid
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   scopeType       String    @map("scope_type") @db.VarChar(20)
   channelId       String?   @map("channel_id") @db.Uuid
   conversationId  String?   @map("conversation_id") @db.Uuid
@@ -258,7 +258,7 @@ model Message {
   visibility      String    @default("visible") @db.VarChar(32)
   clientMessageId String?   @map("client_message_id") @db.VarChar(120)
   createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   channel                       Channel?             @relation(fields: [channelId], references: [id], onDelete: Cascade)
@@ -304,14 +304,14 @@ model MessageMention {
 }
 
 model ReadState {
-  id                String   @id @default(uuid()) @db.Uuid
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId            String   @map("user_id") @db.Uuid
   scopeType         String   @map("scope_type") @db.VarChar(20)
   channelId         String?  @map("channel_id") @db.Uuid
   conversationId    String?  @map("conversation_id") @db.Uuid
   lastReadMessageId String?  @map("last_read_message_id") @db.Uuid
   unreadCount       Int      @default(0) @map("unread_count")
-  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedAt         DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   user            User                @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -326,7 +326,7 @@ model ReadState {
 }
 
 model Notification {
-  id             String    @id @default(uuid()) @db.Uuid
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId         String    @map("user_id") @db.Uuid
   type           String    @db.VarChar(40)
   sourceType     String    @map("source_type") @db.VarChar(40)
@@ -344,7 +344,7 @@ model Notification {
 }
 
 model VoiceSession {
-  id                  String    @id @default(uuid()) @db.Uuid
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   channelId           String    @map("channel_id") @db.Uuid
   userId              String    @map("user_id") @db.Uuid
   muteState           Boolean   @default(false) @map("mute_state")
@@ -358,7 +358,7 @@ model VoiceSession {
   producerId          String?   @map("producer_id") @db.VarChar(64)
   joinedAt            DateTime  @default(now()) @map("joined_at") @db.Timestamptz(6)
   endedAt             DateTime? @map("ended_at") @db.Timestamptz(6)
-  updatedAt           DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedAt           DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   channel Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -370,7 +370,7 @@ model VoiceSession {
 }
 
 model AuditLog {
-  id            String   @id @default(uuid()) @db.Uuid
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   actorId       String?  @map("actor_id") @db.Uuid
   targetType    String?  @map("target_type") @db.VarChar(80)
   targetId      String?  @map("target_id") @db.VarChar(120)
