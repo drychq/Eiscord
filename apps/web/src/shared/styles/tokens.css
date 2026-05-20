@@ -1,7 +1,211 @@
+/**
+ * Design tokens — two-layer system.
+ *
+ * Layer 1: palette (raw color scale, not consumed directly by components)
+ * Layer 2: semantic tokens (--bg-*, --text-*, --accent-*, etc.) — components reference only these
+ *
+ * Theme switching is done by setting `data-theme="dark"` or `data-theme="light"` on <html>.
+ * The default is dark; an inline script in index.html applies the persisted choice before paint.
+ */
+
 :root {
-  --color-accent: #2f8f83;
-  --color-warning: #d48b2a;
-  --color-ink: #242424;
-  --color-panel: #eceeeb;
-  --radius-control: 8px;
+  /* ── Palette (shared across themes) ── */
+  --palette-teal-300: #6dd5c7;
+  --palette-teal-400: #4cc1b2;
+  --palette-teal-500: #3eaea0;
+  --palette-teal-600: #2f8f83;
+  --palette-teal-700: #267a70;
+
+  --palette-blurple-400: #7983f5;
+  --palette-blurple-500: #5865f2;
+  --palette-blurple-600: #4752c4;
+
+  --palette-amber-400: #e0a341;
+  --palette-amber-500: #d48b2a;
+  --palette-amber-600: #b87519;
+
+  --palette-red-400: #f06868;
+  --palette-red-500: #ef4444;
+  --palette-red-600: #d23131;
+  --palette-red-700: #b22222;
+
+  --palette-green-400: #5cd592;
+  --palette-green-500: #3ec97a;
+  --palette-green-600: #2c9a5c;
+
+  --palette-gray-50:  #f8f9f7;
+  --palette-gray-100: #f3f4f1;
+  --palette-gray-200: #e4e5e1;
+  --palette-gray-300: #d7d8d4;
+  --palette-gray-400: #aab0b5;
+  --palette-gray-500: #8a8f94;
+  --palette-gray-600: #5a6066;
+  --palette-gray-700: #36393f;
+  --palette-gray-800: #2c2f33;
+  --palette-gray-850: #232629;
+  --palette-gray-900: #1a1d20;
+  --palette-gray-950: #15171a;
+
+  /* ── Spacing ── */
+  --space-2xs: 2px;
+  --space-xs:  4px;
+  --space-sm:  8px;
+  --space-md:  12px;
+  --space-lg:  16px;
+  --space-xl:  24px;
+  --space-2xl: 32px;
+  --space-3xl: 48px;
+
+  /* ── Radius ── */
+  --radius-sm:   4px;
+  --radius-md:   8px;
+  --radius-lg:   12px;
+  --radius-xl:   16px;
+  --radius-pill: 999px;
+  --radius-control: var(--radius-md); /* legacy alias */
+
+  /* ── Typography ── */
+  --font-sans: "Inter Variable", Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+
+  --font-size-xs:   12px;
+  --font-size-sm:   13px;
+  --font-size-base: 14px;
+  --font-size-md:   15px;
+  --font-size-lg:   16px;
+  --font-size-xl:   20px;
+  --font-size-2xl:  24px;
+
+  --font-weight-normal:   400;
+  --font-weight-medium:   500;
+  --font-weight-semibold: 600;
+  --font-weight-bold:     700;
+  --font-weight-extrabold: 800;
+
+  --line-height-tight:   1.2;
+  --line-height-base:    1.5;
+  --line-height-relaxed: 1.7;
+
+  /* ── Motion ── */
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+  --duration-slow: 320ms;
+  --ease-out:      cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ── Z-index ── */
+  --z-base:     0;
+  --z-elevated: 10;
+  --z-dropdown: 100;
+  --z-toast:    800;
+  --z-modal:    900;
+  --z-tooltip:  1000;
+}
+
+/* ── Semantic tokens — Dark theme (default) ── */
+[data-theme="dark"] {
+  --bg-base:    #1a1d20;
+  --bg-panel:   #232629;
+  --bg-raised:  #2c2f33;
+  --bg-overlay: #36393f;
+  --bg-input:   #15171a;
+  --bg-hover:   rgba(255, 255, 255, 0.04);
+  --bg-active:  rgba(255, 255, 255, 0.07);
+
+  --text-primary:    #e8eaed;
+  --text-secondary:  #aab0b5;
+  --text-muted:      #6a7075;
+  --text-on-accent:  #ffffff;
+  --text-on-danger:  #ffffff;
+
+  --accent:         var(--palette-teal-500);
+  --accent-hover:   var(--palette-teal-400);
+  --accent-pressed: var(--palette-teal-600);
+  --accent-soft:    rgba(62, 174, 160, 0.16);
+  --accent-ring:    rgba(62, 174, 160, 0.32);
+
+  --success:      var(--palette-green-500);
+  --success-soft: rgba(62, 201, 122, 0.14);
+  --warning:      var(--palette-amber-500);
+  --warning-soft: rgba(212, 139, 42, 0.16);
+  --danger:       var(--palette-red-500);
+  --danger-soft:  rgba(239, 68, 68, 0.16);
+  --info:         var(--palette-blurple-500);
+  --info-soft:    rgba(88, 101, 242, 0.18);
+
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --ring-focus:    var(--palette-teal-400);
+
+  --scrollbar-thumb:       rgba(255, 255, 255, 0.12);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.22);
+  --scrollbar-track:       transparent;
+
+  --shadow-sm:      0 1px 2px rgba(0, 0, 0, 0.32);
+  --shadow-md:      0 4px 12px rgba(0, 0, 0, 0.36);
+  --shadow-lg:      0 10px 28px rgba(0, 0, 0, 0.42);
+  --shadow-overlay: 0 16px 48px rgba(0, 0, 0, 0.55);
+
+  --gradient-auth: radial-gradient(circle at 20% 10%, rgba(62, 174, 160, 0.18), transparent 50%),
+                   radial-gradient(circle at 80% 80%, rgba(88, 101, 242, 0.14), transparent 55%),
+                   linear-gradient(160deg, #15171a 0%, #1a1d20 100%);
+
+  color-scheme: dark;
+}
+
+/* ── Semantic tokens — Light theme ── */
+[data-theme="light"] {
+  --bg-base:    #ffffff;
+  --bg-panel:   #f3f4f1;
+  --bg-raised:  #ffffff;
+  --bg-overlay: #ffffff;
+  --bg-input:   #f7f8f6;
+  --bg-hover:   rgba(0, 0, 0, 0.03);
+  --bg-active:  rgba(0, 0, 0, 0.06);
+
+  --text-primary:    #1f1f1f;
+  --text-secondary:  #4d5358;
+  --text-muted:      #8a8f94;
+  --text-on-accent:  #ffffff;
+  --text-on-danger:  #ffffff;
+
+  --accent:         var(--palette-teal-600);
+  --accent-hover:   var(--palette-teal-700);
+  --accent-pressed: var(--palette-teal-700);
+  --accent-soft:    rgba(47, 143, 131, 0.12);
+  --accent-ring:    rgba(47, 143, 131, 0.28);
+
+  --success:      var(--palette-green-600);
+  --success-soft: rgba(44, 154, 92, 0.12);
+  --warning:      var(--palette-amber-600);
+  --warning-soft: rgba(212, 139, 42, 0.14);
+  --danger:       var(--palette-red-600);
+  --danger-soft:  rgba(210, 49, 49, 0.10);
+  --info:         var(--palette-blurple-500);
+  --info-soft:    rgba(88, 101, 242, 0.10);
+
+  --border-subtle: rgba(0, 0, 0, 0.06);
+  --border-strong: rgba(0, 0, 0, 0.12);
+  --ring-focus:    var(--palette-teal-600);
+
+  --scrollbar-thumb:       rgba(0, 0, 0, 0.18);
+  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.28);
+  --scrollbar-track:       transparent;
+
+  --shadow-sm:      0 1px 2px rgba(0, 0, 0, 0.06);
+  --shadow-md:      0 2px 12px rgba(0, 0, 0, 0.10);
+  --shadow-lg:      0 10px 28px rgba(0, 0, 0, 0.14);
+  --shadow-overlay: 0 16px 48px rgba(0, 0, 0, 0.18);
+
+  --gradient-auth: linear-gradient(135deg, #edf4f1 0%, #eceeeb 100%);
+
+  color-scheme: light;
+}
+
+/* ── Legacy aliases (kept for incremental migration) ── */
+:root {
+  --color-accent:  var(--palette-teal-600);
+  --color-warning: var(--palette-amber-500);
+  --color-ink:     #242424;
+  --color-panel:   #eceeeb;
 }

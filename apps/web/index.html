@@ -1,9 +1,26 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
     <title>Eiscord</title>
+    <script>
+      // Apply persisted theme before paint to avoid FOUC.
+      (function () {
+        try {
+          var v = localStorage.getItem('eiscord.theme');
+          var resolved = 'dark';
+          if (v === 'light') resolved = 'light';
+          else if (v === 'system') {
+            resolved = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+          }
+          document.documentElement.dataset.theme = resolved;
+        } catch (_) {
+          // localStorage unavailable; keep default dark
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
