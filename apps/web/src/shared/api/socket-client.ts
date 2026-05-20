@@ -115,7 +115,7 @@ export function connect(token: string): void {
     }
   });
 
-  socket.io.on('reconnect', (attempt: number) => {
+  socket.io.on('reconnect', () => {
     socket?.emit('SyncState', {}, (response: unknown) => {
       const data = response as { state?: unknown } | undefined;
       if (data?.state) {
@@ -132,7 +132,7 @@ export function connect(token: string): void {
     });
   });
 
-  socket.io.on('reconnect_error', (error: Error) => {
+  socket.io.on('reconnect_error', () => {
     reconnectErrorCallbacks.forEach((cb) => {
       try { cb(0); } catch { /* swallow */ }
     });

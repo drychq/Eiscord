@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Headphones, Mic, MicOff, Phone, Volume2, VolumeX } from 'lucide-react';
 import { useParams } from 'react-router-dom';
 import type { VoiceActiveProducer } from '@eiscord/shared';
@@ -7,6 +8,7 @@ import * as socket from '../../shared/api/socket-client';
 import { EmptyState } from '../../shared/components/EmptyState';
 import { Spinner } from '../../shared/components/Spinner';
 import { useAuthStore } from '../../shared/state/use-auth-store';
+import { TOAST_DURATION, useToastStore } from '../../shared/state/use-toast-store';
 import { useWorkspaceStore } from '../../shared/state/use-workspace-store';
 import {
   useJoinVoiceChannel,
@@ -34,6 +36,7 @@ export function ServerVoicePage() {
   const joinVoice = useJoinVoiceChannel(channelId ?? '');
   const leaveVoice = useLeaveVoiceSession();
   const updateState = useUpdateVoiceState();
+  const queryClient = useQueryClient();
   const channel = server?.channels.find((item) => item.channel_id === channelId);
   const listedCurrentSession = sessions?.find((session) => session.user_id === currentUserId) ?? null;
   const currentSession =
@@ -83,6 +86,8 @@ export function ServerVoicePage() {
         }
       }),
     ];
+    // subscribe-and-snapshot：注册回调后取一次当前快照，否则会漏掉订阅前发生的状态变化
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setVoiceStatus(voiceClient.status());
 
     return () => unregisters.forEach((fn) => fn());
@@ -106,9 +111,20 @@ export function ServerVoicePage() {
         initialMuted: currentSession.mute_state,
       })
       .catch((error) => {
-        console.error('voice-client start failed:', error);
+        const failedSessionId = currentSession.session_id;
+        if (import.meta.env.DEV) {
+          console.error('[voice] start failed:', error);
+        }
+        useWorkspaceStore.getState().setActiveVoiceSession(null);
+        void queryClient.invalidateQueries({ queryKey: ['voice'] });
+        leaveVoice.mutate(failedSessionId);
+        useToastStore.getState().pushToast({
+          kind: 'error',
+          message: '加入语音失败，请稍后重试',
+          ttl: TOAST_DURATION.long,
+        });
       });
-  }, [currentSession, pendingVoiceMedia, setPendingVoiceMedia, currentUserId]);
+  }, [currentSession, pendingVoiceMedia, setPendingVoiceMedia, currentUserId, queryClient, leaveVoice]);
 
   // Reconcile active Producers from the canonical session list. This backs up the realtime
   // broadcast path so a listener that joins late still discovers already-producing peers.
@@ -243,7 +259,8 @@ export function ServerVoicePage() {
             className="icon-button"
             type="button"
             onClick={toggleMute}
-            title="切换静音"
+            title={currentSession.mute_state ? '取消静音' : '静音麦克风'}
+            aria-label={currentSession.mute_state ? '取消静音' : '静音麦克风'}
             data-testid="voice-mute"
             aria-pressed={currentSession.mute_state}
           >
@@ -253,7 +270,8 @@ export function ServerVoicePage() {
             className="icon-button"
             type="button"
             onClick={toggleDeafen}
-            title="切换闭麦"
+            title={currentSession.deafen_state ? '恢复收听' : '关闭收听'}
+            aria-label={currentSession.deafen_state ? '恢复收听' : '关闭收听'}
             data-testid="voice-deafen"
             aria-pressed={currentSession.deafen_state}
           >

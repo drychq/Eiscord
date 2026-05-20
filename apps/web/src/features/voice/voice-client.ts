@@ -456,6 +456,18 @@ export function createVoiceClient(): VoiceClient {
         setStatus('connected');
       } catch (error) {
         console.error(`${STATUS_LOG_PREFIX} start failed:`, error);
+        started = false;
+        startInput = null;
+        pendingProducers.clear();
+        while (socketUnregisters.length > 0) {
+          const off = socketUnregisters.pop();
+          try {
+            off?.();
+          } catch {
+            /* ignore */
+          }
+        }
+        await teardownMedia();
         setStatus('failed');
         throw error;
       }
