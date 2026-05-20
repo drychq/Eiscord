@@ -211,7 +211,7 @@ export function removeRole(
   );
 }
 
-const permissionOverwriteSchema = z.object({
+export const permissionOverwriteSchema = z.object({
   target_type: z.enum(['role', 'member']),
   target_id: z.string().uuid(),
   allow_bits: z.string(),

@@ -41,7 +41,7 @@ const messagePageSchema = z.object({
 export type Message = z.infer<typeof messageSchema>;
 export type MessagePage = z.infer<typeof messagePageSchema>;
 
-const sendMessageRequestSchema = z.object({
+export const sendMessageRequestSchema = z.object({
   content: z.string().max(4000).optional(),
   attachment_ids: z.array(z.string().uuid()).max(10).optional(),
   mention_user_ids: z.array(z.string().uuid()).max(50).optional(),
@@ -50,7 +50,7 @@ const sendMessageRequestSchema = z.object({
 
 export type SendMessageInput = z.infer<typeof sendMessageRequestSchema>;
 
-const loadMessagesSchema = z.object({
+export const loadMessagesSchema = z.object({
   limit: z.number().int().min(1).max(100).optional(),
   cursor: z.string().optional(),
 });
@@ -105,7 +105,7 @@ export function sendDmMessage(
   });
 }
 
-const markReadSchema = z.object({
+export const markReadSchema = z.object({
   scope_type: z.enum(['channel', 'dm']),
   channel_id: z.string().uuid().optional(),
   conversation_id: z.string().uuid().optional(),

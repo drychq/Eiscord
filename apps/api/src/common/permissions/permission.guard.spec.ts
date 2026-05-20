@@ -7,7 +7,6 @@ import { AppError } from '../errors/app-error';
 import { PermissionAction } from './permission.types';
 import { PermissionGuard } from './permission.guard';
 import { PermissionsService } from './permissions.service';
-import { REQUIRE_PERMISSION_METADATA } from './require-permission.decorator';
 
 describe('PermissionGuard', () => {
   let guard: PermissionGuard;

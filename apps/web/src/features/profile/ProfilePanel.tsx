@@ -1,11 +1,13 @@
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
+import { Monitor, Moon, Sun } from 'lucide-react';
 import {
   updateProfileRequestSchema,
   type UpdatePresenceRequest,
   type UpdateProfileRequest,
 } from '@eiscord/shared';
 import { useAuthStore } from '../../shared/state/use-auth-store';
+import { useThemeStore, type ThemePreference } from '../../shared/state/use-theme-store';
 import { useWorkspaceStore } from '../../shared/state/use-workspace-store';
 import { FormField } from '../../shared/components/FormField';
 import { formFieldProps } from '../../shared/components/form-field-props';
@@ -13,9 +15,17 @@ import { Spinner } from '../../shared/components/Spinner';
 import { useLogoutMutation } from '../auth/use-auth-mutations';
 import { useUpdatePresenceMutation, useUpdateProfileMutation } from './use-profile-queries';
 
+const THEME_OPTIONS: Array<{ value: ThemePreference; label: string; icon: typeof Moon }> = [
+  { value: 'dark', label: '暗色', icon: Moon },
+  { value: 'light', label: '亮色', icon: Sun },
+  { value: 'system', label: '跟随系统', icon: Monitor },
+];
+
 export function ProfilePanel() {
   const { currentUser } = useAuthStore();
   const { isProfilePanelOpen, setProfilePanelOpen } = useWorkspaceStore();
+  const themePreference = useThemeStore((state) => state.preference);
+  const setThemePreference = useThemeStore((state) => state.setPreference);
   const logoutMutation = useLogoutMutation();
   const updateMutation = useUpdateProfileMutation();
   const presenceMutation = useUpdatePresenceMutation();
@@ -67,6 +77,24 @@ export function ProfilePanel() {
             <option value="invisible">隐身</option>
             <option value="offline">离线</option>
           </select>
+        </div>
+
+        <div className="profile-readonly">
+          <span>外观</span>
+          <div className="theme-switcher" role="group" aria-label="主题外观">
+            {THEME_OPTIONS.map(({ value, label, icon: Icon }) => (
+              <button
+                key={value}
+                type="button"
+                className={`theme-switcher-option${themePreference === value ? ' active' : ''}`}
+                onClick={() => setThemePreference(value)}
+                aria-pressed={themePreference === value}
+              >
+                <Icon size={14} />
+                <span>{label}</span>
+              </button>
+            ))}
+          </div>
         </div>
 
         <form onSubmit={handleSubmit((data) => updateMutation.mutate(data))} noValidate>

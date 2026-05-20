@@ -1,10 +1,11 @@
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { Bell, Search, UserPlus } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { Bell, Menu, Search, UserPlus } from 'lucide-react';
+import { useEffect } from 'react';
 import { ServerRail } from './ServerRail';
 import { SidePanel } from './SidePanel';
 import { MemberPanel } from './MemberPanel';
 import { VoiceStrip } from './VoiceStrip';
+import { ErrorBoundary } from './ErrorBoundary';
 import { ProfilePanel } from '../../features/profile/ProfilePanel';
 import { useViewport } from '../hooks/use-viewport';
 import { useAuthStore } from '../state/use-auth-store';
@@ -17,8 +18,13 @@ export function AppShell() {
   const navigate = useNavigate();
   const location = useLocation();
   const { currentUser } = useAuthStore();
-  const { isProfilePanelOpen, setProfilePanelOpen, setRecentPath } = useWorkspaceStore();
-  const [showNav, setShowNav] = useState(false);
+  const {
+    isProfilePanelOpen,
+    setProfilePanelOpen,
+    setRecentPath,
+    isMobileNavOpen,
+    setMobileNavOpen,
+  } = useWorkspaceStore();
 
   useRealtimePermissionSync();
   useRealtimeEventSync();
@@ -36,10 +42,16 @@ export function AppShell() {
     }
   }, [location.pathname, setRecentPath]);
 
+  useEffect(() => {
+    if (viewport === 'mobile') {
+      setMobileNavOpen(false);
+    }
+  }, [location.pathname, viewport, setMobileNavOpen]);
+
   const memberPanelVisible = viewport === 'desktop';
 
   return (
-    <div className="workspace">
+    <div className="workspace" data-mobile-nav-open={isMobileNavOpen ? 'true' : 'false'}>
       <ServerRail />
       <SidePanel />
 
@@ -49,11 +61,12 @@ export function AppShell() {
             <button
               className="icon-button mobile-nav-toggle"
               type="button"
-              aria-label="切换导航"
-              onClick={() => setShowNav(!showNav)}
+              aria-label={isMobileNavOpen ? '关闭导航' : '打开导航'}
+              aria-expanded={isMobileNavOpen}
+              onClick={() => setMobileNavOpen(!isMobileNavOpen)}
               style={{ display: viewport === 'mobile' ? 'flex' : 'none' }}
             >
-              <UserPlus size={18} />
+              <Menu size={18} />
             </button>
             <strong>Eiscord</strong>
           </div>
@@ -83,7 +96,11 @@ export function AppShell() {
         </header>
 
         <section className="message-list" aria-label="内容">
-          <Outlet />
+          <ErrorBoundary>
+            <div key={location.pathname} className="route-fade">
+              <Outlet />
+            </div>
+          </ErrorBoundary>
         </section>
 
         <VoiceStrip />

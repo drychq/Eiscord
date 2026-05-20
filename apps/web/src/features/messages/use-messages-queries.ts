@@ -10,7 +10,6 @@ import {
   deleteMessage,
   type SendMessageInput,
   type MarkReadInput,
-  type Message,
 } from './messages-api';
 
 export function useChannelMessages(channelId: string | null) {

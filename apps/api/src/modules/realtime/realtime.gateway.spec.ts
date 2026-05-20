@@ -1,13 +1,14 @@
 import { ErrorCode } from '@eiscord/shared';
 
-import { PrismaService } from '../../common/persistence/prisma.service';
+import type { TokenVerifier } from '../../common/auth/auth.types';
+import type { PrismaService } from '../../common/persistence/prisma.service';
 import { PermissionAction } from '../../common/permissions/permission.types';
-import { PermissionsService } from '../../common/permissions/permissions.service';
-import { AuditService } from '../audit/audit.service';
-import { PresenceService } from './presence.service';
+import type { PermissionsService } from '../../common/permissions/permissions.service';
+import type { AuditService } from '../audit/audit.service';
+import type { PresenceService } from './presence.service';
 import { RealtimeGateway } from './realtime.gateway';
-import { RealtimePublisher } from './realtime.publisher';
-import { VoiceService } from '../voice/voice.service';
+import type { RealtimePublisher } from './realtime.publisher';
+import type { VoiceService } from '../voice/voice.service';
 
 const userId = () => '00000000-0000-4000-8000-000000000001';
 const user = { accountStatus: 'active' as const, sessionId: 'session-1', userId: userId() };
@@ -47,13 +48,13 @@ describe('RealtimeGateway', () => {
     presenceService = { trackConnection: jest.fn().mockResolvedValue(undefined), markDisconnected: jest.fn().mockResolvedValue(undefined), heartbeat: jest.fn().mockResolvedValue(undefined) };
     voiceService = { getActiveSessionForUser: jest.fn().mockResolvedValue(null) };
     gateway = new RealtimeGateway(
-      tokenVerifier as any,
-      permissionsService as any,
-      prisma as any,
-      publisher as any,
-      auditService as any,
-      presenceService as any,
-      voiceService as any,
+      tokenVerifier as unknown as TokenVerifier,
+      permissionsService as unknown as PermissionsService,
+      prisma as unknown as PrismaService,
+      publisher as unknown as RealtimePublisher,
+      auditService as unknown as AuditService,
+      presenceService as unknown as PresenceService,
+      voiceService as unknown as VoiceService,
     );
   });
 

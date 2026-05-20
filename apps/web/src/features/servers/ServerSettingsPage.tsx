@@ -84,7 +84,6 @@ export function ServerSettingsPage() {
           <RolesTab
             serverId={serverId!}
             roles={roles ?? server.roles}
-            ownerId={server.owner_id}
             canManage={canManageRole || isOwner}
           />
         )}
@@ -114,12 +113,10 @@ export function ServerSettingsPage() {
 function RolesTab({
   serverId,
   roles,
-  ownerId,
   canManage,
 }: {
   serverId: string;
   roles: RoleSummary[];
-  ownerId: string;
   canManage: boolean;
 }) {
   const [modalOpen, setModalOpen] = useState(false);
@@ -240,7 +237,6 @@ function MembersTab({
   const [roleTarget, setRoleTarget] = useState<MemberSummary | null>(null);
   const [removeTarget, setRemoveTarget] = useState<MemberSummary | null>(null);
   const [muteTarget, setMuteTarget] = useState<MemberSummary | null>(null);
-  const [restoreTarget, setRestoreTarget] = useState<MemberSummary | null>(null);
 
   const manageMutation = useManageMember(serverId);
   const assignMutation = useAssignRole(serverId);

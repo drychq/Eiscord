@@ -7,7 +7,10 @@ const RECENT_PATH_KEY = 'eiscord:recent-path';
 function loadRecentPath(): string | null {
   try {
     return localStorage.getItem(RECENT_PATH_KEY);
-  } catch {
+  } catch (error) {
+    if (import.meta.env.DEV) {
+      console.warn('[workspace] localStorage read failed', error);
+    }
     return null;
   }
 }
@@ -15,8 +18,10 @@ function loadRecentPath(): string | null {
 function saveRecentPath(path: string): void {
   try {
     localStorage.setItem(RECENT_PATH_KEY, path);
-  } catch {
-    // ignore quota errors
+  } catch (error) {
+    if (import.meta.env.DEV) {
+      console.warn('[workspace] localStorage write failed', error);
+    }
   }
 }
 

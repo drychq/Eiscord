@@ -1,5 +1,3 @@
-import { type ReactNode } from 'react';
-
 type ConfirmDialogProps = {
   open: boolean;
   title: string;
