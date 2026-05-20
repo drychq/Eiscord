@@ -449,7 +449,16 @@ function startHealthServer() {
     response.end(JSON.stringify({ ok: true, workers: workers.length }));
   });
 
-  server.listen(Number(process.env.MEDIA_HEALTH_PORT ?? 3001));
+  const port = Number(process.env.MEDIA_HEALTH_PORT ?? 3001);
+
+  server.on('error', (error: NodeJS.ErrnoException) => {
+    const detail = error.code === 'EADDRINUSE'
+      ? `media health port ${port} is already in use`
+      : `media health server failed: ${error.message}`;
+    process.stderr.write(`[media] ${detail}; continuing without health endpoint\n`);
+  });
+
+  server.listen(port);
 }
 
 main().catch((error) => {

@@ -26,7 +26,7 @@ export class MediasoupWorkerClient implements OnModuleInit, OnModuleDestroy {
   constructor(private readonly configService: ConfigService) {}
 
   onModuleInit() {
-    if (process.env.NODE_ENV === 'test') {
+    if (!shouldStartMediaWorkerOnInit(process.env)) {
       return;
     }
 
@@ -89,6 +89,7 @@ export class MediasoupWorkerClient implements OnModuleInit, OnModuleDestroy {
         MEDIASOUP_NUM_WORKERS: String(this.configService.get<number>('MEDIASOUP_NUM_WORKERS') ?? 1),
         MEDIASOUP_RTC_MAX_PORT: String(this.configService.get<number>('MEDIASOUP_RTC_MAX_PORT') ?? 40100),
         MEDIASOUP_RTC_MIN_PORT: String(this.configService.get<number>('MEDIASOUP_RTC_MIN_PORT') ?? 40000),
+        MEDIA_HEALTH_PORT: String(this.configService.get<number>('MEDIA_HEALTH_PORT') ?? 3001),
       },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
@@ -149,4 +150,10 @@ export class MediasoupWorkerClient implements OnModuleInit, OnModuleDestroy {
       listener(event);
     }
   }
+}
+
+export function shouldStartMediaWorkerOnInit(
+  env: Partial<Pick<NodeJS.ProcessEnv, 'MEDIA_WORKER_START_IN_TEST' | 'NODE_ENV'>>,
+) {
+  return env.NODE_ENV !== 'test' || env.MEDIA_WORKER_START_IN_TEST === 'true';
 }

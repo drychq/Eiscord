@@ -92,6 +92,7 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
     await this.assertRoomCapacity(channelId, user.userId);
 
     const negotiationTimeoutMs = this.configService.get<number>('VOICE_NEGOTIATION_TIMEOUT_MS') ?? 30000;
+    const router = await this.prepareVoiceRouter(channelId);
 
     const result = await this.prisma.$transaction(async (tx) => {
       const previous = await this.getActiveSessionForUserInternal(tx, user.userId);
@@ -108,6 +109,7 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
           deafen_state,
           connection_status,
           media_state,
+          router_id,
           negotiation_deadline
         )
         VALUES (
@@ -117,6 +119,7 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
           ${dto.initial_deafen_state ?? false},
           'connecting',
           'negotiating',
+          ${router.routerId},
           NOW() + (${negotiationTimeoutMs}::int * INTERVAL '1 millisecond')
         )
         RETURNING
@@ -148,13 +151,6 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
       });
     }
 
-    const router = await this.mediaSignalingService.prepareRouter(channelId);
-    await this.prisma.$executeRaw`
-      UPDATE voice_sessions
-      SET router_id = ${router.routerId}, updated_at = NOW()
-      WHERE id = ${result.created.id}::uuid
-        AND ended_at IS NULL
-    `;
     const activeProducers = await this.listActiveProducersForChannel(this.prisma, channelId);
 
     this.publishVoiceJoined(result.created, requestId);
@@ -177,6 +173,20 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
         signaling_channel: buildRealtimeRoom('voice', channelId),
       },
     };
+  }
+
+  private async prepareVoiceRouter(channelId: string) {
+    try {
+      return await this.mediaSignalingService.prepareRouter(channelId);
+    } catch (error) {
+      this.logger.warn(`Failed to prepare voice router for channel ${channelId}: ${String(error)}`);
+      throw new AppError(
+        ErrorCode.DependencyUnavailable,
+        'Voice media service is unavailable.',
+        HttpStatus.SERVICE_UNAVAILABLE,
+        { dependency: 'media_worker' },
+      );
+    }
   }
 
   async listChannelSessions(

@@ -1,6 +1,6 @@
 import { ConfigService } from '@nestjs/config';
 
-import { RealtimeEvent } from '@eiscord/shared';
+import { ErrorCode, RealtimeEvent } from '@eiscord/shared';
 
 import { PrismaService } from '../../common/persistence/prisma.service';
 import { PermissionsService } from '../../common/permissions/permissions.service';
@@ -121,6 +121,8 @@ describe('VoiceService', () => {
       session_id: sessionId(2),
     });
     expect(mediaSignalingService.prepareRouter).toHaveBeenCalledWith(channelId(2));
+    expect(tx.$queryRaw.mock.calls[1][0].join('')).toContain('router_id');
+    expect(tx.$queryRaw.mock.calls[1]).toContain('router-1');
     expect(turnCredentialService.signCredential).toHaveBeenCalledWith(user.userId);
     expect(realtimePublisher.publishToRoom).toHaveBeenCalledWith(
       `voice:${channelId(2)}`,
@@ -128,6 +130,25 @@ describe('VoiceService', () => {
       expect.objectContaining({ session_id: sessionId(2) }),
       'request-1',
     );
+  });
+
+  it('does not create or end a voice session when media router preparation fails', async () => {
+    const logger = (service as unknown as { logger: { warn: (message: string) => void } }).logger;
+    const warn = jest.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    prisma.$queryRaw.mockResolvedValueOnce([{ channelId: channelId(2), serverId: serverId() }]);
+    prisma.$queryRaw.mockResolvedValueOnce([{ count: '0' }]);
+    mediaSignalingService.prepareRouter.mockRejectedValueOnce(new Error('mediasoup worker exited.'));
+
+    await expect(service.joinChannel(user, channelId(2), {}, 'request-media-down')).rejects.toMatchObject({
+      code: ErrorCode.DependencyUnavailable,
+      message: 'Voice media service is unavailable.',
+    });
+
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(mediaSignalingService.releaseSession).not.toHaveBeenCalled();
+    expect(realtimePublisher.publishToRoom).not.toHaveBeenCalled();
+    expect(auditService.record).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('Failed to prepare voice router'));
   });
 
   it('switches to a new voice channel and releases the previous mediasoup session', async () => {
