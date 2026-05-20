@@ -27,7 +27,7 @@ const ACTIVE_DB_FLOOR = -55; // dBFS — RTP-decoded tone should comfortably exc
 const SILENCE_DROP_DB = 20; // active − muted should differ at least this much
 
 const PASSWORD = 'DemoPass1';
-const apiBase = `${process.env.PLAYWRIGHT_API_URL ?? 'http://localhost:44100'}/api/v1`;
+const apiBase = `${process.env.PLAYWRIGHT_API_URL ?? 'http://localhost:14400'}/api/v1`;
 
 type Participant = {
   browser: Browser;
@@ -40,7 +40,7 @@ async function bootParticipant(tonePath: string, username: string): Promise<Part
     args: [...COMMON_ARGS, `--use-file-for-fake-audio-capture=${tonePath}`],
   });
   const context = await browser.newContext({
-    baseURL: process.env.PLAYWRIGHT_WEB_URL ?? 'http://localhost:54100',
+    baseURL: process.env.PLAYWRIGHT_WEB_URL ?? 'http://localhost:14500',
     permissions: ['microphone'],
   });
   const page = await context.newPage();
@@ -122,10 +122,10 @@ test.describe('voice media — real audio negotiation (AC-03 / AC-N2 / AC-N6)', 
 });
 
 test.describe('voice media — worker kill recovery (AC-E8, gated)', () => {
-  // test.skip(
-  //   process.env.E2E_VOICE_KILL_WORKER !== 'true',
-  //   'set E2E_VOICE_KILL_WORKER=true to enable mediasoup worker kill recovery',
-  // );
+  test.skip(
+    process.env.E2E_VOICE_KILL_WORKER !== 'true',
+    'set E2E_VOICE_KILL_WORKER=true to enable mediasoup worker kill recovery',
+  );
 
   test('mediasoup worker kill 后 5s 内自动重协商', async () => {
     const alice = await bootParticipant(TONE_ALICE, 'alice');

@@ -8,6 +8,7 @@ $ErrorActionPreference = "Stop"
 
 & "$PSScriptRoot/../deps/build.ps1"
 pnpm e2e:audio
+pnpm --filter @eiscord/api build
 & "$PSScriptRoot/../db/test-reset.ps1"
 . "$PSScriptRoot/env.test.ps1"
 

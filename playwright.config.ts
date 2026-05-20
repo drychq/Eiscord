@@ -1,5 +1,10 @@
 import { defineConfig, devices } from '@playwright/test';
 
+// 移除 HTTP 代理：e2e 内 API/Web 都在 localhost，绕过用户机器上的代理配置（否则 Playwright webServer URL polling 会经过代理超时）
+for (const key of ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy']) {
+  delete process.env[key];
+}
+
 const localNoProxy = 'localhost,127.0.0.1,::1';
 process.env.NO_PROXY = process.env.NO_PROXY
   ? `${process.env.NO_PROXY},${localNoProxy}`
@@ -8,8 +13,8 @@ process.env.no_proxy = process.env.no_proxy
   ? `${process.env.no_proxy},${localNoProxy}`
   : localNoProxy;
 
-const apiUrl = process.env.PLAYWRIGHT_API_URL ?? 'http://localhost:44100';
-const webUrl = process.env.PLAYWRIGHT_WEB_URL ?? 'http://localhost:54100';
+const apiUrl = process.env.PLAYWRIGHT_API_URL ?? 'http://localhost:14400';
+const webUrl = process.env.PLAYWRIGHT_WEB_URL ?? 'http://localhost:14500';
 const reuseExistingServer = process.env.PLAYWRIGHT_REUSE_SERVER === 'true';
 
 const COMMON_LAUNCH_ARGS = [
@@ -38,6 +43,8 @@ export default defineConfig({
       command: 'node scripts/e2e/start-server.mjs api',
       name: 'API',
       reuseExistingServer,
+      stdout: 'pipe',
+      stderr: 'pipe',
       timeout: 120_000,
       url: `${apiUrl}/api/v1/health`,
     },
@@ -45,6 +52,8 @@ export default defineConfig({
       command: 'node scripts/e2e/start-server.mjs web',
       name: 'Web',
       reuseExistingServer,
+      stdout: 'pipe',
+      stderr: 'pipe',
       timeout: 120_000,
       url: webUrl,
     },

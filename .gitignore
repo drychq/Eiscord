@@ -57,3 +57,4 @@ tests/e2e/fixtures/audio
 
 # Local test artifacts
 test-accounts.*
+.claude/settings.local.json

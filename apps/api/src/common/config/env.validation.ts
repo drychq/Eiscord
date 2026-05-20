@@ -31,6 +31,7 @@ const environmentSchema = z.object({
   MEDIASOUP_RTC_MIN_PORT: z.coerce.number().int().positive().default(40000),
   MEDIASOUP_RTC_MAX_PORT: z.coerce.number().int().positive().default(40100),
   MEDIASOUP_NUM_WORKERS: z.coerce.number().int().positive().default(1),
+  MEDIA_HEALTH_PORT: z.coerce.number().int().min(0).default(3001),
   TURN_URL: z.string().min(1).default('turn:localhost:3478?transport=udp'),
   TURN_SHARED_SECRET: z.string().min(1).default('change-me-turn'),
   TURN_CREDENTIAL_TTL_SECONDS: z.coerce.number().int().positive().default(300),

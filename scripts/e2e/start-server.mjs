@@ -7,21 +7,25 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '../..');
 
 const target = process.argv[2];
-const apiUrl = process.env.PLAYWRIGHT_API_URL ?? 'http://localhost:44100';
-const webUrl = process.env.PLAYWRIGHT_WEB_URL ?? 'http://localhost:54100';
+const apiUrl = process.env.PLAYWRIGHT_API_URL ?? 'http://localhost:14400';
+const webUrl = process.env.PLAYWRIGHT_WEB_URL ?? 'http://localhost:14500';
 const databaseUrl =
   process.env.DATABASE_URL ?? 'postgresql://eiscord:eiscord@localhost:5432/eiscord_test';
 const apiPort = new URL(apiUrl).port;
 const webPort = new URL(webUrl).port;
 const mediaWorkerEntry = resolve(repoRoot, 'apps/media/dist/main.js');
+const apiEntry = resolve(repoRoot, 'apps/api/dist/main.js');
+const webRoot = resolve(repoRoot, 'apps/web');
+const viteEntry = resolve(webRoot, 'node_modules/vite/bin/vite.js');
 const isWindows = process.platform === 'win32';
-const pnpmCommand = isWindows ? 'pnpm.cmd' : 'pnpm';
 
+// 直接 spawn node 跑预编译入口，避免经过 pnpm.cmd / nest watch 等中间层产生孤儿进程
 const serverConfigs = {
   api: {
-    args: ['--filter', '@eiscord/api', 'dev'],
+    args: [apiEntry],
     env: {
       NODE_ENV: 'test',
+      MEDIA_WORKER_START_IN_TEST: 'true',
       REDIS_CONNECT_IN_TEST: 'true',
       REALTIME_SWEEP_IN_TEST: 'true',
       PRESENCE_SWEEP_INTERVAL_MS: '100',
@@ -30,13 +34,17 @@ const serverConfigs = {
       PORT: apiPort,
       DATABASE_URL: databaseUrl,
       MEDIA_WORKER_ENTRY: mediaWorkerEntry,
+      MEDIA_HEALTH_PORT: '0',
       MEDIASOUP_LISTEN_IP: '127.0.0.1',
       MEDIASOUP_RTC_MIN_PORT: '40500',
       MEDIASOUP_RTC_MAX_PORT: '40550',
     },
   },
   web: {
-    args: ['--filter', '@eiscord/web', 'dev'],
+    // Vite 以 process.cwd() 作为项目根目录解析 index.html / vite.config.ts，
+    // 必须在 apps/web 下启动，否则会在 repo 根找不到入口并对 / 返回 404。
+    cwd: webRoot,
+    args: [viteEntry, '--host', '0.0.0.0', '--port', webPort],
     env: {
       PUBLIC_API_BASE_URL: `${apiUrl}/api/v1`,
       PUBLIC_REALTIME_URL: `${apiUrl}/realtime`,
@@ -52,8 +60,8 @@ if (!config) {
   process.exit(1);
 }
 
-const child = spawn(pnpmCommand, config.args, {
-  cwd: repoRoot,
+const child = spawn(process.execPath, config.args, {
+  cwd: config.cwd ?? repoRoot,
   detached: !isWindows,
   env: {
     ...process.env,
@@ -107,7 +115,7 @@ for (const signal of Object.keys(signalExitCodes)) {
 }
 
 child.on('error', (error) => {
-  console.error(`Failed to start ${pnpmCommand}: ${error.message}`);
+  console.error(`Failed to start node ${config.args[0]}: ${error.message}`);
   process.exit(1);
 });
 
@@ -119,7 +127,7 @@ child.on('exit', (code, signal) => {
   }
 
   if (signal) {
-    console.error(`${pnpmCommand} exited with signal ${signal}`);
+    console.error(`node exited with signal ${signal}`);
     process.exit(signalExitCodes[signal] ?? 1);
   }
 

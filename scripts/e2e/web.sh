@@ -3,6 +3,7 @@
 set -euo pipefail
 bash scripts/deps/build.sh
 pnpm e2e:audio
+pnpm --filter @eiscord/api build
 bash scripts/db/test-reset.sh
 source scripts/e2e/env.test.sh
 pnpm db:seed
