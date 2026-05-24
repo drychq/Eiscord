@@ -1,0 +1,93 @@
+\section{验收标准}
+
+\subsection{文档验收条件}
+
+本文档的验收需满足以下条件：
+
+\begin{enumerate}[itemsep=0pt]
+  \item \textbf{完整性}：文档覆盖全部 8 章内容，无缺失章节或 TODO 占位符。
+  \item \textbf{一致性}：章节间交叉引用（如需求追溯矩阵中的模块引用）与对应章节内容一致。
+  \item \textbf{可读性}：图表清晰可读，表格排版整齐，代码/接口示例格式规范，无编译警告（Overfull/Underfull hbox 除外）。
+  \item \textbf{可追溯性}：第 6 章需求追踪矩阵建立 SRS 功能需求与本 SDD 设计章节的双向追溯。
+  \item \textbf{版本标识}：封面、页眉/页脚体现文档版本号 V1.1 和日期。
+\end{enumerate}
+
+\subsection{功能场景验收}
+
+以下功能场景作为文档设计的验证依据：
+
+\begin{table}[H]
+\centering
+\caption{功能场景验收清单}
+\begin{tabularx}{\textwidth}{L{1.0cm}L{3.0cm}L{2.5cm}Y}
+\toprule
+\textbf{编号} & \textbf{场景} & \textbf{涉及模块} & \textbf{验收要点} \\
+\midrule
+AC-01 & 新用户注册并登录 & Auth & 密码 bcrypt 哈希、JWT 签发、会话写入 auth\_sessions \\
+AC-02 & Token 过期后自动刷新 & Auth & Refresh Token 轮换、旧 Token 失效 \\
+AC-03 & 搜索用户并发送好友请求 & Users & 好友请求创建、通知推送、接受/拒绝流程 \\
+AC-04 & 创建服务器并分配角色 & Servers, Permissions & 服务器创建、默认角色创建、权限继承校验 \\
+AC-05 & 频道内发送消息 & Messages & 事务写入、附件和 @提及同步、未读计数更新 \\
+AC-06 & 多成员频道消息实时推送 & Messages, Socket.IO & 频道房间广播、未读数事件个性化推送 \\
+AC-07 & 加入语音频道并发言 & Voice & Mediasoup Worker 分配、Producer/Consumer 创建 \\
+AC-08 & 上传图片作为消息附件 & Media, MinIO & 分片上传、FileObject 记录创建、下载 URL 生成 \\
+AC-09 & 服务器所有者删除服务器 & Servers & 级联删除成员/频道/消息/角色（Prisma 级联） \\
+AC-10 & 管理员封禁成员 & Servers & 封禁记录创建、成员关系删除、被封禁者即时踢出 \\
+\bottomrule
+\end{tabularx}
+\label{tab:accept-scenarios}
+\end{table}
+
+\subsection{异常场景验收}
+
+\begin{table}[H]
+\centering
+\caption{异常场景验收清单}
+\begin{tabularx}{\textwidth}{L{1.0cm}L{3.0cm}L{2.0cm}Y}
+\toprule
+\textbf{编号} & \textbf{异常场景} & \textbf{期望行为} & \textbf{对应设计} \\
+\midrule
+EX-01 & 未登录访问受保护 API & 返回 401，含标准错误体 & AccessTokenGuard（\S 3.2.1） \\
+EX-02 & 发送消息至无权限的频道 & 返回 403，消息不入库 & PermissionGuard（\S 3.2.4） \\
+EX-03 & 超过速率限制 & 返回 429，Retry-After 头 & ThrottlerGuard（\S 3.2.9） \\
+EX-04 & 上传超过大小限制的文件 & 返回 413，前端预先校验 & FileSizeValidator（\S 3.2.8） \\
+EX-05 & WebSocket 断连 & 客户端自动重连，5次指数退避 & Socket.IO retry（\S 4.2） \\
+EX-06 & Redis 不可用 & 在线状态回退数据库，其余功能正常 & Redis health check（\S 2.5） \\
+EX-07 & 数据库主键冲突（并发注册） & 返回 409 Conflict，提示用户名已存在 & Prisma unique constraint（\S 5.2） \\
+EX-08 & Mediasoup Worker 崩溃 & 自动重启 Worker，语音频道暂时不可用 & Worker 管理（\S 3.2.6） \\
+\bottomrule
+\end{tabularx}
+\label{tab:accept-exceptions}
+\end{table}
+
+\subsection{非功能验收}
+
+\begin{enumerate}[itemsep=0pt]
+  \item \textbf{性能验收}：在单节点环境下，使用 K6 脚本（见 \texttt{scripts/k6/}）跑基准负载测试，核心 API P95 延迟 $\le$ 200ms，WebSocket 事件投递 P95 $\le$ 100ms。
+  \item \textbf{安全验收}：通过 ESLint Security 规则检查；所有密码 bcrypt 哈希验证；JWT 签名使用 RS256 算法；文件上传类型白名单校验；无明文密码出现在日志中。
+  \item \textbf{可靠性验收}：Docker Compose down/up 后服务在 30 秒内恢复可用；消息发送在数据库事务失败时自动回滚，不产生脏数据。
+  \item \textbf{兼容性验收}：在 Chrome/Firefox/Edge 最新两个主版本上通过全部 E2E 测试（Playwright）。
+\end{enumerate}
+
+\subsection{质量检查要求}
+
+\begin{table}[H]
+\centering
+\caption{质量检查项}
+\begin{tabularx}{\textwidth}{L{3.0cm}L{2.5cm}L{2.0cm}Y}
+\toprule
+\textbf{检查项} & \textbf{工具/方法} & \textbf{频率} & \textbf{通过标准} \\
+\midrule
+代码规范检查 & ESLint + Prettier & 每次提交 & 零 Error，警告可记录 \\
+类型检查 & TypeScript \texttt{tsc --noEmit} & 每次提交 & 零类型错误 \\
+单元测试 & Jest（API） & 每次 PR & 覆盖率 $\ge$ 70\%，关键模块 100\% \\
+E2E 测试 & Playwright（Web） & 每次 PR & 全部用例通过 \\
+API 契约测试 & Jest + SuperTest & 每次 PR & 所有端点响应码与 Schema 匹配 \\
+数据库迁移测试 & Prisma Migrate（dry-run） & 每次 PR & 迁移脚本 0 冲突，可逆回滚标记 \\
+集成测试 & Jest + Testcontainers（可选） & 每次 PR & 核心流程（注册→发消息→通知）通过 \\
+\bottomrule
+\end{tabularx}
+\label{tab:quality}
+\end{table}
+
+本设计文档的所有设计决策均需通过上述验收标准的检验，方可进入下一阶段（编码实现与测试）。

@@ -11,6 +11,8 @@
 \usepackage{tabularx}
 \usepackage{enumitem}
 \usepackage{amssymb}
+\usepackage{float}
+\usepackage{capt-of}
 
 \onehalfspacing
 \setlength{\parindent}{2em}
@@ -24,8 +26,8 @@
 \newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
 \newcolumntype{Y}{>{\raggedright\arraybackslash}X}
 
-\newcommand{\DocumentTitle}{类 Discord 实时社区交流系统软件设计说明书}
-\newcommand{\DocumentVersion}{V1.0}
+\newcommand{\DocumentTitle}{类 Discord 实时社区交流系统技术设计文档}
+\newcommand{\DocumentVersion}{V1.1}
 \newcommand{\CourseName}{创新创业基础与实践}
 \newcommand{\StudentName}{陈瀚钦 \space 范宇扬}
 \newcommand{\StudentId}{2023051604062 2023051604100}
@@ -127,7 +129,7 @@
     完成日期： & \today \\
   \end{tabular}
   \vfill
-  {\zihao{-4}本文档用于描述类 Discord 实时社区交流系统的总体架构、模块分解、接口契约、数据模型、用户界面与部署方案，是软件需求规格说明书（SRS V1.1）在设计阶段的落地依据。\par}
+  {\zihao{-4}本文档用于描述类 Discord 实时社区交流系统的整体架构、模块设计、接口协议、数据模型及部署方案。\par}
 \end{titlepage}
 
 \hypersetup{pageanchor=true}
@@ -139,7 +141,8 @@
   \toprule
   版本 & 日期 & 修订人 & 修订说明 \\
   \midrule
-  V1.0 & \today & 待填写 & 初始版本，依据 SRS V1.1 完成 7 章软件设计说明书：引言、系统设计概述、模块分解、接口设计、数据设计、UI 设计、部署设计。 \\
+  V1.0 & 2026年5月24日 & 待填写 & 初始版本，完成类 Discord 实时社区交流系统的软件需求规格说明书。 \\
+  V1.1 & 2026年5月24日 & 待填写 & 补充 MVP 范围、优先级、开发追踪、逻辑接口、实时事件、数据约束、权限矩阵和验收映射。 \\
   \bottomrule
 \end{tabularx}
 
@@ -151,11 +154,12 @@
 \setcounter{page}{1}
 
 \input{chapters/introduction}
-\input{chapters/overview}
-\input{chapters/modules}
-\input{chapters/interface}
-\input{chapters/data}
-\input{chapters/ui}
-\input{chapters/deployment}
+\input{chapters/arch-design}
+\input{chapters/module-design}
+\input{chapters/interface-data}
+\input{chapters/db-design}
+\input{chapters/traceability}
+\input{chapters/nonfunctional}
+\input{chapters/acceptance}
 
 \end{document}

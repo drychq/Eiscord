@@ -2,20 +2,21 @@
   "latex-workshop.latex.autoBuild.run": "onSave",
   "latex-workshop.latex.build.enableMagicComments": false,
   "latex-workshop.view.pdf.viewer": "tab",
-  "latex-workshop.latex.auxDir": "%WORKSPACE_FOLDER%/build",
-  "latex-workshop.latex.outDir": "%WORKSPACE_FOLDER%/output",
+  "latex-workshop.latex.auxDir": "d:/Eiscord/1/Eiscord/build",
+  "latex-workshop.latex.outDir": "d:/Eiscord/1/Eiscord/output",
   "latex-workshop.latex.tools": [
     {
       "name": "workspace-latexmk-direct",
       "command": "latexmk",
       "args": [
         "-xelatex",
+        "-cd",
         "-synctex=1",
         "-interaction=nonstopmode",
         "-file-line-error",
-        "-auxdir=%WORKSPACE_FOLDER%/build",
-        "-outdir=%WORKSPACE_FOLDER%/output",
-        "%DOCFILE_EXT%"
+        "-auxdir=d:/Eiscord/1/Eiscord/build",
+        "-outdir=d:/Eiscord/1/Eiscord/output",
+        "%DOCFILE%"
       ]
     }
   ],
@@ -27,7 +28,7 @@
       ]
     }
   ],
-  "latex-workshop.latex.recipe.default": "first",
+  "latex-workshop.latex.recipe.default": "workspace-latexmk-output",
   "latex-workshop.latex.clean.fileTypes": [
     "*.aux",
     "*.bbl",

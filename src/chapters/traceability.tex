@@ -1,0 +1,74 @@
+\section{需求追踪与权限矩阵}
+
+\subsection{权限矩阵}
+
+系统采用基于角色的访问控制（RBAC）模型，权限粒度覆盖服务器级别、频道级别和全局管理级别。
+
+\begin{table}[H]
+\centering
+\caption{核心权限矩阵（G=全局, S=服务器级, C=频道级）}
+\begin{tabularx}{\textwidth}{L{3.2cm}L{1.0cm}Y}
+\toprule
+\textbf{权限} & \textbf{作用域} & \textbf{说明} \\
+\midrule
+MANAGE\_SERVER & S & 修改服务器名称、图标、删除服务器 \\
+MANAGE\_ROLES & S & 创建/编辑/删除角色、分配权限 \\
+MANAGE\_CHANNELS & S & 创建/编辑/删除频道 \\
+KICK\_MEMBERS & S & 踢出成员（不含封禁） \\
+BAN\_MEMBERS & S & 封禁/解封成员 \\
+MANAGE\_MESSAGES & C & 删除频道内任意消息 \\
+SEND\_MESSAGES & C & 在频道内发送消息 \\
+READ\_MESSAGES & C & 查看频道消息历史 \\
+CONNECT & C & 加入语音频道 \\
+SPEAK & C & 在语音频道内发言 \\
+MUTE\_MEMBERS & C & 语音频道内禁言他人 \\
+ADMINISTRATOR & G & 拥有所有权限（最高权限） \\
+\bottomrule
+\end{tabularx}
+\label{tab:perm-matrix}
+\end{table}
+
+权限继承规则：
+\begin{enumerate}[itemsep=0pt]
+  \item 服务器所有者拥有所有权限，且不可被撤销。
+  \item 成员权限 = 各角色权限的并集（OR 逻辑）。
+  \item 频道权限可覆盖服务器级权限：若某频道显式拒绝了成员某权限，则该权限在该频道中无效。
+  \item ADMINISTRATOR 权限具有最高优先级，授予即拥有所有权限。
+\end{enumerate}
+
+\subsection{需求追踪矩阵}
+
+下表建立功能需求（源自 SRS V1.1）与设计章节之间的双向追溯关系。
+
+\begin{longtable}{L{1cm}L{2.5cm}L{2.5cm}L{2.5cm}L{2.5cm}}
+\caption{需求追踪矩阵} \label{tab:trace-matrix} \\
+\toprule
+\textbf{编号} & \textbf{需求简述} & \textbf{对应模块} & \textbf{对应接口} & \textbf{对应数据库} \\
+\midrule
+\endfirsthead
+\multicolumn{5}{c}{\small（续表）} \\
+\toprule
+\textbf{编号} & \textbf{需求简述} & \textbf{对应模块} & \textbf{对应接口} & \textbf{对应数据库} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+FR-01 & 用户注册与登录 & Auth 模块（\S 3.2.1） & POST /auth/register, POST /auth/login & users, auth\_sessions \\
+FR-02 & JWT 令牌刷新与会话管理 & Auth 模块（\S 3.2.1） & POST /auth/refresh, POST /auth/logout & auth\_sessions \\
+FR-03 & 好友添加/删除/搜索 & Users 模块（\S 3.2.2） & POST /friends, GET /friends & friends, friend\_requests \\
+FR-04 & 创建/管理社区服务器 & Servers 模块（\S 3.2.3） & POST /servers, PATCH /servers/:id & servers, server\_members \\
+FR-05 & 角色与权限分配 & Permissions 模块（\S 3.2.4） & POST /servers/:id/roles, PUT /servers/:id/members/:uid/roles & roles, role\_permissions, member\_roles \\
+FR-06 & 文本频道消息收发 & Messages 模块（\S 3.2.5） & POST /channels/:cid/messages, WS MessageCreated & messages, message\_attachments, message\_mentions \\
+FR-07 & 未读计数与阅读状态 & Messages 模块（\S 3.2.5） & WS UnreadUpdated & read\_states \\
+FR-08 & 语音频道连接与发言 & Voice 模块（\S 3.2.6） & Mediasoup Worker RPC & voice\_sessions \\
+FR-09 & 实时通知推送 & Notifications 模块（\S 3.2.7） & WS NotificationCreated & notifications \\
+FR-10 & 文件上传（图片/附件） & Media 模块（\S 3.2.8） & POST /files/upload & file\_objects \\
+FR-11 & 消息搜索 & Messages 模块（\S 3.2.5） & GET /channels/:cid/messages/search & messages（全文索引） \\
+FR-12 & 用户在线状态同步 & Users 模块（\S 3.2.2） & WS PresenceUpdate & —（Redis） \\
+FR-13 & 速率限制与防滥用 & Common Guards（\S 3.2.9） & ThrottlerGuard（全局） & — \\
+FR-14 & WebSocket 连接认证 & Gateway（\S 3.2.10） & WS connection\_authenticated & auth\_sessions \\
+FR-15 & 暗色/亮色主题切换 & Web 前端（\S 8.3） & — & user\_settings \\
+\bottomrule
+\end{longtable}
+
+每条需求至少对应一个模块定义、一个接口契约和一张数据表，确保设计无遗漏。
