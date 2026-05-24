@@ -1,1 +1,261 @@
 \section{用户界面设计}
+
+本章描述 Web 客户端的设计方案，包括前端架构、路由与页面布局、组件与状态分层、关键交互流程、权限驱动的 UI 渲染、错误处理以及响应式与可访问性。SDD 不涉及具体的视觉规范、配色与字号细节，这些由前端开发阶段的设计稿决定；本章仅约束 UI 必须承担的能力与行为。
+
+\subsection{设计目标}
+
+\begin{itemize}
+  \item 实现 Discord 类三栏工作区：左侧社区导航、中间频道/成员/语音状态、右侧主消息面板；
+  \item 桌面端与移动端共享核心业务逻辑，移动端宽度不低于 360 像素时保留核心入口，通过抽屉或分屏切换；
+  \item 实时事件驱动界面更新：消息、未读、通知、在线状态、语音状态、权限变化均通过 Socket 推送；
+  \item 服务端为权威：前端隐藏按钮仅作体验优化，最终判断在服务端完成；
+  \item 客户端不缓存敏感凭证：access token 仅保存在内存，refresh token 仅放在 HttpOnly cookie 或受控存储；
+  \item 错误码与文案统一映射，不暴露服务端内部细节。
+\end{itemize}
+
+\subsection{前端架构}
+
+\noindent\begin{tabularx}{\textwidth}{L{3.4cm}L{3.4cm}Y}
+  \toprule
+  组成 & 选型 & 职责 \\
+  \midrule
+  视图层 & React + TypeScript + Vite & 组件渲染、路由、Hooks。 \\
+  路由 & React Router & 登录 / 主工作区 / 社区 / 频道 / 私聊 / 通知 / 设置。 \\
+  服务端数据缓存 & TanStack Query & 用户、社区、频道、消息、通知、角色等远程数据。 \\
+  本地 UI 状态 & Zustand & 当前社区、当前频道、设置面板、语音控制条、Toast。 \\
+  表单 & React Hook Form + Zod & 登录、注册、资料、频道、角色配置；与 \texttt{@eiscord/shared} 的 schema 共用。 \\
+  HTTP 客户端 & 自定义 axios / fetch 封装 & 自动附加 Bearer token、\texttt{X-Request-Id}、错误码映射、刷新会话。 \\
+  Socket 客户端 & 自定义 \texttt{socket-client} & \texttt{/realtime} 连接、自动重连、订阅管理、\texttt{SyncState} 自动 emit、事件分发到 Query 缓存。 \\
+  语音媒体 & 自定义 \texttt{voice-client} + Zustand & mediasoup-client Device、send/recv Transport、Producer、Consumer 引用，本地音轨、输入/输出设备、音量计、active speaker。 \\
+  \bottomrule
+\end{tabularx}
+
+\subsubsection{目录结构}
+
+\begin{verbatim}
+apps/web/src/
+  app/                    # 路由、全局 Provider、应用启动
+  features/
+    auth/                 # 登录、注册、密码重置 (P1)
+    profile/              # 个人资料、在线状态
+    friends/              # 好友列表、申请、私聊入口
+    servers/              # 社区列表、社区设置
+    channels/             # 频道列表、频道管理
+    messages/             # 消息列表、发送框、附件
+    notifications/        # 通知列表与角标
+    permissions/          # 角色编辑器、PermissionBitEditor
+    voice/                # 语音控制条、voice-client、active speaker UI
+  shared/
+    api/                  # HTTP client、Socket client、错误处理
+    components/           # 通用按钮、弹窗、表单、列表
+    hooks/                # usePermission、useSocket、useVoice
+    state/                # Zustand store：auth、workspace、theme、toast
+    styles/               # 全局样式、主题变量
+    types/                # 从 @eiscord/shared 派生的类型
+    utils/                # 错误码映射、用户名颜色等
+\end{verbatim}
+
+\subsection{路由与页面清单}
+
+\noindent\begin{tabularx}{\textwidth}{L{6.4cm}Y}
+  \toprule
+  路由 & 页面 \\
+  \midrule
+  \texttt{/login} & 登录页：用户名/邮箱/手机号 + 密码。 \\
+  \texttt{/register} & 注册页：用户名、联系方式与密码校验。 \\
+  \texttt{/reset-password}（P1） & 密码找回，FR-03。 \\
+  \texttt{/app} & 已登录默认入口，重定向到最近社区或好友页。 \\
+  \texttt{/app/friends} & 好友列表、好友申请、私聊入口。 \\
+  \texttt{/app/dm/:conversationId} & 一对一私聊。 \\
+  \texttt{/app/servers/:serverId/channels/:channelId} & 社区文本频道。 \\
+  \texttt{/app/servers/:serverId/voice/:channelId} & 语音频道状态视图。 \\
+  \texttt{/app/servers/:serverId/settings} & 社区设置：频道、角色、成员管理。 \\
+  \texttt{/app/notifications} & 通知列表与已读管理。 \\
+  \bottomrule
+\end{tabularx}
+
+未登录访问 \texttt{/app/*} 重定向到 \texttt{/login}；已登录访问登录注册页重定向到 \texttt{/app}。
+
+\subsection{主工作区布局}
+
+\noindent\begin{tabularx}{\textwidth}{L{2.8cm}Y}
+  \toprule
+  区域 & 内容 \\
+  \midrule
+  社区栏 & 已加入社区图标、创建社区入口、接受邀请入口。 \\
+  频道栏 & 当前社区文本频道、语音频道、频道管理入口；按服务端权限摘要过滤无权频道。 \\
+  消息区 & 历史消息列表（游标加载）、未读定位、发送框、附件入口、提及提示、撤回/删除状态。 \\
+  成员区 & 在线成员、离线成员、角色摘要、语音频道当前成员状态。 \\
+  顶部栏 & 当前频道名、通知入口、搜索入口（P1）。 \\
+  语音控制条 & 当前语音频道、静音、闭麦、离开、输入/输出设备选择、输入音量条、active speaker 高亮、重连提示、PTT（P1）。 \\
+  \bottomrule
+\end{tabularx}
+
+\subsection{状态管理分层}
+
+\noindent\begin{tabularx}{\textwidth}{L{3.4cm}L{3cm}Y}
+  \toprule
+  状态层 & 工具 & 说明 \\
+  \midrule
+  服务端数据 & TanStack Query & 用户、社区、频道、消息、通知、角色；Socket 事件后定向更新对应 Query 缓存。 \\
+  本地 UI & Zustand & 当前社区、当前频道、打开的设置面板、语音控制条、Toast。 \\
+  表单 & React Hook Form + Zod & 登录、注册、资料、频道、角色配置；与共享 schema 一致。 \\
+  实时连接 & 自定义 Socket client & 连接 \texttt{/realtime}、断线重连、\texttt{Subscribe}/\texttt{Unsubscribe}、\texttt{SyncState}、事件分发。 \\
+  语音媒体 & 自定义 hook + Zustand & mediasoup-client \texttt{Device}、send/recv \texttt{Transport}、\texttt{Producer}、\texttt{Consumer}，本地音轨、设备列表、active speaker。 \\
+  \bottomrule
+\end{tabularx}
+
+实时事件只更新当前用户有权可见的缓存。收到 \texttt{PermissionChanged} 后强制刷新社区详情、频道列表与权限摘要；不可见的频道立即从客户端缓存与订阅中移除。
+
+\subsection{关键交互流程}
+
+\subsubsection{注册登录流程}
+\begin{enumerate}
+  \item 用户提交注册表单，前端 Zod 校验通过后调用 \texttt{POST /auth/register}；
+  \item 用户提交登录表单，调用 \texttt{POST /auth/login}，保存 token；
+  \item 前端建立 \texttt{/realtime} Socket 连接；
+  \item 并行拉取 \texttt{GET /users/me}、\texttt{GET /servers}、\texttt{GET /friends}、\texttt{GET /notifications}、\texttt{GET /dm-conversations}；
+  \item 进入最近访问的社区或好友页；
+  \item Socket 自动加入 \texttt{user:\{userId\}} 房间。
+\end{enumerate}
+
+\subsubsection{加入社区并发送消息流程}
+\begin{enumerate}
+  \item 用户输入邀请码，调用 \texttt{POST /servers/join}；
+  \item 服务端返回社区详情、默认频道与权限摘要；
+  \item 前端进入默认频道路由 \texttt{/app/servers/:serverId/channels/:channelId}；
+  \item Socket emit \texttt{Subscribe} 订阅 \texttt{server:\{serverId\}} 与 \texttt{channel:\{channelId\}}；
+  \item 调用 \texttt{GET /channels/\{id\}/messages} 加载历史消息，定位最近未读位置；
+  \item 用户在发送框输入并提交，前端先以 pending 状态展示本地消息，调用 \texttt{POST /channels/\{id\}/messages}；
+  \item 服务端返回或 \texttt{MessageCreated} 到达后用 \texttt{event\_id} 去重并替换为正式消息。
+\end{enumerate}
+
+\subsubsection{权限变化流程}
+\begin{enumerate}
+  \item 客户端收到 \texttt{PermissionChanged}（\texttt{affected\_user\_ids} 包含本人）；
+  \item 立即调用 \texttt{GET /servers/\{id\}} 刷新可见频道、权限摘要与管理入口可见性；
+  \item 如果当前频道已不可见，退出频道路由并显示无权提示；
+  \item 清理对应消息缓存与 Socket 订阅；
+  \item Toast 提示"权限已更新"。
+\end{enumerate}
+
+\subsubsection{语音状态流程}
+\begin{enumerate}
+  \item 用户点击语音频道，调用 \texttt{POST /voice/channels/\{id\}/join}，获得 \texttt{session\_id}、\texttt{media.router\_rtp\_capabilities}、\texttt{media.ice\_servers}、\texttt{media.active\_producers}；
+  \item 基于 mediasoup-client 初始化 \texttt{Device}，加载 RTP capabilities；
+  \item 通过 Socket emit \texttt{VoiceTransportCreated} 两次，分别建立 send/recv \texttt{WebRtcTransport}，缓存 ICE/DTLS 参数；
+  \item 调用 \texttt{getUserMedia(\{audio: true\})} 获取本地麦克风音轨，处理 \texttt{NotAllowedError}（权限被拒）与 \texttt{NotFoundError}（无设备）；
+  \item 在 send Transport 上 \texttt{produce} 音轨，emit \texttt{VoiceProducerCreated}；服务端校验 \texttt{SPEAK\_VOICE} 通过后返回 \texttt{producer\_id}；
+  \item 对 \texttt{active\_producers} 与后续广播的 \texttt{VoiceProducerCreated} 逐个 emit \texttt{VoiceConsumerCreated} 创建本地 Consumer，随后 emit \texttt{VoiceConsumerResumed}，把远端音轨绑定到隐藏 \texttt{<audio>} 元素；
+  \item 自动播放策略：桌面端依赖用户手势已经满足；移动端兜底按钮作为 P1 增强；
+  \item 静音切换：关闭/恢复本地麦克风 track，并调用 \texttt{PATCH /voice/sessions/\{id\}/state}，服务端同步 \texttt{Producer.pause/resume}；
+  \item 闭麦切换：将所有远端 \texttt{<audio>} 元素静音，并 \texttt{PATCH state} 同步 \texttt{deafen\_state}；
+  \item 收到 \texttt{VoiceActiveSpeaker} 时高亮当前发言成员（边框 + 图标 + \texttt{aria-live} 文本通告）；
+  \item TURN 凭证在 join 与 transport 创建时下发；长会话刷新通过 \texttt{GET /voice/sessions/\{id\}/ice-servers}；
+  \item 离开 / 断线 / 收到 \texttt{VoiceProducerClosed(reason=permission\_lost)} 时关闭所有 Transport、释放音轨、移除控制条；收到 \texttt{reason=worker\_died} 时自动重新加入一次。
+\end{enumerate}
+
+\subsection{消息体验细节}
+
+\begin{itemize}
+  \item 消息列表支持游标加载，进入频道时定位最近未读位置；
+  \item 发送框支持纯文本、附件入口、提及提示（@用户名后弹出建议列表）；
+  \item 发送中消息显示 pending 状态，失败后允许重试（保留 \texttt{client\_message\_id} 实现幂等）；
+  \item 撤回（\texttt{retract}）与删除（\texttt{delete}）展示为已撤回或已删除状态，保留发送者与时间；
+  \item 附件展示前调用 \texttt{GET /attachments/\{id\}}，禁止直接拼接对象存储地址；
+  \item 提及通知在消息列表与通知中心同步展示。
+\end{itemize}
+
+\subsection{权限驱动的 UI 渲染}
+
+服务端权限是唯一安全边界，前端只负责通过权限摘要决定 UI 元素的显示与禁用，目的是减少误操作与不必要的 \texttt{PERMISSION\_DENIED} 提示。
+
+\noindent\begin{tabularx}{\textwidth}{L{3.8cm}Y}
+  \toprule
+  权限位 & UI 表现 \\
+  \midrule
+  \texttt{VIEW\_CHANNEL} & 无权频道从频道栏隐藏；URL 直达时跳转至无权提示页。 \\
+  \texttt{SEND\_MESSAGE} & 无权时发送框置灰且 placeholder 提示"无发送权限"。 \\
+  \texttt{MANAGE\_MESSAGE} & 仅有权用户在他人消息上显示"删除"菜单项。 \\
+  \texttt{MANAGE\_CHANNEL} & 频道设置/删除/排序按钮按权限显隐。 \\
+  \texttt{JOIN\_VOICE} / \texttt{SPEAK\_VOICE} / \texttt{LISTEN\_VOICE} & 语音频道加入按钮可见性、麦克风开关、Consumer 音量条按位显示；服务端拒绝时按 \texttt{PERMISSION\_DENIED} 引导。 \\
+  \texttt{MANAGE\_MEMBER} & 成员菜单显示移除/禁言/恢复；管理员不能管理高于自身优先级的成员，按钮在前端按 \texttt{priority} 比较后置灰。 \\
+  \texttt{MANAGE\_ROLE} & 社区设置中"角色"标签页可见，角色编辑器开放。 \\
+  \texttt{CREATE\_INVITE} & 邀请码生成入口可见。 \\
+  \texttt{VIEW\_AUDIT}（P1） & 审计摘要标签页可见。 \\
+  \bottomrule
+\end{tabularx}
+
+普通成员不能看到管理入口；服务端拒绝时仍需要在 UI 上反馈具体原因。隐藏按钮不能作为安全边界——前端永远准备好接收服务端的 \texttt{PERMISSION\_DENIED}，并据此刷新权限摘要。
+
+\subsection{错误处理与降级}
+
+\noindent\begin{tabularx}{\textwidth}{L{3.6cm}Y}
+  \toprule
+  错误码 & 前端行为 \\
+  \midrule
+  \texttt{AUTH\_REQUIRED} & 清理会话，跳转登录页。 \\
+  \texttt{INVALID\_CREDENTIALS} & 在登录表单上展示"用户名或密码错误"，不清理会话状态。 \\
+  \texttt{PERMISSION\_DENIED} & 显示无权提示，刷新权限摘要，必要时清理订阅。 \\
+  \texttt{RESOURCE\_NOT\_FOUND} & 显示资源不存在或已失效。 \\
+  \texttt{CONFLICT} & 按业务场景展示重复申请、重复加入或幂等冲突。 \\
+  \texttt{RATE\_LIMITED} & 禁用提交按钮并展示稍后重试倒计时。 \\
+  \texttt{PAYLOAD\_TOO\_LARGE} & 在附件入口展示限制说明并阻止再次提交。 \\
+  \texttt{DEPENDENCY\_UNAVAILABLE} & 对附件、通知等非核心能力展示降级提示，不影响主链路。 \\
+  \texttt{VALIDATION\_FAILED} & 按字段聚焦到错误项并展示提示。 \\
+  \bottomrule
+\end{tabularx}
+
+\subsubsection{语音设备与媒体错误}
+
+语音设备、媒体协商与 TURN 不可达的异常不通过服务端 \texttt{ErrorCode} 传递，由 \texttt{voice-client} 在客户端层捕获并联动 UI：
+
+\begin{itemize}
+  \item \textbf{麦克风权限被拒}（\texttt{NotAllowedError} / \texttt{NotFoundError} 等 \texttt{getUserMedia} 异常）：\texttt{voice-client} 切换状态为 \texttt{failed} 并清理控制条；UI 引导用户在浏览器权限设置中授予访问；
+  \item \textbf{媒体协商超时}（Transport / Producer 创建未在客户端计时器内完成）：\texttt{voice-client} 自动重试一次完整协商；仍失败则切换为 \texttt{failed} 并提示"加入失败，请稍后重试"；
+  \item \textbf{ICE 穿透失败 / TURN 不可达}（ICE 连接状态最终落入 \texttt{failed}）：\texttt{voice-client} 提示"对称 NAT 环境穿透失败，建议切换网络或稍后重试"；
+  \item 服务端在 \texttt{JOIN\_VOICE} / \texttt{SPEAK\_VOICE} 等权限拒绝时仍走标准 \texttt{PERMISSION\_DENIED}，前端按此区分用户引导文案。
+\end{itemize}
+
+\subsection{响应式与可访问性}
+
+\subsubsection{响应式}
+\begin{itemize}
+  \item 桌面端使用社区栏、频道栏、消息区与成员区并列布局；
+  \item 移动端宽度不低于 360 像素时通过抽屉或分屏切换社区、频道、消息与成员；
+  \item 移动端核心任务"注册登录、加入社区、发送消息、加入语音频道"的主要路径不超过 3 次关键点击；
+  \item 移动端语音控制条移至底部固定栏，至少包含静音、闭麦、离开三按钮，配合系统层音量键；
+  \item 消息输入框、语音控制条与通知入口必须在移动端可访问。
+\end{itemize}
+
+\subsubsection{可访问性}
+\begin{itemize}
+  \item 所有按钮、输入框与菜单具备明确可读标签（\texttt{aria-label} 或 visible text）；
+  \item 表单错误聚焦到对应字段并通过 \texttt{aria-describedby} 关联说明；
+  \item 消息列表支持键盘滚动与输入框快捷发送（Enter / Shift+Enter 换行）；
+  \item 色彩不能作为权限或状态的唯一表达——在线、静音、闭麦等状态同时使用图标或文字；
+  \item active speaker 高亮同时使用边框、图标与 \texttt{aria-live="polite"} 文本通告，不依赖颜色；说话停止时清除。
+\end{itemize}
+
+\subsection{设备与浏览器兼容性}
+
+\begin{itemize}
+  \item 桌面端首选 Chromium ≥ 100、Firefox ≥ 100、Safari ≥ 16；
+  \item 移动端首选 iOS 16+ Safari 与 Android Chrome 100+；
+  \item 不针对 IE 与早期 Edge；
+  \item WebRTC、WebSocket、Service Worker 与 \texttt{getUserMedia} 为前置能力；缺失则禁用语音入口并提示用户升级浏览器；
+  \item 自动播放策略：桌面端依赖用户手势满足；移动端依赖系统层声音手势，并提供 P1 兜底播放按钮。
+\end{itemize}
+
+\subsection{本章需求映射}
+\noindent\begin{tabularx}{\textwidth}{L{3cm}Y}
+  \toprule
+  本章承担 & 说明 \\
+  \midrule
+  FR-01 至 FR-18（用户界面层面） & 页面清单与交互流程覆盖账号、好友私聊、社区频道、消息、通知、语音的前端表现。 \\
+  FR-19、FR-20 & 权限驱动的 UI 渲染负责按权限位与角色优先级控制 UI 元素显隐。 \\
+  NFR-06、NFR-07 可用性与可访问性 & 响应式 + 键盘可达 + 状态多通道表达承担。 \\
+  AC-04、AC-E5、AC-E7 权限相关 & UI 必须遵守"服务端为权威"原则并刷新权限摘要。 \\
+  AC-E8、AC-N2 语音与媒体相关 & 语音流程 + 错误处理覆盖加入/退出/静音/闭麦/重连/worker\_died。 \\
+  \bottomrule
+\end{tabularx}
