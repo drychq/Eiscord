@@ -1,1 +1,148 @@
 \section{引言}
+
+\subsection{编写目的}
+本文档是类 Discord 实时社区交流系统的软件设计说明书（Software Design Document，以下简称 SDD），用于描述系统在《类 Discord 实时社区交流系统软件需求规格说明书 V1.1》（以下简称 SRS）约束下的总体架构、模块分解、接口契约、数据模型、用户界面以及部署运维方案。SDD 是 SRS 的设计阶段落地依据，作为开发、测试、联调和验收工作的统一蓝本，凡 SRS 中明确的功能需求（FR）、非功能需求（NFR）与验收条件（AC）均能在本文档中找到对应的设计承担方。
+
+SDD 不重复 SRS 已声明的业务目标、需求条目与验收文本，而是回答如下设计问题：每条需求由哪个模块承担、通过哪条接口实现、依赖哪些实体、产生哪些事件、与哪些非功能指标相关，以及在部署运维中如何被支撑。文档保持框架技术中立到模块级，仅在与 SRS 相关性强的章节（例如第 2 章技术栈选型、第 7 章部署）明确给出具体技术决策。
+
+\subsection{项目背景与 SRS 关系}
+课程设计任务要求交付一套支持账号、社交、社区频道、消息、权限、通知和语音的实时社区平台。SRS 已经界定了 MVP 范围（FR-01 至 FR-20）、外部边界、非功能指标（NFR-01 至 NFR-16）以及 AC-01 至 AC-06、AC-E1 至 AC-E8、AC-N1 至 AC-N6 三组验收编号。本 SDD 在此基础上完成两件事：
+
+\begin{itemize}
+  \item 将 SRS 中描述的逻辑接口、实时事件和数据实体落地为可实现的代码模块、HTTP 端点、Socket 事件与数据库 schema；
+  \item 将 SRS 的非功能指标拆解为各模块在性能、并发、安全、审计、备份等方面应承担的具体设计责任。
+\end{itemize}
+
+SRS 与 SDD 的章节对应关系如下：
+
+\noindent\begin{tabularx}{\textwidth}{L{4cm}L{4.5cm}Y}
+  \toprule
+  SRS 章节 & SDD 对应章节 & 衔接关系 \\
+  \midrule
+  第 1 章 引言、术语 & 第 1 章 引言 & 沿用 SRS 业务术语，扩充技术术语。 \\
+  第 2 章 总体描述 & 第 2 章 系统设计概述 & 将业务定位转化为分层架构、技术栈与运行时拓扑。 \\
+  第 3 章 功能需求 FR-01 至 FR-20 & 第 3 章 模块分解 & 每条 FR 由具体模块承担并暴露明确契约。 \\
+  第 4 章 接口与数据需求 & 第 4 章 接口设计 + 第 5 章 数据设计 & 逻辑命令拆为 HTTP 与 Socket，实体拆为 Prisma 模型。 \\
+  第 5 章 需求追踪与权限矩阵 & 第 3、4、6 章 & 模块、接口与界面共同承担权限拦截。 \\
+  第 6 章 非功能需求 NFR-01 至 NFR-16 & 第 2、4、7 章 & 架构层级、接口约束与部署监控共同支撑。 \\
+  第 7 章 验收标准 AC、AC-E、AC-N & 第 7 章 部署设计 + 全部章节 & 各模块设计承担对应验收编号。 \\
+  \bottomrule
+\end{tabularx}
+
+\subsection{文档范围}
+本 SDD 覆盖以下内容：
+
+\begin{itemize}
+  \item 系统总体架构、分层模型、模块依赖、请求链路与实时事件链路；
+  \item 11 个业务模块与若干公共模块的职责、契约、数据依赖和事件输出；
+  \item HTTP API 命名空间 \texttt{/api/v1} 下的端点契约、统一响应信封、错误码、分页与幂等约定；
+  \item WebSocket 命名空间 \texttt{/realtime} 下的连接握手、房间订阅、事件信封与媒体信令事件；
+  \item PostgreSQL 数据库实体、字段、索引、关系与删除失效规则；
+  \item Web 客户端的页面结构、路由、状态管理、关键交互流程与权限驱动的 UI 渲染规则；
+  \item 本地开发、容器化、环境变量、日志、监控、备份、降级与发布流程。
+\end{itemize}
+
+本文档明确不包含以下内容：
+
+\begin{itemize}
+  \item 具体的源代码实现、单元测试用例与覆盖率指标；
+  \item Prisma 迁移脚本的逐行 SQL、容器编排的最终 YAML 与 CI 流水线脚本；
+  \item 真实音频处理（编解码、混音、转写）的实现细节，仅描述 mediasoup SFU 的信令编排；
+  \item P2 范围内的能力（屏幕共享、机器人平台、商业化订阅、广告投放、独立运营后台、服务端录音/混音/转写）；
+  \item 课程范围之外的运维流程，例如生产环境多区域部署、合规审计或 SLA 商务协议。
+\end{itemize}
+
+\subsection{预期读者}
+本 SDD 的主要读者包括：
+
+\begin{itemize}
+  \item 项目开发人员：根据模块契约和接口规格实施编码；
+  \item 项目测试人员：根据接口、事件与数据约束设计自动化测试和验收用例；
+  \item 任课教师或评审人员：核对设计与需求的对应关系、技术决策合理性以及交付完整性；
+  \item 项目成员：统一架构语言、模块边界、命名约定与跨模块依赖原则。
+\end{itemize}
+
+\subsection{设计原则}
+SDD 中的所有设计决策遵循以下原则，原则之间冲突时按列表先后顺序判优：
+
+\begin{enumerate}
+  \item \textbf{需求可追溯}：每个模块、接口和实体都能映射回至少一条 SRS 需求或验收编号，禁止引入与 SRS 无对应关系的能力。
+  \item \textbf{服务端为权威}：所有受控操作的最终判断在服务端完成，客户端的 UI 隐藏只是体验优化，不构成安全边界。
+  \item \textbf{显式优于隐式}：模块依赖、权限规则、事件流向通过结构化设计显式表达，禁止隐藏在配置或运行时副作用中。
+  \item \textbf{失败可观测}：所有受控接口和实时事件携带 \texttt{request\_id} 或 \texttt{event\_id}，关键失败必须写入审计日志。
+  \item \textbf{事务边界即一致性边界}：跨实体写入必须放在数据库事务内，实时事件仅在事务提交后发布。
+  \item \textbf{P0 优先}：MVP 范围内的能力优先稳定，P1 能力在 P0 主链路稳定后再进入。
+  \item \textbf{兼容现有 SRS 编号}：FR-XX、NFR-XX、AC-XX、AC-EX、AC-NX 编号沿用 SRS V1.1，SDD 不引入新的编号体系。
+\end{enumerate}
+
+\subsection{术语与缩略语}
+本 SDD 沿用 SRS 第 1 章已定义的业务术语（社区、频道、私聊、在线状态、提及、角色、实时同步），新增以下技术术语，用于第 2 章至第 7 章：
+
+\noindent\begin{tabularx}{\textwidth}{L{3.6cm}Y}
+  \toprule
+  术语或缩写 & 说明 \\
+  \midrule
+  SDD & Software Design Document，软件设计说明书，对应本文档。 \\
+  Monorepo & 单仓库多包工程结构，前后端与共享代码统一在同一 Git 仓库下管理。 \\
+  NestJS & 基于 TypeScript 的服务端框架，本文档中作为 HTTP API 与 Socket.IO 网关实现的固定技术选型。 \\
+  Prisma & TypeScript ORM 与迁移工具，承担 PostgreSQL 数据建模、迁移与类型生成。 \\
+  Socket.IO & 提供命名空间、房间、自动重连与事件 ACK 的实时通信库，承载 \texttt{/realtime}。 \\
+  Zustand & 轻量级前端本地状态库，承担当前社区、当前频道、语音控制条等瞬态 UI 状态。 \\
+  TanStack Query & 服务端数据查询缓存库（原 React Query），承担用户、频道、消息、通知等远程数据的客户端缓存。 \\
+  mediasoup & 基于 Node.js 的 WebRTC SFU（Selective Forwarding Unit），用于 v1 的多人 Opus 音频路由，服务端不录音、不混音。 \\
+  coturn & 自托管 STUN/TURN 服务，签发短 TTL HMAC 凭证，覆盖对称 NAT 场景。 \\
+  Router/Transport/Producer/Consumer & mediasoup 核心抽象：Router 是房间级路由，Transport 是单端点 WebRTC 连接，Producer 是入站音轨，Consumer 是出站音轨。 \\
+  RTP / DTLS-SRTP & 实时传输协议与基于 DTLS 的安全 RTP 加密层，是 WebRTC 数据面的强制加密通道。 \\
+  ICE / STUN / TURN & 交互式连接建立、NAT 探测与中继协议，本设计中由 coturn 承担。 \\
+  SFU & Selective Forwarding Unit，选择性转发单元，不混音也不解码，仅根据房间订阅关系转发 RTP 包。 \\
+  active speaker & 当前发言人，由 mediasoup AudioLevelObserver 检测后由服务端节流广播。 \\
+  Bitset & 位集合，本设计中用于角色权限位 \texttt{permissionBits} 与频道覆盖 \texttt{allowBits} / \texttt{denyBits} 的存储与运算。 \\
+  PBKDF2 & 基于密码的密钥派生函数，本设计中用于用户密码哈希存储，迭代次数 310{,}000。 \\
+  Cursor 分页 & 基于不透明游标（opaque cursor）的分页方式，本设计中所有列表型 HTTP 接口默认使用游标分页。 \\
+  Envelope（事件信封） & 包装 Socket.IO 事件载荷的统一结构 \texttt{\{event\_id, event\_name, occurred\_at, payload, request\_id\}}。 \\
+  幂等键 & 客户端在写操作中携带的去重标识，本设计中体现为 \texttt{client\_message\_id}、\texttt{dedupeKey}、通知 ID 列表等。 \\
+  \bottomrule
+\end{tabularx}
+
+\subsection{设计约束与假设}
+
+本 SDD 在以下约束与假设下成立。若运行环境或 SRS 后续版本与下列条件冲突，SDD 中的对应设计需要重新评估。
+
+\begin{itemize}
+  \item 浏览器：用户使用现代浏览器（Chromium 内核 ≥ 100、Firefox ≥ 100、Safari ≥ 16），具备 WebRTC、WebSocket 和 Service Worker 支持；不针对 IE 与早期 Edge。
+  \item 网络：用户网络条件正常，文本链路延迟与丢包符合常见家用宽带；语音媒体路径假设 mediasoup 服务可达，对称 NAT 用户由 coturn 中继。
+  \item 后端环境：操作系统为 Linux（生产）或本机开发系统；Docker 与 Docker Compose 可用；Node.js 版本不低于 20。
+  \item 数据规模：MVP 阶段单部署支持不超过 10{,}000 注册用户、1{,}000 并发在线，单社区不超过 5{,}000 成员、单语音频道不超过 20 同时连接，与 NFR-03 一致。
+  \item 部署形态：本课程交付目标为单实例可运行的 MVP；多区域部署、跨实例水平扩展、读写分离不在本 SDD 范围内，仅在第 7 章给出可扩展点。
+  \item 时间与编号：所有时间为 UTC ISO 8601 字符串；UUID v4；FR/NFR/AC 编号沿用 SRS V1.1。
+\end{itemize}
+
+\subsection{参考依据}
+\begin{itemize}
+  \item 《类 Discord 实时社区交流系统软件需求规格说明书 V1.1》（同仓库 \texttt{docs/srs} 分支）；
+  \item 软件工程课程设计任务要求与课程文档规范；
+  \item 软件设计说明书常见写作规范与高校课程报告格式要求；
+  \item NestJS、Prisma、PostgreSQL、Redis、Socket.IO、mediasoup、coturn 等开源组件的官方文档；
+  \item WebRTC、ICE、STUN、TURN、DTLS-SRTP 相关 IETF/W3C 规范；
+  \item OWASP Top 10、PBKDF2 与会话管理常见最佳实践。
+\end{itemize}
+
+\subsection{文档约定}
+
+\begin{itemize}
+  \item 章节内使用的"P0/P1/P2"沿用 SRS 优先级语义；
+  \item 使用 \texttt{等宽字体} 表示模块名、接口名、事件名、字段名与代码标识符；
+  \item 表格中"权限要求"列出现的 \texttt{VIEW\_CHANNEL}、\texttt{SEND\_MESSAGE} 等位名沿用 SRS 第 5 章权限矩阵的命名；
+  \item 章节末尾的"需求映射"小节列出本章覆盖的 FR/NFR/AC 编号；
+  \item 接口路径如 \texttt{POST /api/v1/channels/\{channel\_id\}/messages} 中的花括号占位符表示路径参数。
+\end{itemize}
+
+\subsection{本章需求映射}
+\noindent\begin{tabularx}{\textwidth}{L{3cm}Y}
+  \toprule
+  本章承担 & 说明 \\
+  \midrule
+  全部 FR、NFR、AC 编号 & 本章作为引言，声明 SDD 与 SRS 的对应关系并定义全文术语。 \\
+  AC-N5 可编译与可审阅性 & 通过统一编号体系、术语表与章节约定，保证 SDD 自身的可审阅性。 \\
+  \bottomrule
+\end{tabularx}
