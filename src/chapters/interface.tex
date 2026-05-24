@@ -1,1 +1,539 @@
 \section{接口设计}
+
+本章定义系统对外暴露的两类接口：HTTP REST API（命名空间 \texttt{/api/v1}）与 Socket.IO 实时事件（命名空间 \texttt{/realtime}）。所有命令型业务动作通过 HTTP 完成，状态分发与媒体信令通过 Socket。两类接口共用同一套身份、权限、审计与请求标识机制。
+
+\subsection{接口分层概览}
+
+\noindent\begin{tabularx}{\textwidth}{L{3.4cm}L{3.6cm}Y}
+  \toprule
+  通道 & 命名空间 & 主要用途 \\
+  \midrule
+  HTTP REST & \texttt{/api/v1} & 命令写入、列表查询、详情读取、附件上传协调。 \\
+  WebSocket & \texttt{/realtime}（Socket.IO） & 业务事件分发、订阅管理、媒体信令请求-响应、active speaker 广播、重连补偿。 \\
+  WebRTC 数据面 & 独立 UDP 端口段 & DTLS-SRTP 加密的 Opus 音频流，由 mediasoup Worker 终结，应用层不接触明文音频帧。 \\
+  \bottomrule
+\end{tabularx}
+
+\subsection{HTTP API 通用约定}
+
+\subsubsection{基础约定}
+\begin{itemize}
+  \item API 前缀固定为 \texttt{/api/v1}；
+  \item 请求与响应使用 JSON；上传文件使用预签名上传或 \texttt{multipart/form-data} 初始化接口；
+  \item ID 使用 UUID v4 字符串；
+  \item 时间使用 ISO 8601 UTC 字符串；
+  \item 认证使用 access token + refresh token，access token 放在 \texttt{Authorization: Bearer <token>}；
+  \item 所有写请求必须携带或由服务端生成 \texttt{X-Request-Id}，用于审计与排错。
+\end{itemize}
+
+\subsubsection{统一响应信封}
+成功响应：
+
+\begin{verbatim}
+{
+  "data": { ... },
+  "request_id": "uuid",
+  "server_time": "2026-05-01T12:00:00.000Z"
+}
+\end{verbatim}
+
+失败响应：
+
+\begin{verbatim}
+{
+  "error": {
+    "code": "PERMISSION_DENIED",
+    "message": "没有权限执行该操作",
+    "details": { ... }
+  },
+  "request_id": "uuid",
+  "server_time": "2026-05-01T12:00:00.000Z"
+}
+\end{verbatim}
+
+由 \texttt{ApiResponseInterceptor} 统一包装成功响应，\texttt{ApiExceptionFilter} 统一包装失败响应，业务代码只抛出 \texttt{AppError(code, message, httpStatus)}。
+
+\subsubsection{错误码}
+
+\noindent\begin{tabularx}{\textwidth}{L{1.4cm}L{4cm}Y}
+  \toprule
+  HTTP & 错误码 & 说明 \\
+  \midrule
+  400 & \texttt{VALIDATION\_FAILED} & 请求字段格式、长度或枚举值非法。 \\
+  401 & \texttt{AUTH\_REQUIRED} & 未登录或 access token 无效。 \\
+  401 & \texttt{INVALID\_CREDENTIALS} & 登录凭据无效（用户名或密码错误）。 \\
+  403 & \texttt{PERMISSION\_DENIED} & 已登录但无权访问资源或执行动作。 \\
+  404 & \texttt{RESOURCE\_NOT\_FOUND} & 资源不存在，或为了防止泄露而按不存在处理。 \\
+  409 & \texttt{CONFLICT} & 唯一约束、重复申请、重复加入、幂等冲突。 \\
+  413 & \texttt{PAYLOAD\_TOO\_LARGE} & 消息或附件超过限制。 \\
+  429 & \texttt{RATE\_LIMITED} & 登录、消息或邀请等操作触发限流。 \\
+  500 & \texttt{INTERNAL\_ERROR} & 服务端未知错误。 \\
+  503 & \texttt{DEPENDENCY\_UNAVAILABLE} & 文件、通知、验证等依赖不可用。 \\
+  \bottomrule
+\end{tabularx}
+
+错误码常量在 \texttt{@eiscord/shared} 中统一定义，前后端共享。
+
+\subsubsection{分页与幂等}
+分页使用不透明游标：
+
+\begin{verbatim}
+{
+  "items": [ ... ],
+  "next_cursor": "opaque-cursor",
+  "has_more": true
+}
+\end{verbatim}
+
+幂等约束：消息发送、通知已读、好友申请处理等写操作必须支持幂等。客户端发送消息携带 \texttt{client\_message\_id}，服务端在发送者与目标会话范围内保证唯一；重复请求返回首次成功写入的消息；幂等键对应的请求体不一致时返回 \texttt{CONFLICT}。
+
+\subsection{HTTP 端点清单}
+
+下表按业务模块分组列出所有 P0 与 P1 端点。关键端点用 \texttt{CommandSpec} 命令补充输入输出与权限要求。
+
+\subsubsection{认证与账号}
+
+\noindent\begin{tabularx}{\textwidth}{L{6.4cm}L{2.2cm}Y}
+  \toprule
+  端点 & 优先级 & 用途与 FR \\
+  \midrule
+  \texttt{POST /auth/register} & P0 & 注册新用户，FR-01。 \\
+  \texttt{POST /auth/login} & P0 & 登录并返回会话摘要，FR-02。 \\
+  \texttt{POST /auth/refresh} & P0 & 用 refresh token 换取新的 access token。 \\
+  \texttt{POST /auth/logout} & P0 & 撤销当前会话，必要时触发 \texttt{PresenceChanged}。 \\
+  \texttt{POST /auth/password-reset} & P1 & 密码重置，FR-03。 \\
+  \bottomrule
+\end{tabularx}
+
+\CommandSpec{\texttt{POST /auth/login}}{
+  以用户名/邮箱/手机号 + 密码换取会话与摘要数据，承担 FR-02。
+}{
+  \texttt{\{ login\_identifier, password, client: \{ device\_name, timezone \} \}}
+}{
+  \texttt{\{ access\_token, refresh\_token, user, friends\_summary, servers, unread, notifications\_summary \}}
+}{
+  公开接口（无需登录），但按账号 + IP 限流。
+}{
+  账号不存在或密码错误返回 \texttt{INVALID\_CREDENTIALS}；账号禁用或验证未完成不创建会话；触发账号 IP 维度限流返回 \texttt{RATE\_LIMITED}。
+}{
+  \texttt{PresenceChanged}（登录后）、\texttt{UnreadUpdated}（必要时）。
+}{
+  \texttt{User}、\texttt{AuthSession}、\texttt{AuditLog}。
+}
+
+\subsubsection{用户与在线状态}
+
+\noindent\begin{tabularx}{\textwidth}{L{6.4cm}L{2.2cm}Y}
+  \toprule
+  端点 & 优先级 & 用途与 FR \\
+  \midrule
+  \texttt{GET /users/me} & P0 & 当前用户资料、账号状态与可见配置。 \\
+  \texttt{PATCH /users/me/profile} & P0 & 修改昵称、头像附件、签名，FR-04。 \\
+  \texttt{PATCH /users/me/presence} & P0 & 维护在线状态，FR-05。 \\
+  \bottomrule
+\end{tabularx}
+
+\subsubsection{好友与私聊}
+
+\noindent\begin{tabularx}{\textwidth}{L{6.4cm}L{2.2cm}Y}
+  \toprule
+  端点 & 优先级 & 用途与 FR \\
+  \midrule
+  \texttt{GET /friends} & P0 & 好友列表与可见在线状态。 \\
+  \texttt{POST /friend-requests} & P0 & 发起好友申请，FR-06。 \\
+  \texttt{POST /friend-requests/\{id\}/accept} & P0 & 接受申请，FR-06。 \\
+  \texttt{POST /friend-requests/\{id\}/reject} & P0 & 拒绝申请，FR-06。 \\
+  \texttt{GET /dm-conversations} & P0 & 私聊列表与最近消息摘要。 \\
+  \texttt{GET /dm-conversations/\{id\}/messages} & P0 & 私聊历史，FR-07、FR-14。 \\
+  \texttt{POST /dm-conversations/\{id\}/messages} & P0 & 发送私聊消息，FR-07、FR-13。 \\
+  \bottomrule
+\end{tabularx}
+
+\subsubsection{社区与成员}
+
+\noindent\begin{tabularx}{\textwidth}{L{6.4cm}L{2.2cm}Y}
+  \toprule
+  端点 & 优先级 & 用途与 FR \\
+  \midrule
+  \texttt{POST /servers} & P0 & 创建社区，FR-08。 \\
+  \texttt{GET /servers} & P0 & 当前用户已加入社区列表。 \\
+  \texttt{GET /servers/\{id\}} & P0 & 社区详情、可见频道、成员摘要、权限摘要。 \\
+  \texttt{POST /servers/join} & P0 & 凭邀请码加入社区，FR-09。 \\
+  \texttt{POST /servers/\{id\}/leave} & P0 & 退出社区，FR-09。 \\
+  \texttt{GET /servers/\{id\}/members} & P0 & 成员列表，内置 Action \texttt{VIEW\_MEMBERS}。 \\
+  \texttt{PATCH /servers/\{id\}/members/\{member\_id\}} & P0 & 成员管理，FR-10。 \\
+  \bottomrule
+\end{tabularx}
+
+\CommandSpec{\texttt{POST /servers}}{
+  创建社区并同时建立所有者成员、默认角色、默认文本频道，承担 FR-08。
+}{
+  \texttt{\{ name, description, icon\_attachment\_id \}}
+}{
+  \texttt{\{ server, owner\_membership, default\_role, default\_channel \}}
+}{
+  已登录用户。
+}{
+  名称长度超限返回 \texttt{VALIDATION\_FAILED}；图标 \texttt{Attachment} 不属于本人或状态非法返回 \texttt{VALIDATION\_FAILED}；事务任一步失败回滚不留下不完整社区。
+}{
+  \texttt{MemberJoined}（所有者首位成员）、\texttt{ChannelChanged}（默认频道）。
+}{
+  \texttt{Server}、\texttt{Membership}、\texttt{Role}、\texttt{Channel}、\texttt{AuditLog}。
+}
+
+\subsubsection{频道}
+
+\noindent\begin{tabularx}{\textwidth}{L{6.4cm}L{2.2cm}Y}
+  \toprule
+  端点 & 优先级 & 用途与 FR \\
+  \midrule
+  \texttt{POST /servers/\{server\_id\}/channels} & P0 & 创建文本或语音频道，FR-11。 \\
+  \texttt{PATCH /channels/\{id\}} & P0 & 编辑名称、主题、排序、权限覆盖。 \\
+  \texttt{DELETE /channels/\{id\}} & P0 & 删除频道。 \\
+  \texttt{GET /channels/\{id\}/messages} & P0 & 历史消息，FR-14。 \\
+  \texttt{POST /channels/\{id\}/messages} & P0 & 发送消息，FR-13。 \\
+  \bottomrule
+\end{tabularx}
+
+\subsubsection{消息与附件}
+
+\noindent\begin{tabularx}{\textwidth}{L{6.4cm}L{2.2cm}Y}
+  \toprule
+  端点 & 优先级 & 用途与 FR \\
+  \midrule
+  \texttt{POST /attachments/init} & P0 & 创建附件上传意图，返回预签名地址。 \\
+  \texttt{POST /attachments/\{id\}/complete} & P0 & 上传完成回调与元数据校验。 \\
+  \texttt{GET /attachments/\{id\}} & P0 & 受保护下载地址，内置 Action \texttt{ACCESS\_ATTACHMENT}。 \\
+  \texttt{POST /messages/\{id\}/delete} & P0 & 撤回或管理员删除消息，FR-15。 \\
+  \texttt{POST /read-states} & P0 & 标记已读，FR-14。 \\
+  \bottomrule
+\end{tabularx}
+
+\CommandSpec{\texttt{POST /channels/\{id\}/messages}}{
+  在文本频道发送消息（文本 / 附件 / 提及），承担 FR-13。
+}{
+  \texttt{\{ content, client\_message\_id, attachment\_ids, mention\_user\_ids \}}
+}{
+  \texttt{\{ message: \{ id, sender, content, created\_at, attachments, mentions \} \}}
+}{
+  频道 \texttt{VIEW\_CHANNEL} + \texttt{SEND\_MESSAGE} 权限。
+}{
+  空消息或超长返回 \texttt{VALIDATION\_FAILED}；附件非法返回 \texttt{VALIDATION\_FAILED}；无权返回 \texttt{PERMISSION\_DENIED}；\texttt{client\_message\_id} 重复返回首次写入结果；幂等键请求体冲突返回 \texttt{CONFLICT}。
+}{
+  \texttt{MessageCreated}、\texttt{UnreadUpdated}（接收方）、\texttt{NotificationCreated}（提及/订阅者）。
+}{
+  \texttt{Message}、\texttt{MessageMention}、\texttt{MessageAttachment}、\texttt{ReadState}、\texttt{Notification}。
+}
+
+\subsubsection{通知}
+
+\noindent\begin{tabularx}{\textwidth}{L{6.4cm}L{2.2cm}Y}
+  \toprule
+  端点 & 优先级 & 用途与 FR \\
+  \midrule
+  \texttt{GET /notifications} & P0 & 通知列表，支持 \texttt{is\_read} 过滤与游标分页。 \\
+  \texttt{POST /notifications/read} & P0 & 标记已读，支持 \texttt{mark\_all}，FR-18。 \\
+  \bottomrule
+\end{tabularx}
+
+\subsubsection{角色与权限}
+
+\noindent\begin{tabularx}{\textwidth}{L{6.6cm}L{2.2cm}Y}
+  \toprule
+  端点 & 优先级 & 用途与 FR \\
+  \midrule
+  \texttt{GET /servers/\{id\}/roles} & P0 & 社区角色列表。 \\
+  \texttt{POST /servers/\{id\}/roles} & P0 & 创建角色，FR-19。 \\
+  \texttt{PATCH /roles/\{id\}} & P0 & 修改角色，FR-19。 \\
+  \texttt{POST /servers/\{id\}/members/\{member\_id\}/roles} & P0 & 给成员分配角色。 \\
+  \texttt{DELETE /servers/\{id\}/members/\{member\_id\}/roles/\{role\_id\}} & P0 & 移除成员角色。 \\
+  \texttt{POST /permissions/check} & 内部 & 调试用权限校验入口，业务接口不依赖。 \\
+  \bottomrule
+\end{tabularx}
+
+\subsubsection{语音}
+
+语音 HTTP 接口承担命令型动作（加入/退出/状态更新/凭证续签），媒体协商通过 Socket 完成。
+
+\noindent\begin{tabularx}{\textwidth}{L{6.4cm}L{2.2cm}Y}
+  \toprule
+  端点 & 优先级 & 用途与 FR \\
+  \midrule
+  \texttt{POST /voice/channels/\{id\}/join} & P0 & 加入语音频道并签发媒体凭证，FR-16。 \\
+  \texttt{POST /voice/sessions/\{id\}/leave} & P0 & 离开语音频道。 \\
+  \texttt{PATCH /voice/sessions/\{id\}/state} & P0 & 切换静音、闭麦、连接状态，FR-17。 \\
+  \texttt{GET /voice/sessions/\{id\}/ice-servers} & P0 & 刷新 TURN 凭证。 \\
+  \bottomrule
+\end{tabularx}
+
+\CommandSpec{\texttt{POST /voice/channels/\{id\}/join}}{
+  加入语音频道并返回 mediasoup Router 能力、初始 Producer 与 TURN 凭证，承担 FR-16。
+}{
+  \texttt{\{ initial\_mute\_state, initial\_deafen\_state \}}
+}{
+  \texttt{\{ session\_id, channel\_id, media: \{ router\_rtp\_capabilities, active\_producers[], ice\_servers[], signaling\_channel \} \}}
+}{
+  频道 \texttt{VIEW\_CHANNEL} + \texttt{JOIN\_VOICE} 权限。
+}{
+  频道类型非 voice 返回 \texttt{VALIDATION\_FAILED}；已有有效语音会话推荐自动切换或返回明确冲突；30 秒内未完成媒体协商释放会话并广播 \texttt{VoiceMemberLeft(reason=signaling\_timeout)}。
+}{
+  \texttt{VoiceMemberJoined}、必要时旧频道 \texttt{VoiceMemberLeft}、媒体信令事件随后协商。
+}{
+  \texttt{VoiceSession}、mediasoup Router/Transport 运行期资源、Redis 索引键、\texttt{AuditLog}。
+}
+
+\subsection{Socket.IO 实时事件}
+
+\subsubsection{命名空间与握手}
+\begin{itemize}
+  \item 命名空间 \texttt{/realtime}；
+  \item 握手时携带 access token；
+  \item 服务端验证 token、加入 \texttt{user:\{user\_id\}} 房间、记录 \texttt{connection\_id}、\texttt{user\_id}、\texttt{connected\_at}、最近心跳；
+  \item token 无效、账号禁用或会话撤销时拒绝连接。
+\end{itemize}
+
+\subsubsection{订阅协议}
+客户端连接成功后按当前界面订阅上下文：
+
+\begin{verbatim}
+{
+  "event": "Subscribe",
+  "payload": { "scope_type": "channel", "scope_id": "uuid" }
+}
+\end{verbatim}
+
+服务端订阅前必须执行内置 Action \texttt{SUBSCRIBE\_REALTIME}：
+
+\noindent\begin{tabularx}{\textwidth}{L{2.4cm}L{4.4cm}Y}
+  \toprule
+  订阅范围 & 房间 & 权限要求 \\
+  \midrule
+  用户 & \texttt{user:\{user\_id\}} & 连接本人自动加入。 \\
+  私聊 & \texttt{dm:\{conversation\_id\}} & 是会话参与者。 \\
+  社区 & \texttt{server:\{server\_id\}} & 是社区有效成员。 \\
+  文本频道 & \texttt{channel:\{channel\_id\}} & 有查看频道权限。 \\
+  语音频道 & \texttt{voice:\{channel\_id\}} & 处于语音会话或有权查看语音成员列表。 \\
+  \bottomrule
+\end{tabularx}
+
+取消订阅使用 \texttt{Unsubscribe}；连接断开时服务端自动移除全部房间。
+
+\subsubsection{事件信封}
+
+\begin{verbatim}
+{
+  "event_id": "uuid",
+  "event_name": "MessageCreated",
+  "occurred_at": "2026-05-01T12:00:00.000Z",
+  "payload": { ... },
+  "request_id": "uuid"
+}
+\end{verbatim}
+
+客户端用 \texttt{event\_id} 去重。事件载荷只包含展示和增量更新所需摘要，不能成为越权读取的唯一来源。
+
+\subsection{业务事件清单}
+
+\EventSpec{\texttt{MessageCreated}}{
+  消息成功持久化并通过权限校验。
+}{
+  \texttt{\{ message\_id, scope\_type, channel\_id?, conversation\_id?, sender, content, attachments, mentions, created\_at \}}
+}{
+  私聊参与者或有权查看目标频道的成员。
+}{
+  插入消息、更新最近会话、刷新未读与通知角标。
+}{
+  正常网络下 1 秒内到达（NFR-01、AC-N1）；事件必须幂等。
+}
+
+\EventSpec{\texttt{MessageDeleted}}{
+  消息被发送者撤回或管理员删除。
+}{
+  \texttt{\{ message\_id, operation: 'retract' | 'delete', actor, deleted\_at \}}
+}{
+  仍有权查看原会话或频道的相关客户端。
+}{
+  把对应消息标为撤回或删除状态；重复接收不得恢复已删除消息。
+}{
+  幂等。
+}
+
+\EventSpec{\texttt{UnreadUpdated}}{
+  用户未读状态变化。
+}{
+  \texttt{\{ scope\_type, channel\_id?, conversation\_id?, unread\_count, last\_read\_message\_id \}}
+}{
+  未读状态所属用户的 \texttt{user:\{id\}} 房间。
+}{
+  更新角标与最近会话排序。
+}{
+  同步延迟不超过 2 秒（NFR-02）。
+}
+
+\EventSpec{\texttt{NotificationCreated}}{
+  好友申请、私聊新消息、频道提及或管理动作结果产生通知。
+}{
+  \texttt{\{ notification\_id, type, source\_type, source\_id, content\_preview, created\_at \}}
+}{
+  通知目标用户。
+}{
+  弹出提示、更新通知中心计数。
+}{
+  同步延迟不超过 2 秒；同 \texttt{dedupeKey} 不得重复生成。
+}
+
+\EventSpec{\texttt{PresenceChanged}}{
+  登录、离线、隐身、离开或手动切换状态。
+}{
+  \texttt{\{ user\_id, visible\_status, updated\_at \}}
+}{
+  目标用户好友、同社区可见成员与本人客户端。
+}{
+  更新头像角标、成员列表状态点。
+}{
+  隐身状态对他人按离线展示。
+}
+
+\EventSpec{\texttt{MemberJoined} / \texttt{MemberChanged} / \texttt{ChannelChanged} / \texttt{PermissionChanged}}{
+  社区成员、频道结构或权限规则发生变化。
+}{
+  分别包含 \texttt{server\_id}、相关资源 ID 与变化摘要；\texttt{PermissionChanged} 含 \texttt{change\_scope} 与 \texttt{affected\_user\_ids}。
+}{
+  目标社区中有权查看相关资源的在线成员；\texttt{PermissionChanged} 还要触达管理者客户端。
+}{
+  刷新成员列表、频道列表、权限摘要、可见管理入口；权限不可见时立即清理客户端缓存。
+}{
+  幂等；权限变化后无权用户必须从相关房间移除。
+}
+
+\EventSpec{\texttt{VoiceMemberJoined} / \texttt{VoiceMemberLeft} / \texttt{VoiceStateChanged}}{
+  语音频道成员加入、退出或状态切换。
+}{
+  \texttt{VoiceMemberJoined}: \texttt{\{ channel\_id, session\_id, member, mute\_state, deafen\_state, connection\_status, joined\_at \}}；\texttt{VoiceMemberLeft}: \texttt{\{ channel\_id, user\_id, reason, left\_at \}}；\texttt{VoiceStateChanged}: \texttt{\{ session\_id, channel\_id, user\_id, mute\_state, deafen\_state, connection\_status, media\_state, updated\_at \}}。
+}{
+  \texttt{voice:\{channel\_id\}} 房间成员。
+}{
+  更新成员状态点、控制条与 active speaker 列表。
+}{
+  状态变化同步时间不超过 3 秒（NFR-02、AC-N2）；\texttt{VoiceMemberLeft.reason} 取值：\texttt{manual\_leave | signaling\_timeout | worker\_died | permission\_lost}。
+}
+
+\EventSpec{\texttt{SyncState}}{
+  客户端 reconnect 成功后 emit \texttt{SyncState}（无载荷），服务端按订阅范围返回。
+}{
+  响应载荷：\texttt{\{ unread\_summary, notifications\_unread\_count, voice\_session\_status \}}。
+}{
+  仅触发 emit 的客户端 \texttt{user:\{user\_id\}} 房间。
+}{
+  对齐本地缓存；HTTP 接口仍是权威数据来源。
+}{
+  幂等；重复 emit 不得放大副作用。
+}
+
+\subsection{媒体信令事件}
+
+媒体信令事件均承载于 \texttt{voice:\{channel\_id\}} 房间，由客户端 mediasoup-client 与服务端 \texttt{MediaSignalingModule} 协商。请求-响应类事件复用 Socket.IO \texttt{ack} 机制。所有 Producer 创建必须 \texttt{kind === 'audio'}，视频与屏幕共享直接拒绝。
+
+\noindent\begin{tabularx}{\textwidth}{L{4.8cm}L{2cm}Y}
+  \toprule
+  事件 & 方向 & 用途与权限 \\
+  \midrule
+  \texttt{VoiceRouterCapabilities} & 双向 & 请求/响应 Router RTP capabilities；权限 \texttt{JOIN\_VOICE}。 \\
+  \texttt{VoiceTransportCreated} & 双向 & 创建 send 或 recv WebRtcTransport，返回 ICE/DTLS 参数；每会话各创建一次。 \\
+  \texttt{VoiceTransportConnect} & client → server & 客户端完成 ICE 后提交 DTLS 参数；校验 Transport 属于当前会话。 \\
+  \texttt{VoiceProducerCreated} & client → server / 服务端广播 & 客户端 produce 音轨，服务端校验 \texttt{SPEAK\_VOICE} 与 \texttt{kind === 'audio'} 后产生并广播。 \\
+  \texttt{VoiceConsumerCreated} & 双向 & 消费已存在 Producer；校验 \texttt{LISTEN\_VOICE}；服务端以 \texttt{paused=true} 创建 Consumer。 \\
+  \texttt{VoiceConsumerResumed} & client → server & 客户端本地 consume 完成后通知服务端 \texttt{consumer.resume()}。 \\
+  \texttt{VoiceProducerClosed} & server → 房间 & Producer 关闭原因：\texttt{manual\_leave | signaling\_timeout | worker\_died | permission\_lost}。 \\
+  \texttt{VoiceActiveSpeaker} & server → 房间 & AudioLevelObserver 触发；节流不超过每秒 2 次；停止说话时一次 \texttt{user\_id: null}。 \\
+  \bottomrule
+\end{tabularx}
+
+\subsection{客户端事件}
+
+\noindent\begin{tabularx}{\textwidth}{L{3cm}Y}
+  \toprule
+  事件 & 用途与服务端处理 \\
+  \midrule
+  \texttt{Subscribe} / \texttt{Unsubscribe} & 订阅/取消订阅私聊、社区、频道或语音房间；验证权限后加入/移除房间。 \\
+  \texttt{Heartbeat} & 保持连接和在线状态；更新 Redis 心跳，必要时发布 \texttt{PresenceChanged}。 \\
+  \texttt{SyncState} & 重连后请求补偿摘要；socket-client 在 reconnect 回调自动 emit。 \\
+  \texttt{TypingStarted} & P1 输入中提示；v1 可忽略或短期广播。 \\
+  媒体信令请求 & 见上节，复用 Socket ack。 \\
+  \bottomrule
+\end{tabularx}
+
+P0 写操作不通过客户端 Socket 事件直接执行，统一走 HTTP API，避免重复实现鉴权、校验与事务。
+
+\subsection{重连补偿}
+
+客户端重连后执行：
+
+\begin{enumerate}
+  \item 重新连接 \texttt{/realtime} 并加入 \texttt{user:\{user\_id\}}；
+  \item Socket client 自动 emit \texttt{SyncState}，服务端返回未读、通知、语音会话摘要；
+  \item 调用 \texttt{GET /servers}、\texttt{GET /dm-conversations}、\texttt{GET /notifications} 获取权威摘要；
+  \item 对当前打开的频道或私聊调用 \texttt{LoadMessages}，使用最后一条本地消息作为游标补齐；
+  \item 调用 \texttt{GET /servers/\{server\_id\}} 刷新可见频道与权限摘要；
+  \item 如果重连前处于语音频道，调用语音状态接口确认会话是否仍有效；不存在则提示用户重新加入。
+\end{enumerate}
+
+服务端事件只提供增量更新，客户端最终以 HTTP 查询结果为准。
+
+\subsection{性能与可靠性目标}
+
+\noindent\begin{tabularx}{\textwidth}{L{4.4cm}Y}
+  \toprule
+  指标 & 目标 \\
+  \midrule
+  文本消息端到端可见时间 & 正常网络下 1 秒内（NFR-01、AC-N1）。 \\
+  未读与通知同步 & 不超过 2 秒（NFR-02）。 \\
+  在线/语音状态同步 & 不超过 3 秒（NFR-02、AC-N2）。 \\
+  媒体协商完整时长 & \texttt{Join} 成功 → \texttt{media\_state=connected} P95 不超过 3 秒（AC-N2）。 \\
+  \texttt{VoiceActiveSpeaker} 延迟 & 端到端不超过 500 ms，节流每秒不超过 2 次。 \\
+  事件发布时机 & 必须在数据库事务提交后执行。 \\
+  事件幂等性 & 客户端 \texttt{event\_id} 去重，重复接收不得造成副作用。 \\
+  权限变化的事件下发 & 必须先将无权用户从相关房间移除，再发布后续事件。 \\
+  \bottomrule
+\end{tabularx}
+
+\subsection{接口到需求映射}
+
+\noindent\begin{tabularx}{\textwidth}{L{1.8cm}Y}
+  \toprule
+  FR & API / 事件 \\
+  \midrule
+  FR-01 & \texttt{POST /auth/register} \\
+  FR-02 & \texttt{POST /auth/login}、\texttt{PresenceChanged} \\
+  FR-04 & \texttt{PATCH /users/me/profile} \\
+  FR-05 & \texttt{PATCH /users/me/presence}、\texttt{PresenceChanged}、\texttt{Heartbeat} \\
+  FR-06 & \texttt{POST /friend-requests}、\texttt{POST /friend-requests/\{id\}/accept}、\texttt{NotificationCreated} \\
+  FR-07 & \texttt{GET/POST /dm-conversations/\{id\}/messages}、\texttt{MessageCreated} \\
+  FR-08 & \texttt{POST /servers}、\texttt{MemberJoined}、\texttt{ChannelChanged} \\
+  FR-09 & \texttt{POST /servers/join}、\texttt{POST /servers/\{id\}/leave}、\texttt{PermissionChanged} \\
+  FR-10 & \texttt{GET/PATCH /servers/\{id\}/members}、\texttt{MemberChanged} \\
+  FR-11 & \texttt{POST/PATCH/DELETE /channels}、\texttt{ChannelChanged} \\
+  FR-12 & 全部受控接口的 \texttt{PermissionGuard}、\texttt{PermissionChanged} \\
+  FR-13 & \texttt{POST /channels/\{id\}/messages}、\texttt{POST /dm-conversations/\{id\}/messages}、\texttt{MessageCreated} \\
+  FR-14 & \texttt{GET /channels/\{id\}/messages}、\texttt{POST /read-states}、\texttt{UnreadUpdated} \\
+  FR-15 & \texttt{POST /messages/\{id\}/delete}、\texttt{MessageDeleted} \\
+  FR-16 & \texttt{POST /voice/channels/\{id\}/join}、\texttt{POST /voice/sessions/\{id\}/leave}、\texttt{GET /voice/sessions/\{id\}/ice-servers} + 媒体信令事件 \\
+  FR-17 & \texttt{PATCH /voice/sessions/\{id\}/state}、\texttt{VoiceStateChanged}、\texttt{VoiceActiveSpeaker} \\
+  FR-18 & \texttt{GET /notifications}、\texttt{POST /notifications/read}、\texttt{NotificationCreated} \\
+  FR-19 & \texttt{POST/PATCH /roles}、成员角色接口 \\
+  FR-20 & 所有受控接口的服务端权限拦截 \\
+  \bottomrule
+\end{tabularx}
+
+\subsection{本章需求映射}
+\noindent\begin{tabularx}{\textwidth}{L{3cm}Y}
+  \toprule
+  本章承担 & 说明 \\
+  \midrule
+  FR-01 至 FR-20 & 接口端点、Socket 事件与媒体信令共同覆盖。 \\
+  NFR-01 至 NFR-04 & 性能与可靠性目标小节明确各事件的延迟与同步指标。 \\
+  AC-N1 至 AC-N2、AC-N6 & 文本/语音延迟与媒体协商耗时承担。 \\
+  AC-E5、AC-E7 & 接口层 \texttt{PermissionGuard} 与统一错误码承担。 \\
+  AC-E1、AC-E2、AC-E3、AC-E6 & 接口层 \texttt{VALIDATION\_FAILED}、\texttt{CONFLICT}、\texttt{RATE\_LIMITED}、\texttt{PAYLOAD\_TOO\_LARGE} 承担。 \\
+  \bottomrule
+\end{tabularx}
