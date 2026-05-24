@@ -59,6 +59,7 @@ def run_build(main_tex: Path, outdir: Path, auxdir: Path) -> int:
     cmd = [
         'latexmk',
         '-xelatex',
+        '-cd',
         '-synctex=1',
         '-interaction=nonstopmode',
         '-file-line-error',
@@ -76,6 +77,7 @@ def run_clean(main_tex: Path, outdir: Path, auxdir: Path) -> int:
     cmd = [
         'latexmk',
         '-C',
+        '-cd',
         f'-auxdir={auxdir}',
         f'-outdir={outdir}',
         str(main_tex)

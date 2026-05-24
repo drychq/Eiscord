@@ -6,7 +6,7 @@
 
 \begin{itemize}
   \item \textbf{业务完整性}：覆盖注册登录、好友私聊、社区频道、文本消息、通知未读、权限、语音状态同步与多人 Opus 音频媒体流的 P0 需求（FR-01 至 FR-20）。
-  \item \textbf{性能可达}：文本消息端到端可见时间不超过 1 秒（NFR-01）、未读与通知 2 秒内同步、语音状态 3 秒内同步（NFR-02）、媒体协商 P95 不超过 3 秒（AC-N2）、单房间 ≥ 4 人音频丢包率 ≤ 3\%、jitter ≤ 30 ms（AC-N6）。
+  \item \textbf{性能可达}：文本消息端到端可见时间不超过 1 秒（NFR-01）、未读与通知 2 秒内同步、语音状态 3 秒内同步（NFR-02）、媒体协商 P95 不超过 3 秒（AC-N2）、单房间 $\geq$ 4 人音频丢包率 $\leq$ 3\%、jitter $\leq$ 30 ms（AC-N6）。
   \item \textbf{权限收敛}：所有受控资源必须经过统一权限判断（FR-20、AC-04、AC-N4），不允许通过历史链接、附件地址或实时事件绕过授权。
   \item \textbf{媒体安全}：v1 通过 mediasoup SFU 提供 Opus 多人音频；服务端不录音、不混音、不转写；入站 Producer 强制 \texttt{kind === 'audio'}，视频与屏幕共享轨直接拒绝。
   \item \textbf{可观测性}：HTTP 请求、Socket 事件与审计日志均携带 \texttt{request\_id} 或 \texttt{event\_id}，5 分钟内可定位失败请求（NFR-12 至 NFR-14）。
@@ -170,7 +170,7 @@ Socket.IO 连接建立后按下列流程进入业务订阅：
   \item 新加入成员依据 \texttt{active\_producers} 主动 consume 已存在 Producer；服务端 Consumer 以 paused 创建，客户端本地 consume 后发送 \texttt{VoiceConsumerResumed} 恢复 RTP。
   \item mediasoup 直接在 Worker 内中继 SRTP 音频，不经过 Application Services。
   \item 切换静音 → 服务端调用 \texttt{Producer.pause/resume} + 广播 \texttt{VoiceStateChanged}；闭麦由客户端关闭本地 Consumer 解码并同步 \texttt{deafenState}。
-  \item mediasoup AudioLevelObserver 上报当前最强声源，服务端节流（≤ 2 次/秒）后广播 \texttt{VoiceActiveSpeaker}。
+  \item mediasoup AudioLevelObserver 上报当前最强声源，服务端节流（$\leq$ 2 次/秒）后广播 \texttt{VoiceActiveSpeaker}。
   \item 用户主动离开或断线 → 服务端关闭 Transport、清理运行期引用、广播 \texttt{VoiceProducerClosed} 与 \texttt{VoiceMemberLeft}。
   \item mediasoup Worker 崩溃 → 服务端结束受影响 \texttt{VoiceSession}，广播 \texttt{worker\_died}；客户端收到后自动重新加入并创建新 Transport/Producer。
 \end{enumerate}
@@ -255,21 +255,21 @@ MVP 单实例部署的运行环境拓扑如下：
 
 \begin{verbatim}
 [ Browser ]
-   │  HTTPS / WSS
-   ▼
-[ Reverse Proxy or Vite dev server ]   ← /api/v1 + /realtime
-   │
-   ▼
+   |  HTTPS / WSS
+   v
+[ Reverse Proxy or Vite dev server ]   <- /api/v1 + /realtime
+   |
+   v
 [ apps/api (NestJS) ]
-   │   ├── REST /api/v1
-   │   ├── Socket.IO /realtime
-   │   └── Spawn child process → [ apps/media (mediasoup Worker) ]
-   │
-   ├── pg → [ PostgreSQL ]
-   ├── ioredis → [ Redis ]
-   └── S3 SDK → [ MinIO ]
+   |   +-- REST /api/v1
+   |   +-- Socket.IO /realtime
+   |   \-- Spawn child process -> [ apps/media (mediasoup Worker) ]
+   |
+   +-- pg -> [ PostgreSQL ]
+   +-- ioredis -> [ Redis ]
+   \-- S3 SDK -> [ MinIO ]
 
-[ coturn ]  ← UDP 3478 / TLS 5349
+[ coturn ]  <- UDP 3478 / TLS 5349
 [ apps/media RTC UDP 40000-40100 ]
 \end{verbatim}
 

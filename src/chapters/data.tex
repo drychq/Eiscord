@@ -19,29 +19,29 @@
 
 \begin{verbatim}
 [ 账号域 ]
-  User ─┬─ AuthSession (refresh token, 多设备)
-        ├─ Attachment (avatar / message / server_icon)
-        └─ AuditLog (actor)
+  User --+-- AuthSession (refresh token, 多设备)
+         +-- Attachment (avatar / message / server_icon)
+         \-- AuditLog (actor)
 
 [ 社交域 ]
-  User ─┬─ Friendship (requester/addressee)
-        └─ DirectConversation (participantA/B) ─ Message (scope=dm)
+  User --+-- Friendship (requester/addressee)
+         \-- DirectConversation (participantA/B) -- Message (scope=dm)
 
 [ 社区域 ]
-  Server ─┬─ Membership ─ MembershipRole ─ Role
-          ├─ Channel ─ PermissionOverwrite (role/member)
-          └─ Invitation
+  Server --+-- Membership -- MembershipRole -- Role
+           +-- Channel -- PermissionOverwrite (role/member)
+           \-- Invitation
 
 [ 消息域 ]
-  Channel/DM ── Message ──┬── MessageMention (user)
-                          ├── MessageAttachment (attachment)
-                          └── ReadState (user)
+  Channel/DM --- Message ---+--- MessageMention (user)
+                            +--- MessageAttachment (attachment)
+                            \--- ReadState (user)
 
 [ 通知域 ]
-  User ── Notification (source resource)
+  User --- Notification (source resource)
 
 [ 语音域 ]
-  Channel(type=voice) ── VoiceSession (one active per user)
+  Channel(type=voice) --- VoiceSession (one active per user)
 \end{verbatim}
 
 \subsection{核心实体}

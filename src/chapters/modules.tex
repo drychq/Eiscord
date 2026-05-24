@@ -92,7 +92,7 @@
   HTTP：\texttt{POST /servers/\{server\_id\}/channels}、\texttt{PATCH /channels/\{channel\_id\}}、\texttt{DELETE /channels/\{channel\_id\}}。\par
   实时：发布 \texttt{ChannelChanged}（创建/编辑/排序/删除）、\texttt{PermissionChanged}（覆盖规则变化）。
 }{
-  写入 \texttt{Channel}（\texttt{type ∈ \{text, voice\}}）与 \texttt{PermissionOverwrite}；频道列表按用户权限过滤；删除后禁止继续发送消息或加入语音状态。
+  写入 \texttt{Channel}（\texttt{type} $\in$ \texttt{\{text, voice\}}）与 \texttt{PermissionOverwrite}；频道列表按用户权限过滤；删除后禁止继续发送消息或加入语音状态。
 }{
   依赖 \texttt{PermissionsModule}、\texttt{RealtimeModule}、\texttt{AuditModule}；频道排序使用 \texttt{sortOrder} 字段，避免连续整数序列下并发写冲突；频道删除不级联删除历史消息，但置 \texttt{Channel.status='deleted'} 后不允许新建消息或语音会话。
 }
@@ -194,7 +194,7 @@
 状态字段包括 \texttt{muteState}、\texttt{deafenState}、\texttt{connectionStatus}（\texttt{CONNECTING/CONNECTED/RECONNECTING/DISCONNECTED}）、\texttt{mediaState}（\texttt{IDLE/NEGOTIATING/CONNECTED/RECONNECTING/FAILED}）；静音切换 = 服务端调用 mediasoup \texttt{Producer.pause/resume}；闭麦 = 客户端关闭所有 Consumer 音频元素并标记 \texttt{deafenState}；状态可达时间不超过 3 秒（NFR-02、AC-N2）。
 
 \paragraph{媒体信令拓扑}
-1 个 mediasoup Worker 进程池 → 每个语音频道分配 1 个 Router → 每个用户 1 个 send Transport + 1 个 recv Transport → 每个发言者 1 个 audio Producer，每个监听者按发言者数量创建 Consumer。active speaker 检测使用 AudioLevelObserver，服务端节流（≤ 2 次/秒）后广播 \texttt{VoiceActiveSpeaker}。
+1 个 mediasoup Worker 进程池 → 每个语音频道分配 1 个 Router → 每个用户 1 个 send Transport + 1 个 recv Transport → 每个发言者 1 个 audio Producer，每个监听者按发言者数量创建 Consumer。active speaker 检测使用 AudioLevelObserver，服务端节流（$\leq$ 2 次/秒）后广播 \texttt{VoiceActiveSpeaker}。
 
 \subsection{实时网关模块}
 
