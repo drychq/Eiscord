@@ -199,7 +199,7 @@
 ### 状态同步 FR-17
 
 - 接口：`UpdateVoiceState`
-- 状态：静音 `muteState`、闭麦 `deafenState`、连接状态 `connectionStatus`（`connecting`/`connected`/`disconnected`）、媒体状态 `mediaState`（`idle | negotiating | connected | reconnecting | failed`）。
+- 状态：静音 `muteState`、闭麦 `deafenState`、连接状态 `connectionStatus`（`CONNECTING`/`CONNECTED`/`RECONNECTING`/`DISCONNECTED`）、媒体状态 `mediaState`（`IDLE | NEGOTIATING | CONNECTED | RECONNECTING | FAILED`）。
 - 静音切换 = 服务端调用 mediasoup `Producer.pause/resume`；闭麦 = 客户端关闭所有 Consumer 音频元素并标记 `deafenState`。
 - 事件：`VoiceStateChanged`、必要时 `VoiceMemberLeft`、`VoiceProducerClosed`。
 - 同步目标：同语音频道成员和有权查看该语音频道成员列表的用户，状态可达时间不超过 3 秒。

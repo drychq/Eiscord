@@ -290,6 +290,20 @@
 
 状态变化同步时间不超过 3 秒。
 
+### SyncState
+
+触发：客户端 reconnect 成功后 emit `SyncState`（无载荷），服务端按订阅范围生成增量摘要并返回；作为 HTTP 拉取（`GET /servers`、`GET /dm-conversations`、`GET /notifications`）之外的快速补偿通道。
+
+响应载荷至少包含：
+
+- 用户当前订阅的频道与私聊未读摘要。
+- 通知未读总数。
+- 当前是否仍持有有效 `VoiceSession`。
+
+接收方：仅触发 emit 的客户端 `user:{user_id}` 房间。客户端依据响应对齐本地缓存。事件必须幂等，重复 emit 不得放大副作用。
+
+`SyncState` 用于在重连后快速对齐摘要；HTTP 接口仍是权威数据来源。客户端 `socket-client` 在 reconnect 回调中自动 emit，业务代码无需手动调用。
+
 ## 媒体信令事件
 
 媒体信令事件均承载于 `voice:{channel_id}` 房间，由客户端 mediasoup-client 与服务端 `MediaSignalingModule` 协商。请求-响应类事件复用 Socket.IO `ack` 机制，事件信封中的 `request_id` 关联客户端请求与服务端响应。所有 Producer 创建必须 `kind === 'audio'`，video 与 screen 直接拒绝。
@@ -451,6 +465,7 @@
 | `Subscribe` | 订阅私聊、社区、频道或语音房间。 | 验证权限后加入房间。 |
 | `Unsubscribe` | 取消订阅。 | 移除房间。 |
 | `Heartbeat` | 保持连接和在线状态。 | 更新 Redis 心跳，必要时发布状态变化。 |
+| `SyncState` | 重连后请求服务端补偿订阅范围内的状态摘要。 | 校验身份后返回服务端事件 `SyncState`（见 § 服务端事件 § SyncState）；由 `socket-client` 在 reconnect 回调中自动 emit，业务代码无需手动调用。 |
 | `TypingStarted` | 输入中提示，P1 增强。 | v1 可忽略或只在当前会话内短期广播。 |
 
 P0 写操作不通过客户端 Socket 事件直接执行，统一走 HTTP API，避免重复实现鉴权、校验和事务。
@@ -466,6 +481,8 @@ P0 写操作不通过客户端 Socket 事件直接执行，统一走 HTTP API，
 5. 如果重连前处于语音频道，调用语音状态接口确认会话是否仍有效。
 
 服务端事件只提供增量更新，客户端最终以 HTTP 查询结果为准。
+
+此外，服务端通过 `SyncState` 事件（见 § 服务端事件 § SyncState）作为 HTTP 拉取之外的补偿通道：`socket-client` 在 reconnect 后自动 emit，服务端返回未读、通知与语音会话状态摘要，对齐流程不依赖业务代码主动调用。
 
 ## 性能与可靠性
 

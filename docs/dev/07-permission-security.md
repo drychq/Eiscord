@@ -30,6 +30,25 @@
 
 私聊权限不走社区角色，按会话参与者和好友关系判断。
 
+## PermissionBit vs PermissionAction
+
+代码中存在两套相关但不同的权限标识体系：
+
+- **PermissionBit** — 11 个 bitset 标志（见上表），存储在 `Role.permissionBits` 与 `PermissionOverwrite.allowBits/denyBits`，**可分配给角色或频道覆盖**。
+- **PermissionAction** — 14 个权限校验动作枚举（`apps/api/src/common/permissions/permission.types.ts`），是服务端 `PermissionGuard` 与 `@RequirePermission` 装饰器的入口动作名。
+
+其中 11 个 Action 与 11 个 Bit 一一对应（`VIEW_CHANNEL` / `SEND_MESSAGE` / `MANAGE_MESSAGE` / `MANAGE_CHANNEL` / `JOIN_VOICE` / `SPEAK_VOICE` / `LISTEN_VOICE` / `MANAGE_MEMBER` / `MANAGE_ROLE` / `CREATE_INVITE` / `VIEW_AUDIT`），守卫按 bitset 决定允许/拒绝。
+
+另外 3 个 Action 是**内置动作**，没有对应 Bit，不能通过角色分配，由系统按资源关系自动判定：
+
+| 内置 Action | 触发位置 | 判定逻辑 |
+|---|---|---|
+| `ACCESS_ATTACHMENT` | `GET /attachments/:id` | 校验当前用户是否对附件所属业务资源（消息所属频道或私聊）有可见权限。 |
+| `SUBSCRIBE_REALTIME` | Socket.IO 订阅前置 | 按订阅范围（user/dm/server/channel/voice）走对应可见性校验。 |
+| `VIEW_MEMBERS` | `GET /servers/:id/members` | 当前用户必须是该社区有效成员（`memberStatus !== removed/banned`）。 |
+
+内置 Action 不通过 `Role.permissionBits` 调整；如需更细粒度的成员列表查看控制，应在 service 层引入额外字段，而非扩展 Bit 集合。
+
 ## 角色层级
 
 | 角色类别 | 规则 |
@@ -97,7 +116,7 @@ target_resource
 
 ### 凭证保护
 
-- 密码使用 Argon2id 或 bcrypt 存储，不保存明文。
+- 密码使用 PBKDF2-SHA256（310,000 迭代，Node 内建 `crypto.pbkdf2Sync`）存储，不保存明文。
 - access token 短有效期，refresh token 长有效期并可撤销。
 - 日志不得记录明文密码、完整 token、完整验证码或完整敏感凭证。
 - 登录失败记录审计，并按账号和 IP 维度限流。

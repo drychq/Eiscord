@@ -82,14 +82,15 @@ apps/web/src/
     channels/
     messages/
     notifications/
-    permissions/
     voice/
   shared/
     api/                  # HTTP client、Socket client、错误处理
     components/           # 通用按钮、弹窗、表单、列表
     hooks/
+    state/                # Zustand store：auth、workspace、theme、toast
     styles/
     types/
+    utils/                # 错误码映射、用户名颜色等通用工具
 ```
 
 状态管理采用 TanStack Query 处理服务端数据缓存，Zustand 处理当前选择的社区、频道、语音连接面板和本地 UI 状态。实时事件进入后只更新有权可见的查询缓存和本地状态。
@@ -98,7 +99,7 @@ apps/web/src/
 
 `packages/shared` 输出以下内容：
 
-- 枚举：`ChannelType`、`PresenceStatus`、`FriendshipStatus`、`MessageVisibility`、`VoiceConnectionStatus`、`VoiceMediaState`（`idle | negotiating | connected | reconnecting | failed`）、`NotificationType`。
+- 枚举：`ChannelType`、`PresenceStatus`、`FriendshipStatus`、`MessageVisibility`、`VoiceConnectionStatus`、`VoiceMediaState`（`IDLE | NEGOTIATING | CONNECTED | RECONNECTING | FAILED`）、`NotificationType`。
 - DTO schema：使用 Zod 定义 HTTP 请求、响应和 WebSocket 事件载荷。
 - 事件名常量：与 SRS 保持一致，例如 `MessageCreated`、`UnreadUpdated`、`PermissionChanged`，并新增媒体信令事件 `VoiceRouterCapabilities`、`VoiceTransportCreated`、`VoiceTransportConnect`、`VoiceProducerCreated`、`VoiceConsumerCreated`、`VoiceConsumerResumed`、`VoiceProducerClosed`、`VoiceActiveSpeaker`。
 - 错误码常量：统一映射 HTTP 状态和前端提示。

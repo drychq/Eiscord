@@ -92,7 +92,7 @@ Conventional Commits，中文描述: `feat:`, `fix:`, `docs:`, `chore:`, `refact
 - [ ] 关键操作记录 AuditLog（登录失败、权限拒绝、成员管理、频道/角色变更、消息删除）
 - [ ] 实时事件在事务提交后发布
 - [ ] UUID PKs，ISO 8601 时间戳
-- [ ] 密码使用 Argon2id，不记录明文
+- [ ] 密码使用 PBKDF2-SHA256（310,000 迭代，Node 内建 `crypto.pbkdf2Sync`），不记录明文
 
 ## 参考文档
 
