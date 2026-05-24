@@ -1,1 +1,287 @@
 \section{系统设计概述}
+
+\subsection{设计目标}
+
+系统围绕"社区 + 频道 + 实时互动"组织，目标是在课程项目范围内交付一个可运行、可演示、可验收的 MVP。架构必须同时满足以下设计目标，每个目标均对应 SRS 中的需求或验收编号：
+
+\begin{itemize}
+  \item \textbf{业务完整性}：覆盖注册登录、好友私聊、社区频道、文本消息、通知未读、权限、语音状态同步与多人 Opus 音频媒体流的 P0 需求（FR-01 至 FR-20）。
+  \item \textbf{性能可达}：文本消息端到端可见时间不超过 1 秒（NFR-01）、未读与通知 2 秒内同步、语音状态 3 秒内同步（NFR-02）、媒体协商 P95 不超过 3 秒（AC-N2）、单房间 ≥ 4 人音频丢包率 ≤ 3\%、jitter ≤ 30 ms（AC-N6）。
+  \item \textbf{权限收敛}：所有受控资源必须经过统一权限判断（FR-20、AC-04、AC-N4），不允许通过历史链接、附件地址或实时事件绕过授权。
+  \item \textbf{媒体安全}：v1 通过 mediasoup SFU 提供 Opus 多人音频；服务端不录音、不混音、不转写；入站 Producer 强制 \texttt{kind === 'audio'}，视频与屏幕共享轨直接拒绝。
+  \item \textbf{可观测性}：HTTP 请求、Socket 事件与审计日志均携带 \texttt{request\_id} 或 \texttt{event\_id}，5 分钟内可定位失败请求（NFR-12 至 NFR-14）。
+  \item \textbf{可演示性}：本地通过单条 \texttt{pnpm setup}、\texttt{pnpm dev} 命令拉起完整依赖与服务，配合 \texttt{prisma/seed.ts} 提供幂等演示数据。
+\end{itemize}
+
+\subsection{技术栈选型}
+
+系统采用 TypeScript 单仓库方案，前后端共享类型与 Zod 校验规则，降低接口漂移风险。固定选型如下：
+
+\noindent\begin{tabularx}{\textwidth}{L{3.6cm}L{3.4cm}Y}
+  \toprule
+  层级 & 固定选型 & 选择理由 \\
+  \midrule
+  Web 客户端 & React + TypeScript + Vite & 高交互界面开发效率高，热重载启动快，适合频道列表、消息流、权限管理等场景。 \\
+  服务端 & NestJS + TypeScript & 模块边界清晰，依赖注入与守卫机制天然契合分模块开发。 \\
+  ORM & Prisma & 与 PostgreSQL 结合稳定，迁移、类型生成与关系建模成本低。 \\
+  主数据库 & PostgreSQL & 支持事务、唯一约束、部分索引与复杂关系，适合消息、权限与审计数据。 \\
+  缓存与状态 & Redis & 承载会话摘要、在线状态、Socket 房间辅助状态、限流与短期去重。 \\
+  实时通信 & Socket.IO & 提供命名空间、房间、自动重连与 ACK 语义，满足消息、未读与状态同步。 \\
+  对象存储 & MinIO/S3 兼容接口 & 本地可运行，后续可替换为云端 S3 兼容存储。 \\
+  媒体 SFU & mediasoup & 自托管 TypeScript Worker 提供多人音频路由，配合 mediasoup-client 完成浏览器侧协商。 \\
+  ICE/TURN & coturn & 提供 STUN/TURN 与短 TTL HMAC 凭证，覆盖对称 NAT 场景。 \\
+  本地编排 & Docker Compose & 一条命令拉起 PostgreSQL、Redis、MinIO 与可选 mediasoup/coturn 服务。 \\
+  测试 & Vitest、RTL、Jest、Supertest、Playwright、k6 & 分别覆盖前端组件、后端单测/API、端到端流程与负载压测。 \\
+  \bottomrule
+\end{tabularx}
+
+\subsection{仓库结构}
+
+仓库采用 pnpm workspace 组织，前后端、共享包与基础设施配置在同一 Git 仓库下管理：
+
+\begin{verbatim}
+Eiscord/
+  apps/
+    web/                  # React + Vite 客户端
+    api/                  # NestJS HTTP API 与 Socket.IO 网关
+    media/                # mediasoup Worker 进程入口（API spawn 的子进程）
+  packages/
+    shared/               # 共享类型、枚举、DTO Zod schema、事件载荷类型
+    config/               # eslint、tsconfig、prettier 等共享配置
+  prisma/
+    schema.prisma         # Prisma 数据模型
+    migrations/           # 数据库迁移
+    seed.ts               # 本地演示数据
+  docker/
+    minio/                # 本地对象存储初始化配置
+    postgres/             # 数据库初始化配置
+    coturn/               # TURN 服务器配置 turnserver.conf
+  docs/
+    dev/                  # 开发方案文档集（本 SDD 的源内容）
+    srs/                  # 软件需求规格说明书（独立分支）
+    sdd/                  # 软件设计说明书（即本文档所在分支）
+  docker-compose.yml
+  package.json
+  pnpm-workspace.yaml
+\end{verbatim}
+
+\subsection{逻辑分层}
+
+系统在逻辑上分为四层，加上独立的媒体平面，构成"控制面 + 数据面"的双平面架构：
+
+\begin{verbatim}
+Browser
+  |
+  | HTTP JSON / Socket.IO              WebRTC DTLS-SRTP (UDP, TURN 兜底)
+  v                                                |
+API Gateway Layer                                  |
+  - Auth guard                                     |
+  - Request validation                             |
+  - Permission guard                               |
+  - Rate limit                                     |
+  v                                                v
+Application Services                  Media Plane
+  - Auth / Users / Friends              - Media Signaling (Voice)
+  - Servers / Channels / Permissions    - mediasoup Workers
+  - Messages / Notifications / Voice      (Router/Transport/Producer
+  |                                        /Consumer/AudioLevelObserver)
+  v                                     - coturn (STUN/TURN)
+Domain and Persistence                  ^
+  - Prisma repositories                 |
+  - PostgreSQL transactions             | 信令复用 /realtime Socket
+  - Redis presence/cache + voice keys --+
+  - MinIO object metadata linkage
+  |
+  v
+External Services
+  - Object storage / Mail / SMS / 日志监控
+\end{verbatim}
+
+HTTP API 承担命令型业务动作；Socket.IO 承担状态分发、订阅与媒体信令；WebRTC 数据面由 mediasoup Workers 终结，应用层不接触明文音频帧。三个平面共用同一套身份解析、权限计算与审计能力，实时网关不得直接实现业务写入逻辑。
+
+\subsection{模块依赖关系}
+
+服务端 NestJS 中按业务能力拆分模块，依赖方向必须保持由业务入口指向公共能力，禁止公共模块反向依赖具体业务模块：
+
+\noindent\begin{tabularx}{\textwidth}{L{2.8cm}L{4cm}Y}
+  \toprule
+  模块 & 主要依赖 & 说明 \\
+  \midrule
+  \texttt{AuthModule} & \texttt{UsersModule}、\texttt{AuditModule} & 注册登录创建用户、会话与审计。 \\
+  \texttt{UsersModule} & \texttt{AttachmentsModule}、\texttt{RealtimeModule} & 资料变更与状态变更需要同步给可见用户。 \\
+  \texttt{FriendsModule} & \texttt{UsersModule}、\texttt{NotificationsModule}、\texttt{RealtimeModule} & 好友申请、接受、私聊入口与通知。 \\
+  \texttt{ServersModule} & \texttt{PermissionsModule}、\texttt{NotificationsModule}、\texttt{RealtimeModule}、\texttt{AuditModule} & 社区创建、加入、退出与成员管理。 \\
+  \texttt{ChannelsModule} & \texttt{PermissionsModule}、\texttt{RealtimeModule}、\texttt{AuditModule} & 频道结构变化与权限覆盖变化。 \\
+  \texttt{MessagesModule} & \texttt{PermissionsModule}、\texttt{NotificationsModule}、\texttt{RealtimeModule}、\texttt{AuditModule} & 消息写入、历史加载、删除与未读。 \\
+  \texttt{VoiceModule} & \texttt{PermissionsModule}、\texttt{RealtimeModule}、\texttt{AuditModule}、\texttt{MediaSignalingModule} & 语音状态房间加入、退出与状态变化，调用 MediaSignaling 完成媒体协商。 \\
+  \texttt{MediaSignalingModule} & \texttt{VoiceModule}、\texttt{PermissionsModule}、\texttt{AuditModule} & mediasoup Router/Transport/Producer/Consumer 编排、TURN 凭证签发、active speaker 检测。 \\
+  \texttt{NotificationsModule} & \texttt{RealtimeModule} & 通知生成、未读更新与已读同步。 \\
+  \texttt{PermissionsModule} & \texttt{AuditModule} & 所有受控操作的权限计算与拒绝审计。 \\
+  \texttt{RealtimeModule} & \texttt{PermissionsModule}（订阅前置）、\texttt{AuditModule} & Socket.IO 网关、房间订阅、事件分发。 \\
+  \texttt{AuditModule} & 持久层 & 关键操作落库，最长保留 180 天。 \\
+  \bottomrule
+\end{tabularx}
+
+权限模块可以读取角色、成员、频道覆盖与所有者信息，但不能直接修改业务数据；实时模块只在事务提交后发布事件，不承担权威写入；公共能力如鉴权守卫、权限守卫、异常过滤器、请求追踪 ID 中间件统一放入 \texttt{apps/api/src/common/}。
+
+\subsection{HTTP 请求链路}
+
+以发送频道消息为例，HTTP 请求按以下顺序流经各层：
+
+\begin{enumerate}
+  \item 前端调用 \texttt{POST /api/v1/channels/\{channel\_id\}/messages}，携带 access token、客户端临时消息 ID 与内容。
+  \item API 层验证 token，生成或透传 \texttt{X-Request-Id}。
+  \item DTO 通过 Zod 校验消息内容、附件 ID、提及列表与长度限制。
+  \item \texttt{PermissionsModule} 计算用户是否能查看频道并发送消息。
+  \item \texttt{MessagesModule} 在事务中写入 \texttt{Message}、修正 \texttt{ReadState}、生成必要 \texttt{Notification}。
+  \item \texttt{AuditModule} 记录成功或失败的关键动作。
+  \item \texttt{RealtimeModule} 向频道房间发布 \texttt{MessageCreated}、向相关用户发布 \texttt{UnreadUpdated} 与 \texttt{NotificationCreated}。
+  \item HTTP 返回持久化消息、服务端时间与分发摘要。
+\end{enumerate}
+
+权限失败时在第 4 步结束，返回统一错误信封，不写入消息、不广播事件。
+
+\subsection{实时事件链路}
+
+Socket.IO 连接建立后按下列流程进入业务订阅：
+
+\begin{enumerate}
+  \item 客户端连接 \texttt{/realtime}，在握手阶段携带 access token。
+  \item 服务端验证会话，建立用户级房间 \texttt{user:\{user\_id\}}。
+  \item 客户端显式订阅当前社区、频道或私聊上下文。
+  \item 服务端订阅前再次进行权限校验（内置 Action \texttt{SUBSCRIBE\_REALTIME}），只把用户加入有权接收的房间。
+  \item 业务服务完成写入后调用统一事件发布器。
+  \item 事件发布器根据权限和接收范围发布到用户房间、频道房间、私聊房间或语音房间。
+  \item 客户端收到事件后用 \texttt{event\_id} 去重并更新 TanStack Query 缓存与本地 UI 状态。
+\end{enumerate}
+
+客户端重连后必须重新订阅上下文，并通过 \texttt{SyncState} 事件触发服务端补偿摘要（未读、通知、语音会话），随后通过 HTTP 拉取权威数据完成对齐。
+
+\subsection{媒体流链路}
+
+语音媒体平面由 mediasoup SFU 与 coturn 组成，控制信令复用 \texttt{/realtime}，数据面走独立 WebRTC Transport：
+
+\begin{enumerate}
+  \item 客户端调用 \texttt{POST /api/v1/voice/channels/\{channel\_id\}/join}，服务端创建 \texttt{VoiceSession}、签发短 TTL TURN 凭证并返回 \texttt{media.router\_rtp\_capabilities}、\texttt{media.ice\_servers}、\texttt{media.active\_producers}。
+  \item 客户端 emit \texttt{VoiceRouterCapabilities} 请求确认 RTP capabilities，服务端校验 \texttt{JOIN\_VOICE} 后返回。
+  \item 客户端基于 mediasoup-client 创建 Device，emit \texttt{VoiceTransportCreated} 两次（\texttt{direction=send} / \texttt{direction=recv}），服务端在所选 Router 上创建 WebRTC Transport，返回 ICE/DTLS 参数。
+  \item 客户端完成 ICE，emit \texttt{VoiceTransportConnect(sessionId, transportId, dtlsParameters)}；服务端校验 Transport 属于当前用户会话。
+  \item 客户端 emit \texttt{VoiceProducerCreated(sessionId, transportId, kind:'audio', rtpParameters)}，服务端校验 \texttt{SPEAK\_VOICE}、\texttt{kind === 'audio'} 与 send Transport 归属后 produce，并向 \texttt{voice:\{channel\_id\}} 房间广播 \texttt{VoiceProducerCreated}。
+  \item 新加入成员依据 \texttt{active\_producers} 主动 consume 已存在 Producer；服务端 Consumer 以 paused 创建，客户端本地 consume 后发送 \texttt{VoiceConsumerResumed} 恢复 RTP。
+  \item mediasoup 直接在 Worker 内中继 SRTP 音频，不经过 Application Services。
+  \item 切换静音 → 服务端调用 \texttt{Producer.pause/resume} + 广播 \texttt{VoiceStateChanged}；闭麦由客户端关闭本地 Consumer 解码并同步 \texttt{deafenState}。
+  \item mediasoup AudioLevelObserver 上报当前最强声源，服务端节流（≤ 2 次/秒）后广播 \texttt{VoiceActiveSpeaker}。
+  \item 用户主动离开或断线 → 服务端关闭 Transport、清理运行期引用、广播 \texttt{VoiceProducerClosed} 与 \texttt{VoiceMemberLeft}。
+  \item mediasoup Worker 崩溃 → 服务端结束受影响 \texttt{VoiceSession}，广播 \texttt{worker\_died}；客户端收到后自动重新加入并创建新 Transport/Producer。
+\end{enumerate}
+
+\subsection{房间模型}
+
+Socket.IO 房间是事件投递的最小粒度，所有房间命名均为前缀加资源 ID：
+
+\noindent\begin{tabularx}{\textwidth}{L{3.8cm}L{4.4cm}Y}
+  \toprule
+  房间 & 成员 & 用途 \\
+  \midrule
+  \texttt{user:\{user\_id\}} & 用户自己的所有活跃连接 & 通知、未读、个人状态、私有反馈。 \\
+  \texttt{dm:\{conversation\_id\}} & 私聊参与者的活跃连接 & 私聊消息、删除、已读变化。 \\
+  \texttt{server:\{server\_id\}} & 有权查看成员列表的社区成员 & 成员变化、权限刷新、社区级通知。 \\
+  \texttt{channel:\{channel\_id\}} & 有权查看目标频道的成员 & 文本频道消息与频道状态变化。 \\
+  \texttt{voice:\{channel\_id\}} & 当前语音频道成员 & 语音加入/退出/静音/闭麦状态；Producer/Consumer 信令广播；active speaker 通知。 \\
+  \bottomrule
+\end{tabularx}
+
+权限变化后服务端必须从用户已无权继续访问的房间中移除对应连接，并通过 \texttt{PermissionChanged} 通知客户端刷新可见频道与界面状态。
+
+\subsection{跨切关注点}
+
+下列能力跨所有业务模块统一实现，由 \texttt{apps/api/src/common/} 与共享包提供：
+
+\noindent\begin{tabularx}{\textwidth}{L{3.4cm}Y}
+  \toprule
+  关注点 & 设计与实现 \\
+  \midrule
+  鉴权 & access token + refresh token 双轨；\texttt{AccessTokenGuard} 作为 \texttt{APP\_GUARD} 全局注入，公开接口通过 \texttt{@Public()} 装饰器豁免。 \\
+  权限 & \texttt{PermissionGuard} + \texttt{@RequirePermission(\{action, resourceType, resourceIdParam\})} 装饰器；权限拒绝写审计。 \\
+  请求标识 & \texttt{X-Request-Id} 请求头由客户端透传或服务端生成 UUID，进入业务 service 作为 \texttt{requestId} 参数。 \\
+  统一响应 & \texttt{ApiResponseInterceptor} 包装为 \texttt{\{data, request\_id, server\_time\}}；失败由 \texttt{ApiExceptionFilter} 统一为 \texttt{\{error: \{code, message, details\}, request\_id, server\_time\}}。 \\
+  错误码 & 共享包 \texttt{@eiscord/shared} 的 \texttt{ErrorCode} 常量为唯一来源，前后端共用。 \\
+  限流 & 按账号、IP、用户、社区维度配置；登录、注册、消息、邀请、Socket 连接、媒体信令、TURN 签发分别限流。 \\
+  审计 & \texttt{AuditLog} 表记录登录失败、权限拒绝、成员管理、频道/角色变更、消息删除与媒体异常；不记录明文密码、完整 token、完整验证码。 \\
+  日志 & 结构化 JSON 日志，包含 \texttt{request\_id}、\texttt{user\_id}、\texttt{action}、\texttt{result}、\texttt{duration\_ms}、\texttt{timestamp}。 \\
+  配置 & 由配置服务在启动时加载，上传限制、通知开关、成员上限、限流阈值支持运行期刷新（NFR-16）。 \\
+  \bottomrule
+\end{tabularx}
+
+\subsection{数据写入一致性原则}
+
+跨实体写入必须放在 PostgreSQL 事务边界内，实时事件只在事务提交成功后发布：
+
+\noindent\begin{tabularx}{\textwidth}{L{4cm}Y}
+  \toprule
+  场景 & 一致性要求 \\
+  \midrule
+  创建社区 & \texttt{Server}、所有者 \texttt{Membership}、默认 \texttt{Role}、默认 \texttt{Channel} 必须同事务成功。 \\
+  加入社区 & 邀请校验、成员创建、默认角色分配、未读初始化必须同事务成功。 \\
+  发送消息 & 消息、附件引用、提及、通知与未读更新必须以业务事务为边界。 \\
+  删除消息 & 消息可见状态、审计、通知/未读修正必须一致。 \\
+  权限变更 & 角色、成员角色或覆盖规则写入后必须同步发布 \texttt{PermissionChanged}。 \\
+  语音退出 & \texttt{VoiceSession} 失效与 \texttt{VoiceMemberLeft} 发布必须最终一致，重复事件必须幂等。 \\
+  语音媒体加入 & \texttt{VoiceSession} 写入与 mediasoup Router/Transport 创建必须最终一致；信令任何阶段失败需回滚 \texttt{VoiceSession} 并广播 \texttt{VoiceMemberLeft(reason=signaling\_timeout)}。 \\
+  \bottomrule
+\end{tabularx}
+
+若事件发布失败，服务端保留数据库事实，客户端通过 HTTP 查询或重连补偿。
+
+\subsection{外部依赖与降级}
+
+\noindent\begin{tabularx}{\textwidth}{L{3.4cm}Y}
+  \toprule
+  依赖 & 设计与降级 \\
+  \midrule
+  MinIO/S3 & 存储头像、社区图标与消息附件；不可用时发送纯文本消息、登录、社区浏览、历史加载保持可用，附件上传返回 \texttt{DEPENDENCY\_UNAVAILABLE}。 \\
+  邮件/短信验证 & P0 注册可进入待验证状态；P1 密码找回使用验证凭据；外部不可用不影响登录主链路。 \\
+  推送通知 & v1 至少生成站内通知；外部离线推送失败不得影响消息写入。 \\
+  Redis & 短暂不可用时 HTTP 核心读写仍可访问 PostgreSQL；在线状态、限流与实时房间辅助能力降级。 \\
+  mediasoup Worker & 崩溃时受影响 \texttt{VoiceSession} 关闭并广播 \texttt{worker\_died}；客户端自动重新加入。 \\
+  coturn & 不可用时走 STUN 直连或服务器反射候选；对称 NAT 用户提示「网络不支持语音」并降级，不影响文本与状态链路。 \\
+  日志监控 & 记录请求、错误、权限拒绝与关键审计；监控失败不影响核心业务。 \\
+  \bottomrule
+\end{tabularx}
+
+\subsection{运行环境拓扑}
+
+MVP 单实例部署的运行环境拓扑如下：
+
+\begin{verbatim}
+[ Browser ]
+   │  HTTPS / WSS
+   ▼
+[ Reverse Proxy or Vite dev server ]   ← /api/v1 + /realtime
+   │
+   ▼
+[ apps/api (NestJS) ]
+   │   ├── REST /api/v1
+   │   ├── Socket.IO /realtime
+   │   └── Spawn child process → [ apps/media (mediasoup Worker) ]
+   │
+   ├── pg → [ PostgreSQL ]
+   ├── ioredis → [ Redis ]
+   └── S3 SDK → [ MinIO ]
+
+[ coturn ]  ← UDP 3478 / TLS 5349
+[ apps/media RTC UDP 40000-40100 ]
+\end{verbatim}
+
+\subsection{本章需求映射}
+\noindent\begin{tabularx}{\textwidth}{L{3cm}Y}
+  \toprule
+  本章承担 & 说明 \\
+  \midrule
+  FR-01 至 FR-20 & 通过模块依赖与请求链路总览呈现承担方。 \\
+  NFR-01 至 NFR-04 & 通过性能目标、链路与房间模型给出可实现路径。 \\
+  NFR-08 至 NFR-16 & 通过跨切关注点（鉴权/权限/审计/日志/配置/限流）给出统一实现策略。 \\
+  AC-N1 至 AC-N3、AC-N6 & 通过链路设计与房间模型为延迟、并发与音频质量验收提供基础。 \\
+  AC-N5 可编译与可审阅性 & 通过统一架构概述保证后续章节衔接顺畅。 \\
+  \bottomrule
+\end{tabularx}
