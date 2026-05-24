@@ -1,0 +1,64 @@
+@startuml 系统分层架构图
+' ============================================
+' 图 2-1：Eiscord 系统分层架构图
+' ============================================
+
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontSize 10
+
+title Eiscord 分层架构图
+
+package "UI 层" as ui {
+  component "Login / Register" as c01
+  component "AppShell (ServerRail + SidePanel)" as c02
+  component "MessageList + Composer" as c03
+  component "VoiceStrip" as c04
+  component "Zustand + React Query" as c05
+}
+
+package "控制器层" as ctrl {
+  component "AuthController" as c10
+  component "Users / Friends Controllers" as c11
+  component "Servers / Channels Controllers" as c12
+  component "MessagesController" as c13
+  component "VoiceController" as c14
+  component "Guards (Auth / Permission / Rate)" as c15
+}
+
+package "通信层" as comm {
+  component "Socket.IO Gateway" as c20
+  component "HTTP REST (/api/v1)" as c21
+  component "WebRTC Signaling" as c22
+  component "JSON-RPC (Worker)" as c23
+}
+
+package "业务层" as biz {
+  component "AuthService" as c30
+  component "FriendsService" as c31
+  component "Servers + Channels" as c32
+  component "MessagesService" as c33
+  component "Voice + MediaSignaling" as c34
+  component "Notifications / Permissions" as c35
+}
+
+package "数据访问层" as dal {
+  component "PrismaService (ORM)" as c40
+  component "RedisService (ioredis)" as c41
+  component "S3 Client (AWS SDK)" as c42
+}
+
+package "基础设施层" as infra {
+  database "PostgreSQL" as c50
+  database "Redis" as c51
+  database "MinIO" as c52
+  component "Coturn TURN" as c53
+  component "Mediasoup Worker" as c54
+}
+
+ui -down-> ctrl
+ctrl -down-> comm
+comm -down-> biz
+biz -down-> dal
+dal -down-> infra
+
+@enduml

@@ -1,0 +1,32 @@
+@startuml DM私聊时序图
+' ============================================
+' 图 3-2：DM 私聊发送事务流程
+' ============================================
+
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontSize 11
+
+actor "发送者" as sender
+participant "NestJS API" as api
+participant "MessagesService" as svc
+database "PostgreSQL" as db
+participant "Socket.IO" as ws
+actor "接收者" as receiver
+
+sender -> api : POST /dm-conversations/:cid/messages
+api -> svc : sendDirectMessage()
+
+svc -> db : BEGIN（开启事务）
+svc -> db : INSERT messages（scope_type='dm'）
+svc -> db : UPDATE direct_conversations\n更新 last_message_id
+svc -> db : UPSERT read_states\n发送者标记已读
+svc -> db : UPSERT read_states\n接收者 unread+1
+svc -> db : INSERT notifications（direct_message）
+svc -> db : COMMIT（提交事务）
+
+svc -> ws : 推送 MessageCreated → dm:{id}
+svc -> ws : 推送 NotificationCreated → 接收者
+
+ws --> receiver : 实时推送：新消息 + 通知
+
+@enduml

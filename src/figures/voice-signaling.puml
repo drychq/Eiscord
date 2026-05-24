@@ -1,0 +1,29 @@
+@startuml 语音信令时序图
+' ============================================
+' 图 3-3：WebRTC 语音信令流程
+' ============================================
+
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontSize 11
+
+actor "客户端" as client
+participant "NestJS API" as api
+participant "Mediasoup Worker" as ms
+
+client -> api : POST 加入语音频道
+
+api -> ms : prepareRouter + createTransport\n(send / recv)
+ms --> api : routerId + transportParams
+
+api --> client : 返回 Router + Transport 参数\n（含 TURN 凭证）
+
+client -> api : Producer 参数
+api -> ms : createProducer（仅音频）
+ms --> api : producerId
+
+api -> ms : createConsumer（推送给其他成员）
+ms --> api : consumerParams
+
+api --> client : ConsumerCreated（开始接收）
+
+@enduml

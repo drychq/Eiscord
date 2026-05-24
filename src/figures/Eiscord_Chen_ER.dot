@@ -1,0 +1,28 @@
+graph G {
+    // ========================================================
+    // 核心排版开关：强制禁止重叠，加大间距
+    // ========================================================
+    bgcolor="#FFFFFF"
+    overlap=false         // ❌ 绝对不允许节点重叠（解决叠叠乐的关键）
+    splines=true          // ↩️ 连线遇到障碍物会自动拐弯绕行，不穿字
+    nodesep=0.6           // ↔️ 增大水平方向上节点和节点的间距
+    ranksep=0.6           // ↕️ 增大垂直方向上层级和层级的间距
+
+    // 全局椭圆属性样式
+    node [fontname="Microsoft YaHei", fontsize=11, shape=oval, fillcolor="#5B9BD5", style="filled", color="#41719C", fontcolor="#FFFFFF"]
+    edge [color="#5B9BD5", len=1.2, arrowhead=none, width=1.0]
+
+    // 实体样式（矩形）
+    node [shape=box, fillcolor="#41719C", color="#2F5597", fontcolor="#FFFFFF", style="filled", fontsize=12, height=0.4, width=1.5]
+    
+    // ========================================================
+    // 核心技巧：让两个主实体天然形成上下层，属性就会自动往左右两边舒展
+    // ========================================================
+    "users" -- "auth_sessions" [style=invis]; 
+
+    // 属性绑定
+    "users" -- {"用户id"; "用户名"; "用户头像"; "注册时间"}
+    "auth_sessions" -- {"会话id"; "关联用户id"; "令牌"; "过期时间"}
+    "notifications" -- {"通知id"; "接收用户"; "状态"; "通知内容"}
+    "audit_logs" -- {"日志id"; "操作用户"; "操作内容"; "触发时间"}
+}

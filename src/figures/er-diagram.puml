@@ -1,0 +1,62 @@
+@startuml 实体关系图
+' ============================================
+' 图 5-1：Eiscord 实体关系图
+' ============================================
+
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontSize 11
+
+entity users
+entity auth_sessions
+entity attachments
+entity friendships
+entity direct_conversations
+entity notifications
+entity servers
+entity invitations
+entity memberships
+entity membership_roles
+entity roles
+entity channels
+entity permission_overwrites
+entity messages
+entity message_attachments
+entity message_mentions
+entity read_states
+entity voice_sessions
+entity audit_logs
+
+users ||--o{ auth_sessions
+users ||--o{ attachments
+users ||--o{ friendships
+users ||--o{ friendships
+users ||--o{ direct_conversations
+users ||--o{ direct_conversations
+friendships ..> direct_conversations
+users ||--o{ notifications
+
+users ||--o{ servers
+users ||--o{ memberships
+servers ||--o{ memberships
+servers ||--o{ invitations
+servers ||--o{ roles
+servers ||--o{ channels
+
+users ||--o{ messages
+channels ||--o{ messages
+direct_conversations ||--o{ messages
+
+memberships ||--o{ membership_roles
+roles ||--o{ membership_roles
+channels ||--o{ permission_overwrites
+
+users ||--o{ read_states
+channels ||--o{ read_states
+direct_conversations ||--o{ read_states
+
+channels ||--o{ voice_sessions
+users ||--o{ voice_sessions
+
+users ||--o{ audit_logs
+
+@enduml

@@ -1,0 +1,33 @@
+@startuml 频道消息时序图
+' ============================================
+' 图 3-1：频道消息发送事务流程
+' ============================================
+
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontSize 11
+
+actor "发送者" as sender
+participant "NestJS API" as api
+participant "MessagesService" as svc
+database "PostgreSQL" as db
+participant "Socket.IO" as ws
+actor "频道成员" as receiver
+
+sender -> api : POST /channels/:cid/messages
+api -> svc : sendChannelMessage()
+
+svc -> db : BEGIN（开启事务）
+svc -> db : INSERT messages（写入消息）
+svc -> db : INSERT message_attachments（附件）
+svc -> db : INSERT message_mentions（@提及）
+svc -> db : UPSERT read_states\n发送者 unread=0
+svc -> db : UPSERT read_states\n其他成员 unread+1
+svc -> db : INSERT notifications\n被提及用户（去重写入）
+svc -> db : COMMIT（提交事务）
+
+svc -> ws : 推送 MessageCreated → channel:{id}
+svc -> ws : 推送 UnreadUpdated → 各成员
+
+ws --> receiver : 实时推送：新消息 + 未读数
+
+@enduml
