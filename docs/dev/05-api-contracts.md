@@ -41,6 +41,7 @@
 |---|---|---|
 | 400 | `VALIDATION_FAILED` | 请求字段格式、长度或枚举值非法。 |
 | 401 | `AUTH_REQUIRED` | 未登录或 access token 无效。 |
+| 401 | `INVALID_CREDENTIALS` | 登录凭据无效（用户名或密码错误）；与 `AUTH_REQUIRED` 的区别在于：前者表示主动登录时凭据不正确，后者表示 access token 缺失或失效。 |
 | 403 | `PERMISSION_DENIED` | 已登录但无权访问资源或执行动作。 |
 | 404 | `RESOURCE_NOT_FOUND` | 资源不存在，或为了防止泄露而按不存在处理。 |
 | 409 | `CONFLICT` | 唯一约束、重复申请、重复加入、幂等冲突。 |

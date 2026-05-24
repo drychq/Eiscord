@@ -129,14 +129,20 @@
 | 错误码 | 前端行为 |
 |---|---|
 | `AUTH_REQUIRED` | 清理会话，跳转登录页。 |
+| `INVALID_CREDENTIALS` | 在登录表单上展示"用户名或密码错误"，不清理会话状态。 |
 | `PERMISSION_DENIED` | 显示无权提示，刷新权限摘要。 |
 | `RESOURCE_NOT_FOUND` | 显示资源不存在或已失效。 |
 | `CONFLICT` | 按业务场景展示重复申请、重复加入或幂等冲突。 |
 | `RATE_LIMITED` | 禁用提交按钮并展示稍后重试。 |
 | `DEPENDENCY_UNAVAILABLE` | 对附件、通知等非核心能力展示降级提示。 |
-| `VOICE_DEVICE_DENIED` | 引导用户在浏览器权限设置中授予麦克风访问。 |
-| `VOICE_NEGOTIATION_TIMEOUT` | 自动重试一次媒体协商，仍失败则回退到加入失败并清理控制条。 |
-| `VOICE_TURN_UNAVAILABLE` | 提示对称 NAT 环境无法穿透，建议切换网络或稍后重试。 |
+
+语音设备、媒体协商和 TURN 不可达的异常不通过服务端 `ErrorCode` 传递，由 `apps/web/src/features/voice/voice-client.ts` 在客户端层捕获并联动 UI：
+
+- **麦克风权限被拒**（`NotAllowedError` / `NotFoundError` 等 `getUserMedia` 异常）：voice-client 切换状态为 `failed` 并清理控制条；UI 引导用户在浏览器权限设置中授予访问。
+- **媒体协商超时**（Transport / Producer 创建未在客户端计时器内完成）：voice-client 自动重试一次完整协商；仍失败则切换为 `failed` 并提示"加入失败，请稍后重试"。
+- **ICE 穿透失败 / TURN 不可达**（ICE 连接状态最终落入 `failed`）：voice-client 提示对称 NAT 环境穿透失败，建议切换网络或稍后重试。
+
+服务端在 `JOIN_VOICE` / `SPEAK_VOICE` 等权限拒绝时仍走标准 `PERMISSION_DENIED`；前端按此区分用户引导文案。
 
 ## 响应式设计
 

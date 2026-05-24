@@ -29,6 +29,24 @@
 
 约束：`username` 和 `emailOrPhone` 唯一；禁用账号不能登录；删除或注销账号后登录凭证失效，历史消息按展示策略脱敏。
 
+### AuthSession
+
+刷新会话与多设备登录持久化，支撑 `POST /auth/refresh` 与 `POST /auth/logout` 的可撤销凭据链。
+
+| 字段 | 说明 |
+|---|---|
+| `id` | UUID 主键。 |
+| `userId` | 所属用户。 |
+| `refreshTokenHash` | refresh token 的 sha256 摘要，列上加 unique 约束；原始 refresh token 不入库。 |
+| `clientDeviceName` | 登录设备名称（来自登录请求的 `client.device_name`）。 |
+| `clientTimezone` | 登录时设备时区，用于审计与异地登录提示。 |
+| `expiresAt` | refresh token 失效时间。 |
+| `revokedAt` | 主动撤销时间；非空表示会话已注销。 |
+| `lastUsedAt` | 最近一次 `refresh` 调用时间，可空。 |
+| `createdAt`、`updatedAt` | 创建与更新时间。 |
+
+约束：`refreshTokenHash` 平台唯一；`POST /auth/logout` 写入 `revokedAt` 而非物理删除；`POST /auth/refresh` 必须校验未过期且未撤销；同一用户允许多条有效会话（多设备登录）。
+
 ### Friendship
 
 好友申请和好友关系。
@@ -176,11 +194,23 @@
 | `conversationId` | 私聊消息所属会话。 |
 | `senderId` | 发送者。 |
 | `content` | 文本内容。 |
-| `visibility` | `visible`、`retracted`、`deleted`。 |
+| `visibility` | `VISIBLE`、`RETRACTED`、`DELETED`。 |
 | `clientMessageId` | 客户端临时消息 ID，用于幂等。 |
 | `createdAt`、`updatedAt`、`deletedAt` | 时间字段。 |
 
 约束：频道消息和私聊消息二选一关联；删除不物理移除；`clientMessageId` 在发送者和目标会话范围内唯一。
+
+### MessageMention
+
+消息提及关系，承载频道消息或私聊消息中 @用户 的去重存储。
+
+| 字段 | 说明 |
+|---|---|
+| `messageId` | 关联消息。 |
+| `mentionedUserId` | 被提及用户。 |
+| `createdAt` | 创建时间。 |
+
+约束：`(messageId, mentionedUserId)` 复合主键，自然去重；与 `Message` 级联删除；按 `(mentionedUserId, createdAt)` 建索引以支撑用户的提及收件箱与未读统计。
 
 ### Attachment
 
@@ -240,10 +270,14 @@
 | `joinedAt` | 加入时间。 |
 | `muteState` | 是否静音（控制 mediasoup Producer 的 pause/resume）。 |
 | `deafenState` | 是否闭麦（前端关闭 Consumer 音频元素）。 |
-| `connectionStatus` | `connecting`、`connected`、`disconnected`。 |
-| `mediaState` | `idle | negotiating | connected | reconnecting | failed`，反映 mediasoup 协商阶段。 |
+| `connectionStatus` | `CONNECTING`、`CONNECTED`、`RECONNECTING`、`DISCONNECTED`。 |
+| `mediaState` | `IDLE | NEGOTIATING | CONNECTED | RECONNECTING | FAILED`，反映 mediasoup 协商阶段。 |
+| `negotiationDeadline` | 媒体协商截止时间；超过后服务端释放会话并广播 `VoiceMemberLeft(reason=signaling_timeout)`，可空。 |
+| `routerId` | mediasoup Router 的运行期 ID，可空，仅作为 Redis 资源索引的镜像。 |
+| `sendTransportId` | 当前 send `WebRtcTransport` 的 mediasoup ID，运行期值，可空。 |
+| `recvTransportId` | 当前 recv `WebRtcTransport` 的 mediasoup ID，运行期值，可空。 |
 | `producerId` | 当前 audio Producer 的 mediasoup ID，运行期值，可空。 |
-| `mediaRegion` | 媒体路由分区占位，默认 `local`，预留多区扩展。 |
+| `updatedAt` | 状态最近更新时间，由 Prisma `@updatedAt` 维护。 |
 | `endedAt` | 结束时间。 |
 
 约束：同一用户同一时刻只允许一个有效语音会话；该实体表示成员状态与当前媒体协商引用。mediasoup 资源 ID 仅作为运行期引用，可由 Redis 重建；服务端不录音、不混音、不转写。

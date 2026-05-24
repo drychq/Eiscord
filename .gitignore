@@ -32,6 +32,7 @@ test-results/
 # IDE local settings
 *.code-workspace
 .idea/
+.vscode/
 
 # Node workspace
 node_modules/
@@ -57,4 +58,6 @@ tests/e2e/fixtures/audio
 
 # Local test artifacts
 test-accounts.*
-.claude/settings.local.json
+
+.claude/
+.ccg/
