@@ -1,1 +1,379 @@
 \section{数据设计}
+
+本章定义 PostgreSQL 持久层中的所有业务实体及其约束、关系与索引。模型作为单一真理来源（Single Source of Truth），由 \texttt{prisma/schema.prisma} 维护并通过迁移文件版本化。运行期辅助状态（在线状态心跳、Socket 房间索引、mediasoup Router/Transport 等）保存在 Redis，不进入 PostgreSQL。
+
+\subsection{建模约定}
+
+\begin{itemize}
+  \item 主键统一使用 UUID v4 字符串，Prisma 字段类型 \texttt{@id @default(uuid()) @db.Uuid}；
+  \item 时间字段统一使用 ISO 8601 UTC 语义，数据库类型 \texttt{@db.Timestamptz(6)}，标准字段为 \texttt{createdAt} 与 \texttt{updatedAt}；
+  \item 表名与列名采用 snake\_case（\texttt{@@map} / \texttt{@map}），JS 字段保持 camelCase；
+  \item 软删除或失效状态优先于物理删除，用于保留消息、关系与审计可追踪性；
+  \item 所有跨资源访问通过业务上下文授权，数据库外键不能替代权限校验；
+  \item 跨表写入必须放在 \texttt{prisma.\$transaction} 内，事件仅在事务提交后发布。
+\end{itemize}
+
+\subsection{ER 概览}
+
+下图按业务域分组列出主要实体及其聚合关系：
+
+\begin{verbatim}
+[ 账号域 ]
+  User ─┬─ AuthSession (refresh token, 多设备)
+        ├─ Attachment (avatar / message / server_icon)
+        └─ AuditLog (actor)
+
+[ 社交域 ]
+  User ─┬─ Friendship (requester/addressee)
+        └─ DirectConversation (participantA/B) ─ Message (scope=dm)
+
+[ 社区域 ]
+  Server ─┬─ Membership ─ MembershipRole ─ Role
+          ├─ Channel ─ PermissionOverwrite (role/member)
+          └─ Invitation
+
+[ 消息域 ]
+  Channel/DM ── Message ──┬── MessageMention (user)
+                          ├── MessageAttachment (attachment)
+                          └── ReadState (user)
+
+[ 通知域 ]
+  User ── Notification (source resource)
+
+[ 语音域 ]
+  Channel(type=voice) ── VoiceSession (one active per user)
+\end{verbatim}
+
+\subsection{核心实体}
+
+\EntityTable{\texttt{User}}{
+  平台注册用户，承载身份、资料与在线状态推导基础。
+}{
+  \texttt{id} UUID PK、\texttt{username}、\texttt{emailOrPhone}、\texttt{passwordHash}（PBKDF2-SHA256，310{,}000 次）、\texttt{nickname}、\texttt{avatarAttachmentId}、\texttt{bio}、\texttt{accountStatus}（\texttt{pending\_verification|active|disabled}）、\texttt{presenceStatus}、\texttt{createdAt}、\texttt{updatedAt}。
+}{
+  \texttt{username} 与 \texttt{emailOrPhone} 平台唯一；禁用账号不能登录；密码哈希不可逆。
+}{
+  与 \texttt{AuthSession}、\texttt{Membership}、\texttt{Friendship}、\texttt{DirectConversation}、\texttt{Message}（\texttt{senderId}）、\texttt{Attachment}（\texttt{ownerId}）、\texttt{Notification}（\texttt{userId}）、\texttt{ReadState}（\texttt{userId}）、\texttt{VoiceSession}（\texttt{userId}）等多张表存在引用。
+}{
+  禁用账号保留历史消息、通知与审计；注销账号后登录凭证失效，历史消息按展示策略脱敏；用户为 \texttt{Attachment.ownerId} 不级联删除附件，由清理任务回收。
+}
+
+\EntityTable{\texttt{AuthSession}}{
+  Refresh token 持久化与多设备登录支撑，支撑 \texttt{POST /auth/refresh} 与 \texttt{POST /auth/logout} 的可撤销凭据链。
+}{
+  \texttt{id} UUID PK、\texttt{userId}、\texttt{refreshTokenHash}（sha256，unique）、\texttt{clientDeviceName}、\texttt{clientTimezone}、\texttt{expiresAt}、\texttt{revokedAt}（可空）、\texttt{lastUsedAt}（可空）、\texttt{createdAt}、\texttt{updatedAt}。
+}{
+  \texttt{refreshTokenHash} 平台唯一；原始 refresh token 不入库；同一用户允许多条有效会话（多设备登录）。
+}{
+  \texttt{userId} 引用 \texttt{User}；删除策略见下。
+}{
+  \texttt{POST /auth/logout} 写入 \texttt{revokedAt} 而非物理删除；\texttt{POST /auth/refresh} 必须校验未过期且未撤销；过期会话定期归档清理。
+}
+
+\EntityTable{\texttt{Friendship}}{
+  好友申请与好友关系。
+}{
+  \texttt{id} UUID PK、\texttt{requesterId}、\texttt{addresseeId}、\texttt{status}（\texttt{pending|accepted|rejected|deleted}）、\texttt{createdAt}、\texttt{updatedAt}。
+}{
+  同一对用户同一时间只允许一条有效关系；不能向自己申请；处理者必须是申请接收方。
+}{
+  接受后可创建或复用 \texttt{DirectConversation}；与 \texttt{Notification} 通过 \texttt{sourceType='friendship'} 关联。
+}{
+  状态机：\texttt{pending} → \texttt{accepted} / \texttt{rejected} / \texttt{deleted}；删除关系后可隐藏私聊入口但保留历史消息。
+}
+
+\EntityTable{\texttt{DirectConversation}}{
+  一对一私聊会话。
+}{
+  \texttt{id} UUID PK、\texttt{participantAId}、\texttt{participantBId}、\texttt{lastMessageId}（可空）、\texttt{createdAt}、\texttt{updatedAt}。
+}{
+  同一对用户复用同一会话（\texttt{(participantAId, participantBId)} 唯一，按用户 ID 排序）；加载或发送消息时必须验证参与者身份。
+}{
+  与 \texttt{Message}（\texttt{scopeType='dm'}）、\texttt{ReadState}（\texttt{scopeType='dm'}）关联。
+}{
+  好友关系删除后保留会话与历史，但隐藏入口；归档策略由 P1 决定。
+}
+
+\EntityTable{\texttt{Server}}{
+  社区空间。
+}{
+  \texttt{id} UUID PK、\texttt{ownerId}、\texttt{name}、\texttt{iconAttachmentId}（可空）、\texttt{description}、\texttt{status}（\texttt{active|archived|deleted}）、\texttt{createdAt}、\texttt{updatedAt}。
+}{
+  每个社区必须有且仅有一个所有者；创建社区必须同事务创建默认 \texttt{Role} 与默认文本 \texttt{Channel}。
+}{
+  与 \texttt{Membership}、\texttt{Role}、\texttt{Channel}、\texttt{Invitation} 一对多关联。
+}{
+  归档或删除后 \texttt{Invitation}、\texttt{Channel}、\texttt{Membership}、\texttt{VoiceSession} 全部失效。
+}
+
+\EntityTable{\texttt{Invitation}}{
+  社区邀请。
+}{
+  \texttt{id} UUID PK、\texttt{serverId}、\texttt{code}（活动状态下唯一）、\texttt{createdById}、\texttt{expiresAt}、\texttt{maxUses}、\texttt{usedCount}、\texttt{status}（\texttt{active|revoked|expired}）。
+}{
+  加入社区时必须校验状态、过期时间、使用次数与用户限制。
+}{
+  归属 \texttt{Server}；由社区有 \texttt{CREATE\_INVITE} 权限的成员生成。
+}{
+  过期或撤销后状态置为 \texttt{expired|revoked}，不再接受加入。
+}
+
+\EntityTable{\texttt{Membership}}{
+  社区成员关系。
+}{
+  \texttt{id} UUID PK、\texttt{serverId}、\texttt{userId}、\texttt{nickInServer}（可空）、\texttt{memberStatus}（\texttt{active|muted|removed|banned}）、\texttt{joinedAt}。
+}{
+  同一用户在同一社区只允许一条有效成员记录；\texttt{(serverId, userId)} 唯一。
+}{
+  与 \texttt{Role} 通过 \texttt{MembershipRole} 多对多；与 \texttt{PermissionOverwrite} 可作为成员级覆盖目标。
+}{
+  成员退出、移除或封禁后权限失效；实时房间必须移除；保留记录用于审计。
+}
+
+\EntityTable{\texttt{Role}}{
+  社区角色。
+}{
+  \texttt{id} UUID PK、\texttt{serverId}、\texttt{name}、\texttt{permissionBits}（bitset）、\texttt{color}、\texttt{priority}、\texttt{isDefault}。
+}{
+  默认角色必须始终存在；角色只能分配给同社区成员；管理员不能授予超出自身能力的权限。
+}{
+  与 \texttt{Membership} 通过 \texttt{MembershipRole} 多对多；与 \texttt{PermissionOverwrite} 作为角色级覆盖目标。
+}{
+  默认角色不可删除到社区无默认权限状态；角色删除前必须先撤销所有 \texttt{MembershipRole} 与频道覆盖。
+}
+
+\EntityTable{\texttt{MembershipRole}}{
+  成员与角色的多对多关系。
+}{
+  \texttt{membershipId} + \texttt{roleId} 复合主键、\texttt{assignedById}、\texttt{assignedAt}。
+}{
+  \texttt{membershipId} 与 \texttt{roleId} 必须属于同一社区。
+}{
+  联结 \texttt{Membership} 与 \texttt{Role}。
+}{
+  成员退出或角色删除后级联清理。
+}
+
+\EntityTable{\texttt{Channel}}{
+  文本频道或语音频道。
+}{
+  \texttt{id} UUID PK、\texttt{serverId}、\texttt{name}、\texttt{type}（\texttt{text|voice}）、\texttt{topic}、\texttt{sortOrder}、\texttt{status}（\texttt{active|deleted}）、\texttt{createdAt}、\texttt{updatedAt}。
+}{
+  频道必须属于一个社区；删除后禁止继续发送消息或加入语音状态。
+}{
+  与 \texttt{PermissionOverwrite} 一对多；文本频道与 \texttt{Message}（\texttt{scopeType='channel'}）关联；语音频道与 \texttt{VoiceSession} 关联。
+}{
+  删除使用 \texttt{status='deleted'} 软删除；历史消息保留但不允许新写入；语音频道删除时关闭所有现有 \texttt{VoiceSession}。
+}
+
+\EntityTable{\texttt{PermissionOverwrite}}{
+  频道级权限覆盖。
+}{
+  \texttt{id} UUID PK、\texttt{channelId}、\texttt{targetType}（\texttt{role|member}）、\texttt{targetId}、\texttt{allowBits}、\texttt{denyBits}。
+}{
+  同一频道对同一目标只允许一条有效覆盖（\texttt{(channelId, targetType, targetId)} 唯一）。
+}{
+  归属 \texttt{Channel}；\texttt{targetId} 指向 \texttt{Role} 或 \texttt{Membership}。
+}{
+  目标删除或失效后覆盖规则同步失效；显式拒绝（\texttt{denyBits}）优先于显式允许（\texttt{allowBits}）。
+}
+
+\EntityTable{\texttt{Message}}{
+  文本频道或私聊消息。
+}{
+  \texttt{id} UUID PK、\texttt{scopeType}（\texttt{channel|dm}）、\texttt{channelId}（可空）、\texttt{conversationId}（可空）、\texttt{senderId}、\texttt{content}、\texttt{visibility}（\texttt{VISIBLE|RETRACTED|DELETED}）、\texttt{clientMessageId}（幂等键）、\texttt{createdAt}、\texttt{updatedAt}、\texttt{deletedAt}（可空）。
+}{
+  频道消息和私聊消息二选一关联；删除不物理移除；\texttt{clientMessageId} 在发送者和目标会话范围内唯一。
+}{
+  与 \texttt{MessageMention}、\texttt{MessageAttachment} 关联；触发 \texttt{ReadState} 与 \texttt{Notification} 更新。
+}{
+  撤回 / 删除使用 \texttt{visibility} 状态，保留审计元数据；私聊不允许删除对方历史存档。
+}
+
+\EntityTable{\texttt{MessageMention}}{
+  消息提及关系，承载频道或私聊消息中 @用户 的去重存储。
+}{
+  \texttt{messageId} + \texttt{mentionedUserId} 复合主键、\texttt{createdAt}。
+}{
+  自然去重（同一消息同一被提及用户不重复）；与 \texttt{Message} 级联删除。
+}{
+  联结 \texttt{Message} 与 \texttt{User}。
+}{
+  按 \texttt{(mentionedUserId, createdAt)} 索引以支撑提及收件箱与未读统计；\texttt{Message} 删除时级联清理。
+}
+
+\EntityTable{\texttt{Attachment}}{
+  附件、头像或社区图标文件元数据。
+}{
+  \texttt{id} UUID PK、\texttt{ownerId}、\texttt{storageKey}、\texttt{fileName}、\texttt{mimeType}、\texttt{sizeBytes}、\texttt{purpose}（\texttt{message|avatar|server\_icon}）、\texttt{status}（\texttt{pending|ready|hidden|deleted}）、\texttt{createdAt}。
+}{
+  访问附件必须结合消息、用户或社区上下文授权（内置 Action \texttt{ACCESS\_ATTACHMENT}），禁止仅凭对象地址访问受保护资源。
+}{
+  与 \texttt{MessageAttachment}、\texttt{User}（\texttt{avatarAttachmentId}）、\texttt{Server}（\texttt{iconAttachmentId}）关联。
+}{
+  消息删除后引用的附件可进入 \texttt{hidden|deleted} 状态；具体清理由后台任务异步执行；状态变更不影响审计可追溯。
+}
+
+\EntityTable{\texttt{MessageAttachment}}{
+  消息与附件的多对多关系。
+}{
+  \texttt{messageId} + \texttt{attachmentId} 复合主键。
+}{
+  附件必须归属合法上传者，并在消息发送时确认 \texttt{status='ready'}。
+}{
+  联结 \texttt{Message} 与 \texttt{Attachment}。
+}{
+  消息删除后保留关系记录，由 Attachment 清理任务决定是否回收物理对象。
+}
+
+\EntityTable{\texttt{ReadState}}{
+  用户在私聊或频道中的读取状态。
+}{
+  \texttt{id} UUID PK、\texttt{userId}、\texttt{scopeType}（\texttt{channel|dm}）、\texttt{channelId}（可空）、\texttt{conversationId}（可空）、\texttt{lastReadMessageId}、\texttt{unreadCount}、\texttt{updatedAt}。
+}{
+  同一用户对同一会话或频道最多一条有效读取状态；\texttt{(userId, channelId)} 与 \texttt{(userId, conversationId)} 分别唯一。
+}{
+  与 \texttt{Message}、\texttt{Channel}、\texttt{DirectConversation} 关联。
+}{
+  退出社区后 \texttt{ReadState} 不能授予访问权限；可保留供后续重新加入恢复。
+}
+
+\EntityTable{\texttt{VoiceSession}}{
+  语音频道状态会话。
+}{
+  \texttt{id} UUID PK、\texttt{channelId}、\texttt{userId}、\texttt{joinedAt}、\texttt{muteState}、\texttt{deafenState}、\texttt{connectionStatus}（\texttt{CONNECTING|CONNECTED|RECONNECTING|DISCONNECTED}）、\texttt{mediaState}（\texttt{IDLE|NEGOTIATING|CONNECTED|RECONNECTING|FAILED}）、\texttt{negotiationDeadline}（可空）、\texttt{routerId}（可空）、\texttt{sendTransportId}（可空）、\texttt{recvTransportId}（可空）、\texttt{producerId}（可空）、\texttt{updatedAt}、\texttt{endedAt}（可空）。
+}{
+  同一用户同一时刻只允许一个有效语音会话（partial unique on \texttt{userId} where \texttt{endedAt IS NULL}）。
+}{
+  归属 \texttt{Channel}（type=voice）与 \texttt{User}；mediasoup Router/Transport/Producer/Consumer 仅作为运行期资源，存于 Redis。
+}{
+  服务端不录音、不混音、不转写；30 秒内未完成媒体协商或权限失效时释放；Worker 退出后所有相关会话 \texttt{mediaState='FAILED'} 并设置 \texttt{endedAt}。
+}
+
+\EntityTable{\texttt{Notification}}{
+  站内通知。
+}{
+  \texttt{id} UUID PK、\texttt{userId}、\texttt{type}、\texttt{sourceType}、\texttt{sourceId}、\texttt{contentPreview}、\texttt{isRead}、\texttt{dedupeKey}（unique）、\texttt{createdAt}、\texttt{readAt}（可空）。
+}{
+  通知只能由目标用户标记已读；\texttt{dedupeKey} 在通知范围内唯一，防止重复生成。
+}{
+  归属 \texttt{User}；\texttt{sourceType + sourceId} 指向消息、好友申请、成员动作等业务资源。
+}{
+  来源失效后只保留不泄露内容的摘要；权限失效后通知不展示原文。
+}
+
+\EntityTable{\texttt{AuditLog}}{
+  安全、权限与关键动作审计。
+}{
+  \texttt{id} UUID PK、\texttt{actorId}（可空，系统操作时为空）、\texttt{targetType}、\texttt{targetId}、\texttt{action}、\texttt{result}（\texttt{success|failure}）、\texttt{failureReason}（可空）、\texttt{requestId}、\texttt{createdAt}。
+}{
+  日志至少保留 180 天；不记录明文密码、完整 token、完整验证码或完整敏感凭证。
+}{
+  独立审计表，不与业务表外键约束；通过 \texttt{targetType + targetId} 弱关联。
+}{
+  归档策略由部署方决定；保留期内不可删除；普通业务接口不得修改 AuditLog。
+}
+
+\subsection{关系摘要}
+
+\noindent\begin{tabularx}{\textwidth}{L{4.4cm}L{2cm}Y}
+  \toprule
+  关系 & 类型 & 说明 \\
+  \midrule
+  \texttt{User - AuthSession} & 一对多 & 用户可拥有多个有效设备会话。 \\
+  \texttt{User - Friendship} & 一对多 & 用户可发起或接收多个好友申请。 \\
+  \texttt{User - DirectConversation} & 多对多语义 & 通过 \texttt{participantAId} 和 \texttt{participantBId} 表示一对一会话。 \\
+  \texttt{Server - Membership} & 一对多 & 社区包含成员。 \\
+  \texttt{Server - Role} & 一对多 & 社区拥有角色集合。 \\
+  \texttt{Membership - Role} & 多对多 & 通过 \texttt{MembershipRole} 联结。 \\
+  \texttt{Server - Channel} & 一对多 & 社区包含频道。 \\
+  \texttt{Channel - PermissionOverwrite} & 一对多 & 频道拥有角色或成员覆盖规则。 \\
+  \texttt{Channel/DirectConversation - Message} & 一对多 & 消息归属频道或私聊。 \\
+  \texttt{Message - Attachment} & 多对多 & 通过 \texttt{MessageAttachment} 联结。 \\
+  \texttt{Message - User} & 一对多 & 通过 \texttt{MessageMention} 表示提及关系。 \\
+  \texttt{User - ReadState} & 一对多 & 按频道和私聊维度维护读取状态。 \\
+  \texttt{Channel - VoiceSession} & 一对多 & 语音频道包含当前成员状态。 \\
+  \texttt{User - Notification} & 一对多 & 用户接收通知。 \\
+  \bottomrule
+\end{tabularx}
+
+\subsection{运行期 Redis 资源}
+
+mediasoup 与在线状态等运行期资源不进入 PostgreSQL，仅在 Redis 维护索引；服务重启后可由活跃连接重建。
+
+\noindent\begin{tabularx}{\textwidth}{L{6.4cm}Y}
+  \toprule
+  Redis 键 & 用途 \\
+  \midrule
+  \texttt{voice:router:\{channelId\}} & Router ID 与所在 Worker。 \\
+  \texttt{voice:transport:\{sessionId\}:send} & send Transport ID 与 ICE/DTLS 状态。 \\
+  \texttt{voice:transport:\{sessionId\}:recv} & recv Transport ID 与 ICE/DTLS 状态。 \\
+  \texttt{voice:producer:\{sessionId\}} & 当前 audio Producer ID。 \\
+  \texttt{voice:consumer:\{sessionId\}:\{producerId\}} & Consumer ID。 \\
+  \texttt{presence:user:\{userId\}} & 用户活跃连接列表与最近心跳时间。 \\
+  \texttt{presence:connection:\{connId\}} & 单连接级元数据。 \\
+  \texttt{rate:\{operation\}:\{dimension\}:\{value\}} & 限流计数器（账号/IP/用户）。 \\
+  \texttt{dedupe:\{namespace\}:\{key\}} & 短期去重（可补充数据库 \texttt{Notification.dedupeKey}）。 \\
+  \bottomrule
+\end{tabularx}
+
+TURN 凭证为短 TTL HMAC，不落库；签发记录由 \texttt{AuditLog} 覆盖。
+
+\subsection{索引策略}
+
+\noindent\begin{tabularx}{\textwidth}{L{3.4cm}Y}
+  \toprule
+  表 & 索引 \\
+  \midrule
+  \texttt{users} & \texttt{username} unique、\texttt{email\_or\_phone} unique、\texttt{account\_status}。 \\
+  \texttt{auth\_sessions} & \texttt{refresh\_token\_hash} unique、\texttt{(user\_id, expires\_at)}。 \\
+  \texttt{friendships} & \texttt{(requester\_id, addressee\_id)}、\texttt{(addressee\_id, status)}。 \\
+  \texttt{direct\_conversations} & \texttt{(participant\_a\_id, participant\_b\_id)} unique（参与者 ID 升序存储）。 \\
+  \texttt{memberships} & \texttt{(server\_id, user\_id)} unique、\texttt{(user\_id, member\_status)}。 \\
+  \texttt{roles} & \texttt{(server\_id, priority)}、\texttt{(server\_id, is\_default)}。 \\
+  \texttt{channels} & \texttt{(server\_id, sort\_order)}、\texttt{(server\_id, type)}。 \\
+  \texttt{messages} & \texttt{(channel\_id, created\_at)}、\texttt{(conversation\_id, created\_at)}、\texttt{(sender\_id, client\_message\_id)}。 \\
+  \texttt{message\_mentions} & \texttt{(mentioned\_user\_id, created\_at)}。 \\
+  \texttt{read\_states} & \texttt{(user\_id, channel\_id)} unique、\texttt{(user\_id, conversation\_id)} unique。 \\
+  \texttt{voice\_sessions} & partial unique active session on \texttt{user\_id} where \texttt{ended\_at IS NULL}、\texttt{(channel\_id, media\_state)}。 \\
+  \texttt{notifications} & \texttt{(user\_id, is\_read, created\_at)}、\texttt{dedupe\_key} unique。 \\
+  \texttt{audit\_logs} & \texttt{(request\_id)}、\texttt{(actor\_id, created\_at)}、\texttt{(target\_type, target\_id)}。 \\
+  \bottomrule
+\end{tabularx}
+
+\subsection{删除与失效规则}
+
+\begin{itemize}
+  \item 用户禁用后保留历史消息、通知与审计，但禁止登录；
+  \item 社区归档或删除后邀请、频道、成员与语音会话全部失效；
+  \item 成员退出、移除或封禁后，社区权限立即失效，实时房间必须移除；
+  \item 频道删除（\texttt{status='deleted'}）后历史消息保留但不再允许新消息和语音加入；
+  \item 消息撤回（\texttt{visibility='RETRACTED'}）或删除（\texttt{visibility='DELETED'}）后保留元数据用于审计与未读修正，不再以普通消息展示；
+  \item 附件资源替换或消息删除后可进入 \texttt{hidden|deleted} 状态，访问仍需权限；
+  \item 通知来源失效后保留摘要，但不得继续暴露受限内容；
+  \item mediasoup Worker 进程退出后所有相关 \texttt{VoiceSession.mediaState='FAILED'} 并设置 \texttt{endedAt}；服务端广播 \texttt{worker\_died}，客户端重新加入后创建新的 \texttt{VoiceSession} 与媒体资源。
+\end{itemize}
+
+\subsection{数据迁移与种子}
+
+\begin{itemize}
+  \item Prisma 迁移文件由 \texttt{pnpm db:migrate} 生成并进入 \texttt{prisma/migrations/}，迁移历史进入版本控制；
+  \item 开发环境可允许自动迁移；生产环境使用显式迁移命令并经评审；
+  \item 新增字段优先可空或带默认值；删除字段必须经过弃用周期；
+  \item 种子数据由 \texttt{prisma/seed.ts} 提供，幂等写入演示用户（Alice、Bob、Carol）、社区（Course Discussion）、频道（general、private、voice-room）与基础角色，用于本地开发与端到端测试；
+  \item 测试库（\texttt{eiscord\_test}）由 \texttt{pnpm db:test:reset} 重建，不复用开发库数据。
+\end{itemize}
+
+\subsection{本章需求映射}
+\noindent\begin{tabularx}{\textwidth}{L{3cm}Y}
+  \toprule
+  本章承担 & 说明 \\
+  \midrule
+  FR-01 至 FR-20 & 每条 FR 至少对应一个核心实体（见上表）。 \\
+  NFR-05 容量与存储 & 索引策略 + 软删除策略保证 10000 用户、5000 单社区成员规模下的查询效率。 \\
+  NFR-09 至 NFR-10 安全存储 & 密码 PBKDF2、refresh token sha256、TURN 凭证不落库、审计 180 天。 \\
+  NFR-15 数据一致性 & Prisma 事务边界 + 软删除策略 + 唯一约束承担。 \\
+  AC-E2 敏感信息保护 & \texttt{User.passwordHash} 与 \texttt{AuthSession.refreshTokenHash} 不可逆存储。 \\
+  AC-E6 消息附件异常 & 唯一约束 + \texttt{clientMessageId} 幂等键 + \texttt{Attachment.status} 软删除承担。 \\
+  \bottomrule
+\end{tabularx}
