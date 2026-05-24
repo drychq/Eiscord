@@ -1,1 +1,263 @@
 \section{模块分解}
+
+本章把 SRS 第 3 章定义的 FR-01 至 FR-20 拆分到具体业务模块，并补充承担权限、审计、实时分发等跨业务能力的公共模块。每个模块给出覆盖的需求、主要职责、对外契约、数据与事件、依赖与约束五个维度。模块名称沿用 NestJS Module 命名风格，业务语义沿用 SRS 术语。
+
+\subsection{模块总览}
+
+\noindent\begin{tabularx}{\textwidth}{L{3.4cm}L{2.4cm}Y}
+  \toprule
+  模块 & 主要 FR & 核心实体 \\
+  \midrule
+  账号与身份模块 & FR-01 至 FR-05 & \texttt{User}、\texttt{AuthSession}、\texttt{Attachment}、\texttt{AuditLog} \\
+  社交与私聊模块 & FR-06、FR-07 & \texttt{Friendship}、\texttt{DirectConversation}、\texttt{Message} \\
+  社区与成员模块 & FR-08、FR-09、FR-10 & \texttt{Server}、\texttt{Invitation}、\texttt{Membership} \\
+  频道模块 & FR-11、FR-12 & \texttt{Channel}、\texttt{PermissionOverwrite} \\
+  消息与附件模块 & FR-13、FR-14、FR-15 & \texttt{Message}、\texttt{MessageMention}、\texttt{Attachment}、\texttt{MessageAttachment}、\texttt{ReadState} \\
+  通知与未读模块 & FR-07、FR-13、FR-14、FR-18 & \texttt{Notification}、\texttt{ReadState} \\
+  权限模块 & FR-12、FR-19、FR-20 & \texttt{Role}、\texttt{MembershipRole}、\texttt{PermissionOverwrite} \\
+  语音与媒体信令模块 & FR-16、FR-17 & \texttt{VoiceSession}、\texttt{Channel}、mediasoup 运行期 ID \\
+  实时网关模块 & FR-05、FR-13、FR-18 等 & 不持久化，承担 Socket.IO 事件分发 \\
+  审计与支撑模块 & FR-02、FR-10、FR-15、FR-20、NFR-08 至 NFR-16 & \texttt{AuditLog} \\
+  \bottomrule
+\end{tabularx}
+
+模块拆分按"业务能力"而不是"实体类型"组织。例如消息模块同时承担频道消息与私聊消息两种 \texttt{scopeType}，但底层共用同一套 \texttt{Message} 表和读取状态机制。
+
+\subsection{账号与身份模块}
+
+\ModuleSpec{\texttt{AuthModule} + \texttt{UsersModule}}{账号与身份模块}{FR-01、FR-02、FR-03（P1）、FR-04、FR-05}{
+  注册新用户并完成必要校验；登录返回会话与基础摘要；密码哈希存储与刷新会话；个人资料维护；在线状态推导与同步。
+}{
+  HTTP：\texttt{POST /auth/register}、\texttt{POST /auth/login}、\texttt{POST /auth/refresh}、\texttt{POST /auth/logout}、\texttt{POST /auth/password-reset}（P1）、\texttt{GET /users/me}、\texttt{PATCH /users/me/profile}、\texttt{PATCH /users/me/presence}。\par
+  实时：发布 \texttt{PresenceChanged}、协同发布登录后的 \texttt{UnreadUpdated} 摘要。
+}{
+  写入 \texttt{User}、\texttt{AuthSession}（refresh token sha256 入库，原始 token 不入库）、登录与失败审计；\texttt{passwordHash} 使用 PBKDF2-SHA256（310{,}000 迭代）；在线状态 Redis 保存活跃连接与最近心跳，PostgreSQL 保存可恢复的最后状态。
+}{
+  依赖 \texttt{AuditModule} 记录登录失败与账号禁用尝试；依赖 \texttt{NotificationsModule} 发起注册或密码找回相关通知；隐身状态对他人按离线展示；账号禁用后登录凭证立即失效；同一用户允许多条有效会话（多设备登录）。
+}
+
+\paragraph{注册 FR-01}
+\begin{itemize}
+  \item 接口：\texttt{RegisterUser}（\texttt{POST /auth/register}）；
+  \item 校验：用户名与绑定联系方式平台唯一；密码满足长度与复杂度规则；验证服务不可用时账号进入 \texttt{pending\_verification} 状态；
+  \item 成功结果：返回 \texttt{user\_id}、\texttt{account\_status} 与基础资料摘要；
+  \item 异常：邮箱、手机号或用户名重复返回 \texttt{CONFLICT}；密码不符合规则返回 \texttt{VALIDATION\_FAILED}。
+\end{itemize}
+
+\paragraph{登录 FR-02}
+\begin{itemize}
+  \item 接口：\texttt{LoginUser}（\texttt{POST /auth/login}）；
+  \item 写入：登录会话、登录审计、在线状态更新时间；
+  \item 返回：access token、refresh token、用户摘要、好友摘要、社区列表、未读数与通知摘要；
+  \item 异常：账号不存在、密码错误返回 \texttt{INVALID\_CREDENTIALS}；账号禁用或验证未完成不创建会话；连续失败按账号与 IP 维度限流并记录安全审计。
+\end{itemize}
+
+\paragraph{个人资料 FR-04}
+昵称、头像附件、个性签名可编辑；头像必须引用合法 \texttt{Attachment}；昵称与签名满足长度限制；变更后向好友列表、私聊窗口与可见社区成员列表同步资料摘要。
+
+\paragraph{在线状态 FR-05}
+状态枚举为 \texttt{online}、\texttt{idle}、\texttt{busy}、\texttt{invisible}、\texttt{offline}；隐身对他人展示为离线；断线超时后服务端按 \texttt{PRESENCE\_OFFLINE\_GRACE\_MS} 释放在线状态并发布 \texttt{PresenceChanged}，必要时同时释放语音会话。
+
+\subsection{社交与私聊模块}
+
+\ModuleSpec{\texttt{FriendsModule}}{社交与私聊模块}{FR-06、FR-07}{
+  好友申请的发起、接受、拒绝与删除；维护 \texttt{Friendship} 状态机；好友接受后创建或复用一对一 \texttt{DirectConversation}；提供私聊会话列表与最近消息摘要。
+}{
+  HTTP：\texttt{POST /friend-requests}、\texttt{POST /friend-requests/\{id\}/accept}、\texttt{POST /friend-requests/\{id\}/reject}、\texttt{GET /friends}、\texttt{GET /dm-conversations}。\par
+  实时：发布 \texttt{NotificationCreated}（好友申请、接受）；\texttt{MessageCreated}（私聊消息，由消息模块发布）。
+}{
+  写入 \texttt{Friendship}、\texttt{DirectConversation}；好友申请状态机：\texttt{pending} → \texttt{accepted} / \texttt{rejected} / \texttt{deleted}；同一对用户同一时刻只允许一条有效关系；不能向自己申请。
+}{
+  依赖 \texttt{UsersModule} 校验对方账号；依赖 \texttt{NotificationsModule} 与 \texttt{RealtimeModule} 投递事件；非好友不能新发起私聊；好友删除后可隐藏入口，但历史消息保留并按隐私策略展示。
+}
+
+\subsection{社区与成员模块}
+
+\ModuleSpec{\texttt{ServersModule}}{社区与成员模块}{FR-08、FR-09、FR-10}{
+  社区创建（含默认角色与默认文本频道）；社区邀请与加入；成员退出与所有权转移；成员列表与基础管理动作（移除/禁言/恢复）。
+}{
+  HTTP：\texttt{POST /servers}、\texttt{GET /servers}、\texttt{GET /servers/\{id\}}、\texttt{POST /servers/join}、\texttt{POST /servers/\{id\}/leave}、\texttt{GET /servers/\{id\}/members}、\texttt{PATCH /servers/\{id\}/members/\{member\_id\}}。\par
+  实时：发布 \texttt{MemberJoined}、\texttt{MemberChanged}、\texttt{ChannelChanged}、\texttt{PermissionChanged}。
+}{
+  在事务内写入 \texttt{Server}、所有者 \texttt{Membership}、默认 \texttt{Role}、默认文本 \texttt{Channel}；\texttt{Invitation} 维护邀请码、过期时间与使用上限；管理动作写 \texttt{AuditLog}。
+}{
+  依赖 \texttt{PermissionsModule} 完成统一权限校验；依赖 \texttt{NotificationsModule}、\texttt{RealtimeModule}、\texttt{AuditModule}；所有者必须先转移所有权才能退出；管理员不能管理所有者或高于自身优先级的成员；社区成员上限默认 \texttt{SERVER\_MEMBER\_LIMIT=5000}。
+}
+
+\subsection{频道模块}
+
+\ModuleSpec{\texttt{ChannelsModule}}{频道模块}{FR-11、FR-12}{
+  文本频道与语音频道的创建、编辑、排序、删除；维护频道元数据与权限覆盖；按用户权限过滤频道列表展示。
+}{
+  HTTP：\texttt{POST /servers/\{server\_id\}/channels}、\texttt{PATCH /channels/\{channel\_id\}}、\texttt{DELETE /channels/\{channel\_id\}}。\par
+  实时：发布 \texttt{ChannelChanged}（创建/编辑/排序/删除）、\texttt{PermissionChanged}（覆盖规则变化）。
+}{
+  写入 \texttt{Channel}（\texttt{type ∈ \{text, voice\}}）与 \texttt{PermissionOverwrite}；频道列表按用户权限过滤；删除后禁止继续发送消息或加入语音状态。
+}{
+  依赖 \texttt{PermissionsModule}、\texttt{RealtimeModule}、\texttt{AuditModule}；频道排序使用 \texttt{sortOrder} 字段，避免连续整数序列下并发写冲突；频道删除不级联删除历史消息，但置 \texttt{Channel.status='deleted'} 后不允许新建消息或语音会话。
+}
+
+\subsection{消息与附件模块}
+
+\ModuleSpec{\texttt{MessagesModule} + \texttt{AttachmentsModule}}{消息与附件模块}{FR-07、FR-13、FR-14、FR-15}{
+  文本频道与私聊消息的写入与历史查询；附件元数据初始化、上传完成回调与受保护访问；消息撤回与删除；维护 \texttt{ReadState} 未读位置；提及关系去重存储。
+}{
+  HTTP：\texttt{POST /channels/\{channel\_id\}/messages}、\texttt{GET /channels/\{channel\_id\}/messages}、\texttt{POST /dm-conversations/\{conversation\_id\}/messages}、\texttt{GET /dm-conversations/\{conversation\_id\}/messages}、\texttt{POST /messages/\{id\}/delete}、\texttt{POST /read-states}、\texttt{POST /attachments/init}、\texttt{POST /attachments/\{id\}/complete}、\texttt{GET /attachments/\{id\}}。\par
+  实时：发布 \texttt{MessageCreated}、\texttt{MessageDeleted}、\texttt{UnreadUpdated}、\texttt{NotificationCreated}。
+}{
+  在事务内写入 \texttt{Message}、\texttt{MessageMention}、\texttt{MessageAttachment}、\texttt{ReadState}、必要的 \texttt{Notification}；幂等键 \texttt{clientMessageId} 在 \texttt{(sender\_id, conversation/channel)} 范围内唯一；删除使用 \texttt{visibility='RETRACTED' | 'DELETED'} 软删除，保留审计元数据。
+}{
+  依赖 \texttt{PermissionsModule} 校验查看与发送权限；依赖 \texttt{NotificationsModule}、\texttt{RealtimeModule}、\texttt{AuditModule}；消息内容长度限制；附件类型与大小受 \texttt{UPLOAD\_MAX\_BYTES} 限制；附件访问必须结合业务上下文（消息所属频道或私聊）授权；游标分页默认按 \texttt{createdAt} 倒序。
+}
+
+\paragraph{撤回与删除 FR-15}
+发送者可撤回自己的消息（\texttt{operation='retract'}）；管理员可删除有权管理频道内的消息（\texttt{operation='delete'}）。删除只改变 \texttt{visibility} 并保留审计元数据；私聊中不允许删除对方历史记录的服务端存档。
+
+\paragraph{历史与未读 FR-14}
+\texttt{ReadState} 按用户与私聊/频道维度保存最近已读消息 ID 与未读数；当前打开会话收到新消息时由客户端上下文确认后自动 \texttt{MarkRead}；重连后以 HTTP 拉取的 \texttt{ReadState} 为权威，Socket 事件只做增量更新。
+
+\subsection{通知与未读模块}
+
+\ModuleSpec{\texttt{NotificationsModule}}{通知与未读模块}{FR-18，并协同承担 FR-07、FR-13、FR-14 的未读角标与实时同步}{
+  生成站内通知；未读计数与已读切换；通知去重；与消息模块协同更新未读角标。
+}{
+  HTTP：\texttt{GET /notifications}、\texttt{POST /notifications/read}。\par
+  实时：发布 \texttt{NotificationCreated}、\texttt{UnreadUpdated}；仅向 \texttt{user:\{user\_id\}} 房间投递。
+}{
+  写入 \texttt{Notification}（\texttt{type}、\texttt{sourceType}、\texttt{sourceId}、\texttt{contentPreview}、\texttt{dedupeKey} 唯一）；通知摘要不暴露受限内容；通知来源失效后保留摘要但不再展示原文。
+}{
+  依赖 \texttt{RealtimeModule}；通知只能由目标用户标记已读；同一业务事件不得重复生成等价通知；通知生成失败不回滚已经成功的消息写入，但必须记录错误并允许后续补偿。
+}
+
+\subsection{权限模块}
+
+\ModuleSpec{\texttt{PermissionsModule}}{权限模块}{FR-12、FR-19、FR-20}{
+  统一权限计算（\texttt{CheckPermission}）；角色 CRUD 与成员角色分配；频道权限覆盖；管理动作角色优先级比较；权限拒绝审计；订阅前置权限校验。
+}{
+  HTTP：\texttt{GET /servers/\{id\}/roles}、\texttt{POST /servers/\{id\}/roles}、\texttt{PATCH /roles/\{id\}}、\texttt{POST /servers/\{id\}/members/\{member\_id\}/roles}、\texttt{DELETE /servers/\{id\}/members/\{member\_id\}/roles/\{role\_id\}}、\texttt{POST /permissions/check}（内部调试用）。\par
+  实时：发布 \texttt{PermissionChanged}、协同发布 \texttt{MemberChanged}（角色分配/移除）。\par
+  内部：\texttt{PermissionGuard} + \texttt{@RequirePermission} 装饰器作为所有受控接口的统一入口。
+}{
+  写入 \texttt{Role}、\texttt{MembershipRole}、\texttt{PermissionOverwrite}；权限位 bitset 存储于 \texttt{Role.permissionBits} 与 \texttt{PermissionOverwrite.allowBits / denyBits}；默认角色不得删除到社区无默认权限状态。
+}{
+  依赖 \texttt{AuditModule}；权限计算顺序：所有者最高 → 验证账号有效 → 私聊参与者校验 → 加载社区数据 → 合并默认角色与成员角色 → 应用频道角色覆盖 → 应用成员覆盖 → 显式拒绝优先 → 管理动作比较优先级；管理员不能授予超出自身能力的权限。
+}
+
+\paragraph{PermissionBit 与 PermissionAction 双轨}
+代码中存在两套相关但不同的权限标识：
+
+\begin{itemize}
+  \item \textbf{PermissionBit}：11 个 bitset 标志（\texttt{VIEW\_CHANNEL}、\texttt{SEND\_MESSAGE}、\texttt{MANAGE\_MESSAGE}、\texttt{MANAGE\_CHANNEL}、\texttt{JOIN\_VOICE}、\texttt{SPEAK\_VOICE}、\texttt{LISTEN\_VOICE}、\texttt{MANAGE\_MEMBER}、\texttt{MANAGE\_ROLE}、\texttt{CREATE\_INVITE}、\texttt{VIEW\_AUDIT}），存储在 \texttt{Role.permissionBits} 与 \texttt{PermissionOverwrite.allowBits / denyBits}，可分配给角色或频道覆盖。
+  \item \textbf{PermissionAction}：14 个权限校验动作枚举，是 \texttt{PermissionGuard} 与 \texttt{@RequirePermission} 装饰器的入口动作名。其中 11 个 Action 与 11 个 Bit 一一对应，按 bitset 决定允许/拒绝。
+\end{itemize}
+
+另外 3 个 Action 是内置动作，没有对应 Bit，不能通过角色分配，由系统按资源关系自动判定：
+
+\noindent\begin{tabularx}{\textwidth}{L{3.6cm}L{4.4cm}Y}
+  \toprule
+  内置 Action & 触发位置 & 判定逻辑 \\
+  \midrule
+  \texttt{ACCESS\_ATTACHMENT} & \texttt{GET /attachments/:id} & 校验当前用户是否对附件所属业务资源（消息所属频道或私聊）有可见权限。 \\
+  \texttt{SUBSCRIBE\_REALTIME} & Socket.IO 订阅前置 & 按订阅范围（\texttt{user/dm/server/channel/voice}）走对应可见性校验。 \\
+  \texttt{VIEW\_MEMBERS} & \texttt{GET /servers/:id/members} & 当前用户必须是该社区有效成员（\texttt{memberStatus != removed/banned}）。 \\
+  \bottomrule
+\end{tabularx}
+
+\paragraph{角色层级}
+\begin{itemize}
+  \item 社区所有者：拥有社区最高权限，不受角色权限位限制；
+  \item 管理员/版主：由角色权限位授予管理能力，受角色 \texttt{priority} 限制；
+  \item 普通成员：通过默认角色与分配角色获得基础访问能力；
+  \item 访客/非成员：只能访问登录、注册与邀请预览。
+\end{itemize}
+
+管理动作比较使用操作者最高角色 \texttt{priority} 与目标成员最高角色 \texttt{priority}，所有者除外。管理员可通过频道覆盖拒绝目标角色或成员的 \texttt{SPEAK\_VOICE} 实现"闭麦房"，拒绝 \texttt{LISTEN\_VOICE} 实现"禁听"。
+
+\subsection{语音与媒体信令模块}
+
+\ModuleSpec{\texttt{VoiceModule} + \texttt{MediaSignalingModule}}{语音与媒体信令模块}{FR-16、FR-17}{
+  语音频道加入与退出；静音/闭麦/连接状态同步；mediasoup Router/Transport/Producer/Consumer 生命周期编排；AudioLevelObserver active speaker 检测；TURN HMAC 凭证签发；Worker 崩溃恢复。
+}{
+  HTTP：\texttt{POST /voice/channels/\{channel\_id\}/join}、\texttt{POST /voice/sessions/\{id\}/leave}、\texttt{PATCH /voice/sessions/\{id\}/state}、\texttt{GET /voice/sessions/\{id\}/ice-servers}。\par
+  实时（信令请求-响应）：\texttt{VoiceRouterCapabilities}、\texttt{VoiceTransportCreated}、\texttt{VoiceTransportConnect}、\texttt{VoiceProducerCreated}、\texttt{VoiceConsumerCreated}、\texttt{VoiceConsumerResumed}。\par
+  实时（广播）：\texttt{VoiceMemberJoined}、\texttt{VoiceMemberLeft}、\texttt{VoiceStateChanged}、\texttt{VoiceProducerClosed}、\texttt{VoiceActiveSpeaker}。
+}{
+  写入 \texttt{VoiceSession}（同一用户同一时刻只允许一个有效会话）；mediasoup 的 Router/Transport/Producer/Consumer 不入 PostgreSQL，仅以 Redis 键索引（\texttt{voice:router:\{channelId\}}、\texttt{voice:transport:\{sessionId\}:\{send|recv\}}、\texttt{voice:producer:\{sessionId\}}、\texttt{voice:consumer:\{sessionId\}:\{producerId\}}）；TURN 凭证为短 TTL HMAC（默认 5 分钟），由 \texttt{TURN\_SHARED\_SECRET} 签发，不落库。
+}{
+  依赖 \texttt{PermissionsModule}（\texttt{JOIN\_VOICE} / \texttt{SPEAK\_VOICE} / \texttt{LISTEN\_VOICE}）、\texttt{RealtimeModule}、\texttt{AuditModule}；Producer 创建前强制 \texttt{kind === 'audio'}，视频与屏幕共享拒绝；服务端不录音、不混音、不转写；30 秒内未完成媒体协商时释放会话；mediasoup Worker 崩溃后服务端关闭受影响 Session 并广播 \texttt{worker\_died}；单语音频道默认上限 \texttt{VOICE\_MAX\_PARTICIPANTS\_PER\_ROOM=20}。
+}
+
+\paragraph{加入与退出 FR-16}
+一个用户同一时刻只允许存在一个有效 \texttt{VoiceSession}；加入前检查频道类型、成员身份与 \texttt{JOIN\_VOICE} 权限；加入成功后必须在 30 秒内完成 mediasoup 媒体协商，否则服务端释放会话并广播 \texttt{VoiceMemberLeft(reason=signaling\_timeout)}；断线、退出社区、权限移除或频道删除时释放会话并关闭 Transport/Producer。
+
+\paragraph{状态同步 FR-17}
+状态字段包括 \texttt{muteState}、\texttt{deafenState}、\texttt{connectionStatus}（\texttt{CONNECTING/CONNECTED/RECONNECTING/DISCONNECTED}）、\texttt{mediaState}（\texttt{IDLE/NEGOTIATING/CONNECTED/RECONNECTING/FAILED}）；静音切换 = 服务端调用 mediasoup \texttt{Producer.pause/resume}；闭麦 = 客户端关闭所有 Consumer 音频元素并标记 \texttt{deafenState}；状态可达时间不超过 3 秒（NFR-02、AC-N2）。
+
+\paragraph{媒体信令拓扑}
+1 个 mediasoup Worker 进程池 → 每个语音频道分配 1 个 Router → 每个用户 1 个 send Transport + 1 个 recv Transport → 每个发言者 1 个 audio Producer，每个监听者按发言者数量创建 Consumer。active speaker 检测使用 AudioLevelObserver，服务端节流（≤ 2 次/秒）后广播 \texttt{VoiceActiveSpeaker}。
+
+\subsection{实时网关模块}
+
+\ModuleSpec{\texttt{RealtimeModule}}{实时网关模块}{FR-05、FR-13、FR-18 等所有需要实时同步的需求}{
+  Socket.IO 命名空间 \texttt{/realtime} 的握手鉴权；房间订阅与权限校验；事件信封封装与分发；重连补偿（\texttt{SyncState}）；与各业务模块的事件发布契约。
+}{
+  Socket：客户端事件 \texttt{Subscribe}、\texttt{Unsubscribe}、\texttt{Heartbeat}、\texttt{SyncState}、媒体信令事件；服务端事件信封统一为 \texttt{\{event\_id, event\_name, occurred\_at, payload, request\_id\}}。
+}{
+  不持久化业务数据；维护连接级元数据（\texttt{connection\_id}、\texttt{user\_id}、\texttt{connected\_at}、最近心跳）；Redis 保存活跃连接与房间辅助状态；事件 \texttt{event\_id} 用于客户端去重。
+}{
+  依赖 \texttt{PermissionsModule}（订阅前置 \texttt{SUBSCRIBE\_REALTIME}）；订阅前再次校验权限，仅把用户加入有权房间；权限变化后必须移除无权房间；事件只在数据库事务提交后发布；客户端 P0 写操作不通过 Socket 直接执行，统一走 HTTP 避免重复鉴权与校验。
+}
+
+\subsection{审计与支撑模块}
+
+\ModuleSpec{\texttt{AuditModule} + 公共能力}{审计与支撑模块}{FR-02、FR-10、FR-15、FR-20、NFR-08 至 NFR-16}{
+  关键动作审计；失败请求追踪；配置限制管理；统一错误处理；请求 ID 中间件；限流策略；日志结构化与脱敏。
+}{
+  内部能力：\texttt{AuditService.write(\{actor, target, action, result, failureReason, requestId\})}；公共能力 \texttt{AccessTokenGuard}、\texttt{PermissionGuard}、\texttt{ApiResponseInterceptor}、\texttt{ApiExceptionFilter}、配置服务。
+}{
+  写入 \texttt{AuditLog}；必须记录登录失败、权限拒绝、成员管理、角色变更、消息删除、频道删除、媒体异常（Producer \texttt{worker\_died} / \texttt{permission\_lost}、TURN 签发失败）；日志保留不少于 180 天。
+}{
+  日志不得记录明文密码、完整 token、完整验证码或完整敏感凭证；所有请求和事件链路必须携带 \texttt{request\_id} 或 \texttt{event\_id}；配置项支持运行期刷新（NFR-16）；限流维度按账号、IP、用户、社区、频道分别配置。
+}
+
+\subsection{模块到需求映射汇总}
+
+\noindent\begin{tabularx}{\textwidth}{L{1.8cm}L{4cm}Y}
+  \toprule
+  FR 编号 & 主要承担模块 & 关键接口 / 事件 \\
+  \midrule
+  FR-01 & 账号与身份 & \texttt{POST /auth/register}、\texttt{NotificationCreated} \\
+  FR-02 & 账号与身份 + 审计 & \texttt{POST /auth/login}、\texttt{PresenceChanged}、\texttt{UnreadUpdated} \\
+  FR-03 P1 & 账号与身份 & \texttt{POST /auth/password-reset} \\
+  FR-04 & 账号与身份 & \texttt{PATCH /users/me/profile} \\
+  FR-05 & 账号与身份 + 实时网关 & \texttt{PATCH /users/me/presence}、\texttt{PresenceChanged}、\texttt{Heartbeat} \\
+  FR-06 & 社交与私聊 + 通知 & \texttt{POST /friend-requests/...}、\texttt{NotificationCreated} \\
+  FR-07 & 社交与私聊 + 消息 & \texttt{POST /dm-conversations/\{id\}/messages}、\texttt{MessageCreated} \\
+  FR-08 & 社区与成员 & \texttt{POST /servers}、\texttt{MemberJoined}、\texttt{ChannelChanged} \\
+  FR-09 & 社区与成员 + 权限 & \texttt{POST /servers/join}、\texttt{POST /servers/\{id\}/leave}、\texttt{PermissionChanged} \\
+  FR-10 & 社区与成员 + 审计 & \texttt{PATCH /servers/\{id\}/members/\{id\}}、\texttt{MemberChanged} \\
+  FR-11 & 频道 + 实时 & \texttt{POST/PATCH/DELETE /channels}、\texttt{ChannelChanged} \\
+  FR-12 & 频道 + 权限 & \texttt{CheckPermission}、\texttt{PermissionChanged} \\
+  FR-13 & 消息与附件 + 通知 & \texttt{POST /channels/\{id\}/messages}、\texttt{MessageCreated} \\
+  FR-14 & 消息与附件 + 通知 & \texttt{GET /channels/\{id\}/messages}、\texttt{POST /read-states}、\texttt{UnreadUpdated} \\
+  FR-15 & 消息与附件 + 审计 & \texttt{POST /messages/\{id\}/delete}、\texttt{MessageDeleted} \\
+  FR-16 & 语音 + 媒体信令 + 权限 & \texttt{POST /voice/channels/\{id\}/join}、\texttt{VoiceMemberJoined}、媒体信令事件 \\
+  FR-17 & 语音 + 媒体信令 & \texttt{PATCH /voice/sessions/\{id\}/state}、\texttt{VoiceStateChanged}、\texttt{VoiceActiveSpeaker} \\
+  FR-18 & 通知与未读 & \texttt{GET/POST /notifications}、\texttt{NotificationCreated}、\texttt{UnreadUpdated} \\
+  FR-19 & 权限 + 审计 & \texttt{POST/PATCH /roles}、\texttt{PermissionChanged} \\
+  FR-20 & 权限（全模块统一拦截） & 所有受控接口的 \texttt{PermissionGuard} \\
+  \bottomrule
+\end{tabularx}
+
+\subsection{本章需求映射}
+\noindent\begin{tabularx}{\textwidth}{L{3cm}Y}
+  \toprule
+  本章承担 & 说明 \\
+  \midrule
+  FR-01 至 FR-20 & 模块拆分 + 上表汇总，保证每条 FR 至少一个承担模块。 \\
+  NFR-08 至 NFR-16 & 审计与支撑模块承担可观测性、审计、配置与安全相关非功能指标。 \\
+  AC-04 权限控制有效 & 权限模块的统一拦截与角色层级设计承担。 \\
+  AC-N4 权限与隐私保护 & 通过 PermissionAction + Audit + 模块边界三重保障承担。 \\
+  AC-E5 / AC-E7 越权拦截 & 权限模块计算顺序与角色优先级比较承担。 \\
+  \bottomrule
+\end{tabularx}
