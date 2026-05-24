@@ -83,7 +83,7 @@ describe('VoiceService', () => {
     prisma.$queryRaw.mockResolvedValueOnce([{ count: '1' }]);
     tx.$queryRaw.mockResolvedValueOnce([]);
     tx.$queryRaw.mockResolvedValueOnce([
-      voiceSessionRow({ channelId: channelId(2), id: sessionId(2), mediaState: 'negotiating' }),
+      voiceSessionRow({ channelId: channelId(2), id: sessionId(2), mediaState: 'NEGOTIATING' }),
     ]);
     prisma.$queryRaw.mockResolvedValueOnce([
       {
@@ -117,7 +117,7 @@ describe('VoiceService', () => {
         router_rtp_capabilities: { codecs: [] },
         signaling_channel: `voice:${channelId(2)}`,
       },
-      media_state: 'negotiating',
+      media_state: 'NEGOTIATING',
       session_id: sessionId(2),
     });
     expect(mediaSignalingService.prepareRouter).toHaveBeenCalledWith(channelId(2));
@@ -156,7 +156,7 @@ describe('VoiceService', () => {
     prisma.$queryRaw.mockResolvedValueOnce([{ count: '0' }]);
     tx.$queryRaw.mockResolvedValueOnce([voiceSessionRow({ channelId: channelId(1), id: sessionId(1) })]);
     tx.$queryRaw.mockResolvedValueOnce([
-      voiceSessionRow({ channelId: channelId(2), id: sessionId(2), mediaState: 'negotiating' }),
+      voiceSessionRow({ channelId: channelId(2), id: sessionId(2), mediaState: 'NEGOTIATING' }),
     ]);
     prisma.$queryRaw.mockResolvedValueOnce([]);
 
@@ -207,7 +207,7 @@ describe('VoiceService', () => {
   });
 
   it('sweeps expired negotiations and broadcasts signaling timeout', async () => {
-    prisma.$queryRaw.mockResolvedValueOnce([voiceSessionRow({ id: sessionId(9), mediaState: 'negotiating' })]);
+    prisma.$queryRaw.mockResolvedValueOnce([voiceSessionRow({ id: sessionId(9), mediaState: 'NEGOTIATING' })]);
 
     await service.sweepNegotiationTimeouts();
 
@@ -250,11 +250,11 @@ function voiceSessionRow(overrides: Record<string, unknown> = {}) {
   return {
     avatarAttachmentId: null,
     channelId: channelId(1),
-    connectionStatus: 'connected',
+    connectionStatus: 'CONNECTED',
     deafenState: false,
     id: sessionId(1),
     joinedAt: now,
-    mediaState: 'negotiating',
+    mediaState: 'NEGOTIATING',
     muteState: false,
     producerId: null,
     recvTransportId: null,

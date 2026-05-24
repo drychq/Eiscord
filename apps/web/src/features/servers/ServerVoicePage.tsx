@@ -20,11 +20,11 @@ import { voiceClient, type VoiceClientStatus } from '../voice/voice-client';
 import { useServerDetail } from './use-servers-queries';
 
 const STATUS_LABEL: Record<VoiceClientStatus, string> = {
-  idle: '未连接',
-  negotiating: '协商中',
-  connected: '已连接',
-  reconnecting: '重连中',
-  failed: '协商失败',
+  IDLE: '未连接',
+  NEGOTIATING: '协商中',
+  CONNECTED: '已连接',
+  RECONNECTING: '重连中',
+  FAILED: '协商失败',
 };
 
 export function ServerVoicePage() {

@@ -1,6 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 
-import { RealtimeEvent } from '@eiscord/shared';
+import { RealtimeEvent, VoiceConnectionStatus, VoiceMediaState } from '@eiscord/shared';
 
 import { PrismaService } from '../../common/persistence/prisma.service';
 import { buildRealtimeRoom } from '../realtime/realtime.rooms';
@@ -117,8 +117,8 @@ export class MediasoupRouterRegistry implements OnModuleInit {
         const sessions = await this.prisma.$queryRaw<AffectedSessionRow[]>`
           UPDATE voice_sessions
           SET
-            connection_status = 'disconnected',
-            media_state = 'failed',
+            connection_status = ${VoiceConnectionStatus.Disconnected},
+            media_state = ${VoiceMediaState.Failed},
             negotiation_deadline = NULL,
             ended_at = COALESCE(ended_at, NOW()),
             updated_at = NOW()

@@ -67,7 +67,7 @@ describe('voice-client', () => {
 
     await expect(client.start(startInput)).rejects.toThrow('mediasoup worker exited.');
 
-    expect(client.status()).toBe('failed');
+    expect(client.status()).toBe('FAILED');
     expect(client.isStarted()).toBe(false);
     expect(socketClient.off).toHaveBeenCalledWith('VoiceProducerCreated', expect.any(Function));
     expect(socketClient.off).toHaveBeenCalledWith('VoiceProducerClosed', expect.any(Function));

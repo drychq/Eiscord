@@ -49,7 +49,7 @@ export function VoiceStrip() {
       <Headphones size={18} />
       <div>
         <strong>语音已连接</strong>
-        <span>{activeVoiceSession?.connection_status ?? 'connected'}</span>
+        <span>{activeVoiceSession?.connection_status ?? 'CONNECTED'}</span>
       </div>
       {activeVoiceSession && (
         <div className="voice-strip-controls">

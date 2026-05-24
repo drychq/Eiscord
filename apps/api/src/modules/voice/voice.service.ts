@@ -1,7 +1,7 @@
 import { HttpStatus, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
-import { ErrorCode, JoinVoiceMediaResponse, RealtimeEvent, VoiceActiveProducer } from '@eiscord/shared';
+import { ErrorCode, JoinVoiceMediaResponse, RealtimeEvent, VoiceActiveProducer, VoiceConnectionStatus, VoiceMediaState } from '@eiscord/shared';
 
 import { AuthenticatedUserContext } from '../../common/auth/auth.types';
 import { AppError } from '../../common/errors/app-error';
@@ -117,8 +117,8 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
           ${user.userId}::uuid,
           ${dto.initial_mute_state ?? false},
           ${dto.initial_deafen_state ?? false},
-          'connecting',
-          'negotiating',
+          ${VoiceConnectionStatus.Connecting},
+          ${VoiceMediaState.Negotiating},
           ${router.routerId},
           NOW() + (${negotiationTimeoutMs}::int * INTERVAL '1 millisecond')
         )
@@ -531,7 +531,7 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
       FROM voice_sessions vs
       INNER JOIN users u ON u.id = vs.user_id
       WHERE vs.ended_at IS NULL
-        AND vs.media_state IN ('negotiating', 'reconnecting')
+        AND vs.media_state IN (${VoiceMediaState.Negotiating}, ${VoiceMediaState.Reconnecting})
         AND vs.negotiation_deadline IS NOT NULL
         AND vs.negotiation_deadline < NOW()
       LIMIT 50
@@ -794,8 +794,8 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
     await tx.$executeRaw`
       UPDATE voice_sessions
       SET
-        connection_status = 'disconnected',
-        media_state = 'idle',
+        connection_status = ${VoiceConnectionStatus.Disconnected},
+        media_state = ${VoiceMediaState.Idle},
         negotiation_deadline = NULL,
         ended_at = COALESCE(ended_at, NOW()),
         updated_at = NOW()

@@ -162,7 +162,7 @@ describe('RealtimeGateway', () => {
       ]);
       voiceService.getActiveSessionForUser.mockResolvedValueOnce({
         id: 'vs-1', channelId: 'vc-1', userId: userId(), muteState: 'unmuted', deafenState: 'undeafened',
-        connectionStatus: 'connected', joinedAt: new Date(), updatedAt: new Date(),
+        connectionStatus: 'CONNECTED', joinedAt: new Date(), updatedAt: new Date(),
       });
       const socket = mockSocket({ user });
       const result = await gateway.handleSyncState(socket);

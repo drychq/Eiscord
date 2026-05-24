@@ -349,8 +349,8 @@ model VoiceSession {
   userId              String    @map("user_id") @db.Uuid
   muteState           Boolean   @default(false) @map("mute_state")
   deafenState         Boolean   @default(false) @map("deafen_state")
-  connectionStatus    String    @default("connecting") @map("connection_status") @db.VarChar(32)
-  mediaState          String    @default("idle") @map("media_state") @db.VarChar(32)
+  connectionStatus    String    @default("CONNECTING") @map("connection_status") @db.VarChar(32)
+  mediaState          String    @default("IDLE") @map("media_state") @db.VarChar(32)
   negotiationDeadline DateTime? @map("negotiation_deadline") @db.Timestamptz(6)
   routerId            String?   @map("router_id") @db.VarChar(64)
   sendTransportId     String?   @map("send_transport_id") @db.VarChar(64)

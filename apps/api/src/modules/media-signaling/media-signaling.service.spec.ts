@@ -17,7 +17,7 @@ const user = {
 const session = {
   channelId: '00000000-0000-4000-8000-000000000201',
   id: '00000000-0000-4000-8000-000000000301',
-  mediaState: 'negotiating',
+  mediaState: 'NEGOTIATING',
   producerId: null,
   recvTransportId: 'recv-transport',
   routerId: 'router-id',

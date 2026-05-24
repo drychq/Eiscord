@@ -26,7 +26,7 @@ export type FriendshipStatus = (typeof FriendshipStatus)[keyof typeof Friendship
 
 export const MessageVisibility = {
   Visible: 'VISIBLE',
-  Withdrawn: 'WITHDRAWN',
+  Retracted: 'RETRACTED',
   Deleted: 'DELETED',
 } as const;
 
@@ -41,6 +41,16 @@ export const VoiceConnectionStatus = {
 
 export type VoiceConnectionStatus =
   (typeof VoiceConnectionStatus)[keyof typeof VoiceConnectionStatus];
+
+export const VoiceMediaState = {
+  Idle: 'IDLE',
+  Negotiating: 'NEGOTIATING',
+  Connected: 'CONNECTED',
+  Reconnecting: 'RECONNECTING',
+  Failed: 'FAILED',
+} as const;
+
+export type VoiceMediaState = (typeof VoiceMediaState)[keyof typeof VoiceMediaState];
 
 export const NotificationType = {
   FriendRequest: 'FRIEND_REQUEST',

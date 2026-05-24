@@ -26,7 +26,7 @@ export function MessageBubble({ message, onRetract, onDelete }: MessageBubblePro
   const currentUserId = useAuthStore((s) => s.currentUser?.user_id);
   const isOwn = message.sender.user_id === currentUserId;
   const visibility = message.visibility.toLowerCase();
-  const isWithdrawn = visibility === 'withdrawn';
+  const isRetracted = visibility === 'retracted';
   const isDeleted = visibility === 'deleted';
 
   const createdAt = new Date(message.created_at);
@@ -48,7 +48,7 @@ export function MessageBubble({ message, onRetract, onDelete }: MessageBubblePro
     );
   }
 
-  if (isWithdrawn) {
+  if (isRetracted) {
     return (
       <div className="message-row message-system">
         <div className="avatar avatar-system" />

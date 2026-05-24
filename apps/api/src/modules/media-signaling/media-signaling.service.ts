@@ -1,6 +1,6 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
 
-import { ErrorCode, RealtimeEvent } from '@eiscord/shared';
+import { ErrorCode, RealtimeEvent, VoiceConnectionStatus, VoiceMediaState } from '@eiscord/shared';
 
 import type { AuthenticatedUserContext } from '../../common/auth/auth.types';
 import { AppError } from '../../common/errors/app-error';
@@ -157,8 +157,8 @@ export class MediaSignalingService {
     await this.prisma.$executeRaw`
       UPDATE voice_sessions
       SET
-        connection_status = 'connected',
-        media_state = 'connected',
+        connection_status = ${VoiceConnectionStatus.Connected},
+        media_state = ${VoiceMediaState.Connected},
         negotiation_deadline = NULL,
         producer_id = ${result.producerId},
         updated_at = NOW()
@@ -183,8 +183,8 @@ export class MediaSignalingService {
       RealtimeEvent.VoiceStateChanged,
       {
         channel_id: session.channelId,
-        connection_status: 'connected',
-        media_state: 'connected',
+        connection_status: VoiceConnectionStatus.Connected,
+        media_state: VoiceMediaState.Connected,
         session_id: session.id,
         updated_at: new Date().toISOString(),
         user_id: user.userId,

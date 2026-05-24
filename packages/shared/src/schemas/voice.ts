@@ -3,10 +3,10 @@ import { z } from 'zod';
 import { voiceMediaStateSchema } from './voice-media';
 
 export const voiceConnectionStatusSchema = z.enum([
-  'connecting',
-  'connected',
-  'reconnecting',
-  'disconnected',
+  'CONNECTING',
+  'CONNECTED',
+  'RECONNECTING',
+  'DISCONNECTED',
 ]);
 
 export const joinVoiceChannelRequestSchema = z

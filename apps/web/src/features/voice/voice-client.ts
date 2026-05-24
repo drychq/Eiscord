@@ -1,5 +1,6 @@
 import { Device } from 'mediasoup-client';
 import type { ConnectionState, Consumer, Producer, Transport } from 'mediasoup-client/types';
+import { VoiceMediaState } from '@eiscord/shared';
 import type {
   IceServer,
   JoinVoiceMediaResponse,
@@ -9,7 +10,7 @@ import type {
 
 import * as socketClient from '../../shared/api/socket-client';
 
-export type VoiceClientStatus = 'idle' | 'negotiating' | 'connected' | 'reconnecting' | 'failed';
+export type VoiceClientStatus = VoiceMediaState;
 
 type RemoteTrackListener = (userId: string, stream: MediaStream | null) => void;
 type ActiveSpeakerListener = (userId: string | null, audioLevel: number) => void;
@@ -94,7 +95,7 @@ function toRTCIceServers(iceServers: IceServer[]): RTCIceServer[] {
 }
 
 export function createVoiceClient(): VoiceClient {
-  let status: VoiceClientStatus = 'idle';
+  let status: VoiceClientStatus = VoiceMediaState.Idle;
   let started = false;
   let startInput: VoiceClientStartInput | null = null;
   let device: Device | null = null;
@@ -250,12 +251,12 @@ export function createVoiceClient(): VoiceClient {
   function handleTransportStateChange(name: 'send' | 'recv', state: ConnectionState) {
     if (state === 'failed' || state === 'disconnected' || state === 'closed') {
       console.warn(`${STATUS_LOG_PREFIX} ${name} transport entered ${state}`);
-      if (started && status === 'connected') {
-        setStatus('reconnecting');
+      if (started && status === VoiceMediaState.Connected) {
+        setStatus(VoiceMediaState.Reconnecting);
       }
-    } else if (state === 'connected' && status !== 'connected') {
+    } else if (state === 'connected' && status !== VoiceMediaState.Connected) {
       if (sendTransport && recvTransport && producer && !producer.closed) {
-        setStatus('connected');
+        setStatus(VoiceMediaState.Connected);
       }
     }
   }
@@ -263,7 +264,7 @@ export function createVoiceClient(): VoiceClient {
   function handleWorkerDied() {
     if (!started) return;
     console.warn(`${STATUS_LOG_PREFIX} mediasoup worker died — signaling UI to rejoin`);
-    setStatus('reconnecting');
+    setStatus(VoiceMediaState.Reconnecting);
     void teardownMedia();
     started = false;
     startInput = null;
@@ -279,7 +280,7 @@ export function createVoiceClient(): VoiceClient {
   }
 
   async function negotiate(input: VoiceClientStartInput): Promise<void> {
-    setStatus('negotiating');
+    setStatus(VoiceMediaState.Negotiating);
     const router = await socketClient.request<RouterCapabilitiesResponse>('VoiceRouterCapabilities', {
       channel_id: input.channelId,
       session_id: input.sessionId,
@@ -453,7 +454,7 @@ export function createVoiceClient(): VoiceClient {
       bindSocketListener('VoiceActiveSpeaker', handleActiveSpeaker);
       try {
         await negotiate(input);
-        setStatus('connected');
+        setStatus(VoiceMediaState.Connected);
       } catch (error) {
         console.error(`${STATUS_LOG_PREFIX} start failed:`, error);
         started = false;
@@ -468,7 +469,7 @@ export function createVoiceClient(): VoiceClient {
           }
         }
         await teardownMedia();
-        setStatus('failed');
+        setStatus(VoiceMediaState.Failed);
         throw error;
       }
     },
@@ -485,7 +486,7 @@ export function createVoiceClient(): VoiceClient {
         }
       }
       await teardownMedia();
-      setStatus('idle');
+      setStatus(VoiceMediaState.Idle);
       if (reason) {
         console.info(`${STATUS_LOG_PREFIX} stopped: ${reason}`);
       }

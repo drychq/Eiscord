@@ -1,11 +1,11 @@
 import { z } from 'zod';
 
 export const voiceMediaStateSchema = z.enum([
-  'idle',
-  'negotiating',
-  'connected',
-  'reconnecting',
-  'failed',
+  'IDLE',
+  'NEGOTIATING',
+  'CONNECTED',
+  'RECONNECTING',
+  'FAILED',
 ]);
 
 export type VoiceMediaStateValue = z.infer<typeof voiceMediaStateSchema>;

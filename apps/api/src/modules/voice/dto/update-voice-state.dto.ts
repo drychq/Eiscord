@@ -1,10 +1,10 @@
 import { IsBoolean, IsIn, IsOptional, ValidateIf } from 'class-validator';
 
 export type VoiceConnectionStatusValue =
-  | 'connecting'
-  | 'connected'
-  | 'reconnecting'
-  | 'disconnected';
+  | 'CONNECTING'
+  | 'CONNECTED'
+  | 'RECONNECTING'
+  | 'DISCONNECTED';
 
 export class UpdateVoiceStateDto {
   @IsOptional()
@@ -16,7 +16,7 @@ export class UpdateVoiceStateDto {
   deafen_state?: boolean;
 
   @IsOptional()
-  @IsIn(['connecting', 'connected', 'reconnecting', 'disconnected'])
+  @IsIn(['CONNECTING', 'CONNECTED', 'RECONNECTING', 'DISCONNECTED'])
   connection_status?: VoiceConnectionStatusValue;
 
   @ValidateIf(

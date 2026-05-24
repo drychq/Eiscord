@@ -24,11 +24,11 @@ describe('voice schemas', () => {
     expect(() => updateVoiceStateRequestSchema.parse({})).toThrow();
     expect(
       updateVoiceStateRequestSchema.parse({
-        connection_status: 'connected',
+        connection_status: 'CONNECTED',
         mute_state: true,
       }),
     ).toEqual({
-      connection_status: 'connected',
+      connection_status: 'CONNECTED',
       mute_state: true,
     });
   });
@@ -37,10 +37,10 @@ describe('voice schemas', () => {
     expect(() =>
       voiceSessionSummarySchema.parse({
         channel_id: '00000000-0000-4000-8000-000000000001',
-        connection_status: 'connected',
+        connection_status: 'CONNECTED',
         deafen_state: false,
         joined_at: '2026-05-04T00:00:00.000Z',
-        media_state: 'connected',
+        media_state: 'CONNECTED',
         member: {
           avatar_attachment_id: null,
           nickname: 'Alice',
