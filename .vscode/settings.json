@@ -2,8 +2,8 @@
   "latex-workshop.latex.autoBuild.run": "onSave",
   "latex-workshop.latex.build.enableMagicComments": false,
   "latex-workshop.view.pdf.viewer": "tab",
-  "latex-workshop.latex.auxDir": "d:/Eiscord/1/Eiscord/build",
-  "latex-workshop.latex.outDir": "d:/Eiscord/1/Eiscord/output",
+  "latex-workshop.latex.auxDir": "%WORKSPACE_FOLDER%/build",
+  "latex-workshop.latex.outDir": "%WORKSPACE_FOLDER%/output",
   "latex-workshop.latex.tools": [
     {
       "name": "workspace-latexmk-direct",
@@ -14,8 +14,8 @@
         "-synctex=1",
         "-interaction=nonstopmode",
         "-file-line-error",
-        "-auxdir=d:/Eiscord/1/Eiscord/build",
-        "-outdir=d:/Eiscord/1/Eiscord/output",
+        "-outdir=%WORKSPACE_FOLDER%/output",
+        "-auxdir=%WORKSPACE_FOLDER%/build",
         "%DOCFILE%"
       ]
     }
