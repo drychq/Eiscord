@@ -9,6 +9,8 @@ export const ErrorCode = {
   RateLimited: 'RATE_LIMITED',
   DependencyUnavailable: 'DEPENDENCY_UNAVAILABLE',
   InternalError: 'INTERNAL_ERROR',
+  PasswordResetTokenInvalid: 'PASSWORD_RESET_TOKEN_INVALID',
+  PasswordResetTooManyAttempts: 'PASSWORD_RESET_TOO_MANY_ATTEMPTS',
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

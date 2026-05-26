@@ -121,6 +121,16 @@ target_resource
 - 日志不得记录明文密码、完整 token、完整验证码或完整敏感凭证。
 - 登录失败记录审计，并按账号和 IP 维度限流。
 
+### 密码重置（OTP 两步流程）
+
+- `POST /auth/forgot-password` 与 `POST /auth/reset-password` 均匿名访问，并通过 `@RateLimit` 装饰器各自限流。
+- OTP 为 6 位十进制，由 `crypto.randomInt` 生成，仅以 SHA-256 哈希落库；明文仅经邮件发送给注册邮箱，不写日志、不进审计 metadata（审计层对名为 `code`/`password`/`token` 的元数据键自动 `[redacted]`）。
+- TTL 15 分钟，单 OTP 最多 5 次失败核验；达到上限或 OTP 过期时强制清空所有 `password_reset_*` 字段，要求用户重新走 forgot-password。
+- 反枚举铁律：forgot-password 始终返回 `200 + 统一文案`（即使邮箱未注册、格式非法、账户被禁、命中冷却），实际内部状态仅在审计 `failureReason` 中体现；reset-password 对 {无用户/无活动 token/code 错/已过期} 统一返回 `PASSWORD_RESET_TOKEN_INVALID`，仅 `PASSWORD_RESET_TOO_MANY_ATTEMPTS` 单独可见。
+- 重置成功必须在单个 `prisma.$transaction` 内完成：写入新 `password_hash` → 清空 `password_reset_*` → 吊销该用户全部活跃 `AuthSession`，确保旧 access/refresh 凭据立即失效。
+- 同邮箱 60 秒重发冷却通过比对 `passwordResetExpiresAt - now > TTL - cooldown` 实现，不引入新数据列。
+- 邮件基础设施（`MailerService`）仅服务于本流程；不引入异步队列，发送同步完成；SMTP 失败时仍向客户端返回统一成功文案，仅审计 `failureReason=mail_send_failed`。
+
 ### 传输与存储
 
 - 生产环境必须使用 HTTPS/WSS。
@@ -140,6 +150,8 @@ target_resource
 |---|---|
 | 登录 | 账号、IP |
 | 注册 | IP、联系方式 |
+| 密码重置申请 (`POST /auth/forgot-password`) | IP（10/小时）+ 同邮箱 60 秒重发冷却（基于 DB 中现有 OTP 过期时间推算） |
+| 密码重置确认 (`POST /auth/reset-password`) | IP（20/小时）+ 单 OTP 最多 5 次错误核验（DB `passwordResetAttempts` 计数） |
 | 发送消息 | 用户、频道或私聊 |
 | 创建邀请 | 用户、社区 |
 | 附件初始化 | 用户、文件大小总量 |
@@ -163,6 +175,7 @@ target_resource
 必须记录：
 
 - 登录失败、账号禁用登录尝试。
+- 密码重置：`ForgotPassword`（result 一律 success 防枚举，`failureReason` 区分 `sent` / `user_not_found` / `cooldown_blocked` / `mail_send_failed` / `invalid_email_format` / `account_{status}`）、`ResetPassword`（success 或 failure，`failureReason` 区分 `weak_password` / `invalid_input` / `no_active_token` / `expired` / `too_many_attempts` / `invalid_code`）。
 - 权限拒绝。
 - 成员移除、禁言、恢复。
 - 频道创建、编辑、删除。

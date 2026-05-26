@@ -19,6 +19,7 @@ import { FriendsModule } from './modules/friends/friends.module';
 import { HealthModule } from './modules/health/health.module';
 import { MessagesModule } from './modules/messages/messages.module';
 import { MediaSignalingModule } from './modules/media-signaling/media-signaling.module';
+import { MailerModule } from './modules/mailer/mailer.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { PermissionsModule } from './modules/permissions/permissions.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
@@ -47,6 +48,7 @@ import { VoiceModule } from './modules/voice/voice.module';
     VoiceModule,
     MediaSignalingModule,
     RealtimeModule,
+    MailerModule,
     AuditModule,
   ],
   providers: [

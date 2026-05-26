@@ -148,6 +148,35 @@ button:disabled {
   font-size: var(--font-size-sm);
 }
 
+.auth-card .auth-success {
+  margin-bottom: var(--space-lg);
+  padding: 10px 14px;
+  border-radius: var(--radius-md);
+  color: var(--accent);
+  background: var(--accent-ring);
+  border: 1px solid var(--accent);
+  font-size: var(--font-size-sm);
+}
+
+.auth-card .link-button {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--accent);
+  font: inherit;
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+}
+
+.auth-card .link-button:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+.auth-card .link-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .auth-card .auth-link {
   margin-top: var(--space-lg);
   color: var(--text-secondary);

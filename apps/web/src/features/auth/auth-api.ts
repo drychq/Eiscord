@@ -1,11 +1,17 @@
 import {
+  forgotPasswordResponseSchema,
   loginResponseSchema,
-  registerResponseSchema,
   logoutResponseSchema,
+  registerResponseSchema,
+  resetPasswordResponseSchema,
+  type ForgotPasswordRequest,
+  type ForgotPasswordResponse,
   type LoginRequest,
   type LoginResponse,
   type RegisterRequest,
   type RegisterResponse,
+  type ResetPasswordRequest,
+  type ResetPasswordResponse,
 } from '@eiscord/shared';
 import { request } from '../../shared/api/http-client';
 
@@ -33,5 +39,23 @@ export function refreshSession(refreshToken: string): Promise<LoginResponse> {
 export function logoutUser(): Promise<{ ok: true }> {
   return request<{ ok: true }>('POST', '/auth/logout', {
     schema: logoutResponseSchema,
+  });
+}
+
+export function requestPasswordReset(
+  input: ForgotPasswordRequest,
+): Promise<ForgotPasswordResponse> {
+  return request<ForgotPasswordResponse>('POST', '/auth/forgot-password', {
+    body: input,
+    schema: forgotPasswordResponseSchema,
+  });
+}
+
+export function confirmPasswordReset(
+  input: ResetPasswordRequest,
+): Promise<ResetPasswordResponse> {
+  return request<ResetPasswordResponse>('POST', '/auth/reset-password', {
+    body: input,
+    schema: resetPasswordResponseSchema,
   });
 }

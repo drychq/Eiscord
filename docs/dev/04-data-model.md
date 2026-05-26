@@ -25,9 +25,12 @@
 | `bio` | 个性签名。 |
 | `accountStatus` | `pending_verification`、`active`、`disabled`。 |
 | `presenceStatus` | 用户设置或系统推导的在线状态。 |
+| `passwordResetCodeHash` | 当前密码重置 OTP 的 SHA-256 哈希，nullable；签发新 OTP 或重置成功后清空。 |
+| `passwordResetExpiresAt` | 当前 OTP 失效时间，nullable；与 `passwordResetCodeHash` 同时存在或同时为 NULL。 |
+| `passwordResetAttempts` | 当前 OTP 已发生的失败核验次数，默认 0；达到上限后强制清空 OTP 并要求重新发起 forgot-password。 |
 | `createdAt`、`updatedAt` | 创建和更新时间。 |
 
-约束：`username` 和 `emailOrPhone` 唯一；禁用账号不能登录；删除或注销账号后登录凭证失效，历史消息按展示策略脱敏。
+约束：`username` 和 `emailOrPhone` 唯一；禁用账号不能登录；删除或注销账号后登录凭证失效，历史消息按展示策略脱敏。密码重置 OTP 字段仅在 `POST /auth/forgot-password` 与 `POST /auth/reset-password` 间承载流程状态，不参与登录、注册或资料读写；OTP 仅存哈希，禁止落明文。
 
 ### AuthSession
 

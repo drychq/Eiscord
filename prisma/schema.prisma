@@ -8,17 +8,20 @@ datasource db {
 }
 
 model User {
-  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  username           String   @unique @db.VarChar(32)
-  emailOrPhone       String   @unique @map("email_or_phone") @db.VarChar(320)
-  passwordHash       String   @map("password_hash") @db.VarChar(256)
-  nickname           String   @db.VarChar(64)
-  avatarAttachmentId String?  @map("avatar_attachment_id") @db.Uuid
-  bio                String?  @db.VarChar(280)
-  accountStatus      String   @default("active") @map("account_status") @db.VarChar(32)
-  presenceStatus     String   @default("offline") @map("presence_status") @db.VarChar(32)
-  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt          DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id                     String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  username               String    @unique @db.VarChar(32)
+  emailOrPhone           String    @unique @map("email_or_phone") @db.VarChar(320)
+  passwordHash           String    @map("password_hash") @db.VarChar(256)
+  nickname               String    @db.VarChar(64)
+  avatarAttachmentId     String?   @map("avatar_attachment_id") @db.Uuid
+  bio                    String?   @db.VarChar(280)
+  accountStatus          String    @default("active") @map("account_status") @db.VarChar(32)
+  presenceStatus         String    @default("offline") @map("presence_status") @db.VarChar(32)
+  passwordResetCodeHash  String?   @map("password_reset_code_hash") @db.VarChar(64)
+  passwordResetExpiresAt DateTime? @map("password_reset_expires_at") @db.Timestamptz(6)
+  passwordResetAttempts  Int       @default(0) @map("password_reset_attempts")
+  createdAt              DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt              DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   avatarAttachment Attachment?          @relation("UserAvatar", fields: [avatarAttachmentId], references: [id], onDelete: SetNull)
   attachments      Attachment[]         @relation("AttachmentOwner")

@@ -47,6 +47,8 @@
 | 409 | `CONFLICT` | 唯一约束、重复申请、重复加入、幂等冲突。 |
 | 413 | `PAYLOAD_TOO_LARGE` | 消息或附件超过限制。 |
 | 429 | `RATE_LIMITED` | 登录、消息或邀请等操作触发限流。 |
+| 400 | `PASSWORD_RESET_TOKEN_INVALID` | 密码重置 OTP 不存在、不匹配、已过期或对应账户无活动重置流程；统一返回此码以防邮箱枚举。 |
+| 429 | `PASSWORD_RESET_TOO_MANY_ATTEMPTS` | 同一 OTP 累计错误次数达上限，已被强制作废，要求重新发起 forgot-password。 |
 | 500 | `INTERNAL_ERROR` | 服务端未知错误。 |
 | 503 | `DEPENDENCY_UNAVAILABLE` | 文件、通知、验证等依赖不可用。 |
 
@@ -124,7 +126,57 @@
 
 ### `POST /auth/password-reset`
 
-对应 `ResetPassword`，作为 P1 接口保留。验证凭据过期、重复使用或账号不存在时返回统一失败，不泄露账号存在性。
+> ⚠️ 历史接口名占位，实际拆分为下面两个端点（OTP 验证码两步流程）。
+
+### `POST /auth/forgot-password`
+
+对应 `ForgotPassword`，覆盖 FR-03。匿名访问，IP 维度限流 10 次/小时。
+
+请求：
+
+```json
+{ "email": "alice@example.com" }
+```
+
+响应（**无论邮箱是否注册都返回相同结构**，防止邮箱枚举）：
+
+```json
+{ "message": "若邮箱已注册，验证码已发送至该邮箱" }
+```
+
+行为约定：
+
+- 邮箱格式非法、邮箱未注册、账户非 `active`、或同邮箱 60 秒内重复请求时，**仍返回 200 + 上述统一响应**，仅在审计日志的 `failureReason` 中记录内部原因（`invalid_email_format` / `user_not_found` / `account_{status}` / `cooldown_blocked`）。
+- 命中合法账户时签发 6 位十进制 OTP（`crypto.randomInt` + 左补 0），明文仅通过邮件发送给注册邮箱；服务端只存 SHA-256 哈希、过期时间（默认 15 分钟）和错误次数（重置为 0），并写入用户行。
+- 邮件发送失败时仍返回成功响应，但审计 `failureReason=mail_send_failed`；不向客户端暴露 SMTP 状态。
+
+### `POST /auth/reset-password`
+
+对应 `ResetPassword`，覆盖 FR-03。匿名访问，IP 维度限流 20 次/小时。
+
+请求：
+
+```json
+{
+  "email": "alice@example.com",
+  "code": "123456",
+  "new_password": "NewPassword1"
+}
+```
+
+响应：
+
+```json
+{ "message": "密码已重置，请使用新密码登录" }
+```
+
+错误：
+
+- 邮箱未注册 / 无活动 OTP / OTP 不匹配 / OTP 已过期：统一返回 `PASSWORD_RESET_TOKEN_INVALID`（400）。
+- 单个 OTP 累计错误次数 ≥ 5：返回 `PASSWORD_RESET_TOO_MANY_ATTEMPTS`（429），同时强制作废该 OTP，用户需重新走 forgot-password。
+- 新密码不符合强度规则（至少 8 位、含字母与数字）：返回 `VALIDATION_FAILED`（400）。
+
+成功路径在单个事务中完成：写入新 `password_hash` → 清空三个 `password_reset_*` 字段 → 将该用户全部活跃 `AuthSession` 置 `revoked_at = NOW()`；最后写一条 `ResetPassword/success` 审计。
 
 ## 用户与在线状态
 
@@ -478,6 +530,7 @@
 |---|---|
 | FR-01 | `POST /auth/register` |
 | FR-02 | `POST /auth/login` |
+| FR-03 | `POST /auth/forgot-password`、`POST /auth/reset-password` |
 | FR-04 | `PATCH /users/me/profile` |
 | FR-05 | `PATCH /users/me/presence` |
 | FR-06 | `POST /friend-requests`、`POST /friend-requests/{id}/accept` |

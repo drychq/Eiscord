@@ -62,6 +62,33 @@ export const logoutResponseSchema = z.object({
   ok: z.literal(true),
 });
 
+export const forgotPasswordRequestSchema = z
+  .object({
+    email: z.string().email().max(320),
+  })
+  .strict();
+
+export const forgotPasswordResponseSchema = z.object({
+  message: z.string().min(1),
+});
+
+export const resetPasswordRequestSchema = z
+  .object({
+    email: z.string().email().max(320),
+    code: z.string().regex(/^\d{6}$/, 'Verification code must be 6 digits.'),
+    new_password: z
+      .string()
+      .min(8)
+      .max(128)
+      .regex(/[A-Za-z]/, 'Password must include letters.')
+      .regex(/\d/, 'Password must include digits.'),
+  })
+  .strict();
+
+export const resetPasswordResponseSchema = z.object({
+  message: z.string().min(1),
+});
+
 export type RegisterRequest = z.infer<typeof registerRequestSchema>;
 
 export type RegisterResponse = z.infer<typeof registerResponseSchema>;
@@ -77,3 +104,11 @@ export type RefreshRequest = z.infer<typeof refreshRequestSchema>;
 export type RefreshResponse = z.infer<typeof refreshResponseSchema>;
 
 export type LogoutResponse = z.infer<typeof logoutResponseSchema>;
+
+export type ForgotPasswordRequest = z.infer<typeof forgotPasswordRequestSchema>;
+
+export type ForgotPasswordResponse = z.infer<typeof forgotPasswordResponseSchema>;
+
+export type ResetPasswordRequest = z.infer<typeof resetPasswordRequestSchema>;
+
+export type ResetPasswordResponse = z.infer<typeof resetPasswordResponseSchema>;

@@ -38,6 +38,15 @@ const environmentSchema = z.object({
   VOICE_MAX_PARTICIPANTS_PER_ROOM: z.coerce.number().int().positive().default(20),
   VOICE_NEGOTIATION_TIMEOUT_MS: z.coerce.number().int().positive().default(30000),
   VOICE_NEGOTIATION_SWEEP_INTERVAL_MS: z.coerce.number().int().positive().default(5000),
+  SMTP_HOST: z.string().min(1).default('localhost'),
+  SMTP_PORT: z.coerce.number().int().positive().default(1025),
+  SMTP_USER: z.string().default(''),
+  SMTP_PASSWORD: z.string().default(''),
+  SMTP_FROM_EMAIL: z.string().email().default('noreply@eiscord.local'),
+  SMTP_FROM_NAME: z.string().min(1).default('Eiscord'),
+  PASSWORD_RESET_TTL_MINUTES: z.coerce.number().int().positive().default(15),
+  PASSWORD_RESET_RESEND_COOLDOWN_SECONDS: z.coerce.number().int().positive().default(60),
+  PASSWORD_RESET_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
 });
 
 export type Environment = z.infer<typeof environmentSchema>;

@@ -4,8 +4,20 @@ import { useAuthStore } from '../../shared/state/use-auth-store';
 import { useToastStore } from '../../shared/state/use-toast-store';
 import * as socket from '../../shared/api/socket-client';
 import { formatErrorMessage } from '../../shared/utils/error-message';
-import { loginUser, logoutUser, registerUser } from './auth-api';
-import type { LoginRequest, RegisterRequest, LoginResponse } from '@eiscord/shared';
+import {
+  confirmPasswordReset,
+  loginUser,
+  logoutUser,
+  registerUser,
+  requestPasswordReset,
+} from './auth-api';
+import type {
+  ForgotPasswordRequest,
+  LoginRequest,
+  LoginResponse,
+  RegisterRequest,
+  ResetPasswordRequest,
+} from '@eiscord/shared';
 
 export function useLoginMutation() {
   const navigate = useNavigate();
@@ -64,6 +76,33 @@ export function useLogoutMutation() {
       clearSession();
       queryClient.clear();
       navigate('/login', { replace: true });
+    },
+  });
+}
+
+export function useRequestPasswordResetMutation() {
+  const { pushToast } = useToastStore();
+
+  return useMutation({
+    mutationFn: (input: ForgotPasswordRequest) => requestPasswordReset(input),
+    onError: (error) => {
+      pushToast({ kind: 'error', message: formatErrorMessage(error), ttl: 5000 });
+    },
+  });
+}
+
+export function useConfirmPasswordResetMutation() {
+  const navigate = useNavigate();
+  const { pushToast } = useToastStore();
+
+  return useMutation({
+    mutationFn: (input: ResetPasswordRequest) => confirmPasswordReset(input),
+    onSuccess: () => {
+      pushToast({ kind: 'success', message: '密码已重置，请用新密码登录', ttl: 4000 });
+      navigate('/login', { replace: true });
+    },
+    onError: (error) => {
+      pushToast({ kind: 'error', message: formatErrorMessage(error), ttl: 5000 });
     },
   });
 }

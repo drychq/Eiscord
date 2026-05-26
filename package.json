@@ -12,7 +12,7 @@
     "db:generate": "prisma generate --schema=prisma/schema.prisma",
     "db:migrate": "prisma migrate dev --schema=prisma/schema.prisma",
     "db:seed": "tsx prisma/seed.ts",
-    "infra:up": "docker compose up -d postgres redis minio minio-init",
+    "infra:up": "docker compose up -d postgres redis minio minio-init mailhog",
     "infra:down": "docker compose down",
     "e2e:audio": "node scripts/generate-test-audio.mjs",
     "dev": "node scripts/run.mjs dev/full",

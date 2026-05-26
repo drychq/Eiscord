@@ -14,9 +14,10 @@
 
 | 路由 | 页面 |
 |---|---|
-| `/login` | 登录页。 |
+| `/login` | 登录页，提供"忘记密码"入口链接。 |
 | `/register` | 注册页。 |
-| `/reset-password` | 密码找回，P1。 |
+| `/forgot-password` | 密码重置第一步：输入邮箱，提交后展示统一成功提示并提供进入第二步的按钮。 |
+| `/reset-password` | 密码重置第二步：输入邮箱 / 6 位 OTP / 新密码 / 确认新密码；附 60 秒倒计时的"重新发送验证码"按钮。 |
 | `/app` | 已登录默认入口，重定向到最近社区或私聊。 |
 | `/app/friends` | 好友列表、好友申请和私聊入口。 |
 | `/app/dm/:conversationId` | 一对一私聊。 |
@@ -84,6 +85,15 @@
 4. 拉取社区、好友、通知和未读摘要。
 5. 进入最近访问的社区或好友页。
 
+### 密码重置（OTP 两步流程）
+
+1. 登录页点击「忘记密码？」跳转 `/forgot-password`。
+2. 在 `/forgot-password` 输入邮箱并提交，调用 `POST /auth/forgot-password`。无论后端是否真的发送了邮件，前端都展示同一段成功提示（"若该邮箱已注册，验证码已发送…"），点击「我已收到验证码，去重置密码」跳转 `/reset-password?email=<email>`。
+3. 在 `/reset-password` 自动填入邮箱（仍可修改），输入邮箱中收到的 6 位 OTP、新密码、确认新密码；提交调用 `POST /auth/reset-password`。
+4. 成功时通过全局 toast 提示「密码已重置，请用新密码登录」并跳转 `/login`；前端不主动清理 Auth Store，因为该流程在 `PublicOnlyRoute` 守卫下匿名访问。
+5. 失败时按错误码反馈：`PASSWORD_RESET_TOKEN_INVALID` 显示"验证码无效或已过期"，`PASSWORD_RESET_TOO_MANY_ATTEMPTS` 显示"错误次数过多，请重新申请验证码"，`VALIDATION_FAILED` 显示具体字段错误；不揭示账户是否存在。
+6. 「重新发送验证码」按钮带 60 秒倒计时（与后端冷却保持一致）；倒计时结束后才允许再次调用 forgot-password。
+
 ### 加入社区并发送消息
 
 1. 用户输入邀请码。
@@ -134,6 +144,8 @@
 | `RESOURCE_NOT_FOUND` | 显示资源不存在或已失效。 |
 | `CONFLICT` | 按业务场景展示重复申请、重复加入或幂等冲突。 |
 | `RATE_LIMITED` | 禁用提交按钮并展示稍后重试。 |
+| `PASSWORD_RESET_TOKEN_INVALID` | 在重置页提示"验证码无效或已过期，请检查后重试或重新申请"，不揭示账户是否存在。 |
+| `PASSWORD_RESET_TOO_MANY_ATTEMPTS` | 提示"错误次数过多，请返回上一步重新申请验证码"，引导回到 `/forgot-password`。 |
 | `DEPENDENCY_UNAVAILABLE` | 对附件、通知等非核心能力展示降级提示。 |
 
 语音设备、媒体协商和 TURN 不可达的异常不通过服务端 `ErrorCode` 传递，由 `apps/web/src/features/voice/voice-client.ts` 在客户端层捕获并联动 UI：
