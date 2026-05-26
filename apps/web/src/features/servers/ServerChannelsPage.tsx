@@ -6,6 +6,7 @@ import {
   useSendChannelMessage,
   useDeleteMessage,
 } from '../messages/use-messages-queries';
+import { toChronologicalMessages } from '../messages/message-ordering';
 import { useServerDetail } from './use-servers-queries';
 import { MessageList } from '../../shared/components/MessageList';
 import { MessageBubble } from '../../shared/components/MessageBubble';
@@ -27,7 +28,8 @@ export function ServerChannelsPage() {
   const sendMutation = useSendChannelMessage(resolvedChannelId ?? '');
   const deleteMutation = useDeleteMessage();
 
-  const messages = data?.pages.flatMap((p) => p.items) ?? [];
+  const messages = toChronologicalMessages(data?.pages);
+  const latestMessageId = messages.at(-1)?.message_id ?? null;
 
   useEffect(() => {
     if (!resolvedChannelId) {
@@ -72,9 +74,11 @@ export function ServerChannelsPage() {
   return (
     <>
       <MessageList
+        conversationKey={resolvedChannelId}
         hasMore={!!hasNextPage}
         isLoading={isLoading}
         isLoadingMore={isFetchingNextPage}
+        latestMessageId={latestMessageId}
         onLoadMore={() => fetchNextPage()}
         emptyMessage="暂无消息，发送第一条消息吧"
       >

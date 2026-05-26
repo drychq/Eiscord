@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import * as socket from '../../shared/api/socket-client';
 import { useDmMessages, useSendDmMessage, useDeleteMessage } from './use-messages-queries';
+import { toChronologicalMessages } from './message-ordering';
 import { MessageList } from '../../shared/components/MessageList';
 import { MessageBubble } from '../../shared/components/MessageBubble';
 import { MessageComposer } from '../../shared/components/MessageComposer';
@@ -20,7 +21,8 @@ export function MessagesPage() {
   const sendMutation = useSendDmMessage(conversationId ?? '');
   const deleteMutation = useDeleteMessage();
 
-  const messages = data?.pages.flatMap((p) => p.items) ?? [];
+  const messages = toChronologicalMessages(data?.pages);
+  const latestMessageId = messages.at(-1)?.message_id ?? null;
 
   useEffect(() => {
     if (!conversationId) {
@@ -46,9 +48,11 @@ export function MessagesPage() {
   return (
     <>
       <MessageList
+        conversationKey={conversationId ?? null}
         hasMore={!!hasNextPage}
         isLoading={isLoading}
         isLoadingMore={isFetchingNextPage}
+        latestMessageId={latestMessageId}
         onLoadMore={() => fetchNextPage()}
         emptyMessage="暂无消息，发送第一条消息吧"
       >

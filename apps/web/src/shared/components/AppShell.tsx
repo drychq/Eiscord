@@ -95,7 +95,7 @@ export function AppShell() {
           </div>
         </header>
 
-        <section className="message-list" aria-label="内容">
+        <section className="message-content" aria-label="内容">
           <ErrorBoundary>
             <div key={location.pathname} className="route-fade">
               <Outlet />

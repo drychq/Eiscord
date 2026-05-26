@@ -64,43 +64,61 @@ export function MessageBubble({ message, onRetract, onDelete }: MessageBubblePro
 
   const initial = message.sender.nickname.charAt(0).toUpperCase();
   const color = usernameColor(message.sender.user_id);
+  const rowClassName = `message-row${isOwn ? ' message-row-own' : ''}`;
+
+  const avatar = (
+    <div className="avatar" style={{ background: color }} aria-hidden="true">
+      {initial}
+    </div>
+  );
+
+  const content = (
+    <div className="message-bubble-content">
+      <div className="message-meta">
+        <strong className="message-author" style={{ color }}>
+          {isOwn ? '我' : message.sender.nickname}
+        </strong>
+        <time className="message-time" dateTime={isoTime} title={fullTime}>
+          {time}
+        </time>
+      </div>
+      <p>{message.content}</p>
+      <div className="message-actions">
+        {isOwn && onRetract && (
+          <button
+            className="message-action-btn"
+            type="button"
+            onClick={() => onRetract(message.message_id)}
+          >
+            撤回
+          </button>
+        )}
+        {!isOwn && onDelete && (
+          <button
+            className="message-action-btn message-action-danger"
+            type="button"
+            onClick={() => onDelete(message.message_id)}
+          >
+            删除
+          </button>
+        )}
+      </div>
+    </div>
+  );
 
   return (
-    <div className="message-row">
-      <div className="avatar" style={{ background: color }} aria-hidden="true">
-        {initial}
-      </div>
-      <div>
-        <div className="message-meta">
-          <strong className="message-author" style={{ color }}>
-            {isOwn ? '我' : message.sender.nickname}
-          </strong>
-          <time className="message-time" dateTime={isoTime} title={fullTime}>
-            {time}
-          </time>
-        </div>
-        <p>{message.content}</p>
-        <div className="message-actions">
-          {isOwn && onRetract && (
-            <button
-              className="message-action-btn"
-              type="button"
-              onClick={() => onRetract(message.message_id)}
-            >
-              撤回
-            </button>
-          )}
-          {!isOwn && onDelete && (
-            <button
-              className="message-action-btn message-action-danger"
-              type="button"
-              onClick={() => onDelete(message.message_id)}
-            >
-              删除
-            </button>
-          )}
-        </div>
-      </div>
+    <div className={rowClassName}>
+      {isOwn ? (
+        <>
+          {content}
+          {avatar}
+        </>
+      ) : (
+        <>
+          {avatar}
+          {content}
+        </>
+      )}
     </div>
   );
 }
