@@ -4,6 +4,8 @@ import { ErrorCode, RealtimeEvent } from '@eiscord/shared';
 
 import { AuthenticatedUserContext } from '../../common/auth/auth.types';
 import { AppError } from '../../common/errors/app-error';
+import type { EventCollector } from '../../common/persistence/event-collector';
+import { PersistenceCoordinator } from '../../common/persistence/persistence-coordinator.service';
 import { PrismaService } from '../../common/persistence/prisma.service';
 import type { RawSqlExecutor } from '../../common/persistence/types';
 import { PermissionAction } from '../../common/permissions/permission.types';
@@ -34,6 +36,7 @@ export class ChannelsService {
     private readonly channelsRepo: ChannelsRepository,
     private readonly notificationsService: NotificationsService,
     private readonly permissionsService: PermissionsService,
+    private readonly persistence: PersistenceCoordinator,
     private readonly prisma: PrismaService,
     private readonly realtimePublisher: RealtimePublisher,
     private readonly voiceService: VoiceService,
@@ -63,7 +66,8 @@ export class ChannelsService {
       resource: { id: serverId, type: 'server' },
       user,
     });
-    const result = await this.prisma.$transaction(async (tx) => {
+
+    return this.persistence.runWithEvents(async (tx, events) => {
       const created = await this.channelsRepo.insertChannel(tx, {
         name,
         serverId,
@@ -81,24 +85,22 @@ export class ChannelsService {
         overwrites,
       );
 
-      return { channel: created, permissionOverwrites };
+      events.audit({
+        action: 'CreateChannel',
+        actorId: user.userId,
+        requestId,
+        result: 'success',
+        targetId: created.id,
+        targetType: 'channel',
+      });
+      this.enqueueChannelChanged(events, created, 'created', permissionOverwrites, requestId);
+
+      if (overwrites.length > 0) {
+        await this.enqueuePermissionChanged(events, created, requestId);
+      }
+
+      return toChannelSummary(created, permissionOverwrites);
     });
-
-    await this.auditService.record({
-      action: 'CreateChannel',
-      actorId: user.userId,
-      requestId,
-      result: 'success',
-      targetId: result.channel.id,
-      targetType: 'channel',
-    });
-    this.publishChannelChanged(result.channel, 'created', result.permissionOverwrites, requestId);
-
-    if (overwrites.length > 0) {
-      await this.publishPermissionChanged(result.channel, 'channel', requestId);
-    }
-
-    return toChannelSummary(result.channel, result.permissionOverwrites);
   }
 
   async updateChannel(
@@ -129,7 +131,7 @@ export class ChannelsService {
       );
     }
 
-    const result = await this.prisma.$transaction(async (tx) => {
+    return this.persistence.runWithEvents(async (tx, events) => {
       const updated = await this.channelsRepo.updateChannel(tx, channelId, {
         name,
         sortOrder: dto.sort_order ?? current.sortOrder,
@@ -141,24 +143,22 @@ export class ChannelsService {
           ? await this.channelsRepo.listPermissionOverwrites(tx, channelId)
           : await this.replacePermissionOverwrites(tx, channelId, updated.serverId, overwrites);
 
-      return { channel: updated, permissionOverwrites };
+      events.audit({
+        action: 'UpdateChannel',
+        actorId: user.userId,
+        requestId,
+        result: 'success',
+        targetId: channelId,
+        targetType: 'channel',
+      });
+      this.enqueueChannelChanged(events, updated, 'updated', permissionOverwrites, requestId);
+
+      if (overwrites !== undefined) {
+        await this.enqueuePermissionChanged(events, updated, requestId);
+      }
+
+      return toChannelSummary(updated, permissionOverwrites);
     });
-
-    await this.auditService.record({
-      action: 'UpdateChannel',
-      actorId: user.userId,
-      requestId,
-      result: 'success',
-      targetId: channelId,
-      targetType: 'channel',
-    });
-    this.publishChannelChanged(result.channel, 'updated', result.permissionOverwrites, requestId);
-
-    if (overwrites !== undefined) {
-      await this.publishPermissionChanged(result.channel, 'channel', requestId);
-    }
-
-    return toChannelSummary(result.channel, result.permissionOverwrites);
   }
 
   async deleteChannel(
@@ -173,27 +173,30 @@ export class ChannelsService {
       user,
     });
     const current = await this.getActiveChannel(channelId, 'DeleteChannel', user.userId, requestId);
-    const deleted = await this.channelsRepo.markChannelDeleted(channelId);
 
-    await this.auditService.record({
-      action: 'DeleteChannel',
-      actorId: user.userId,
-      requestId,
-      result: 'success',
-      targetId: channelId,
-      targetType: 'channel',
-    });
-    if (deleted.type === 'voice') {
-      await this.voiceService.releaseChannelActiveSessions(
-        deleted.id,
-        'channel_deleted',
+    return this.persistence.runWithEvents(async (tx, events) => {
+      const deleted = await this.channelsRepo.markChannelDeleted(tx, channelId);
+
+      events.audit({
+        action: 'DeleteChannel',
+        actorId: user.userId,
         requestId,
-      );
-    }
-    this.publishChannelChanged(deleted, 'deleted', [], requestId);
-    await this.publishPermissionChanged(deleted, 'channel', requestId);
+        result: 'success',
+        targetId: channelId,
+        targetType: 'channel',
+      });
+      if (deleted.type === 'voice') {
+        await this.voiceService.releaseChannelActiveSessions(
+          deleted.id,
+          'channel_deleted',
+          requestId,
+        );
+      }
+      this.enqueueChannelChanged(events, deleted, 'deleted', [], requestId);
+      await this.enqueuePermissionChanged(events, deleted, requestId);
 
-    return toChannelSummary({ ...deleted, serverId: current.serverId }, []);
+      return toChannelSummary({ ...deleted, serverId: current.serverId }, []);
+    });
   }
 
   private async getActiveChannel(
@@ -266,13 +269,14 @@ export class ChannelsService {
     }
   }
 
-  private publishChannelChanged(
+  private enqueueChannelChanged(
+    events: EventCollector,
     channel: ChannelRow,
     changeType: 'created' | 'deleted' | 'updated',
     permissionOverwrites: PermissionOverwriteRow[],
     requestId?: string,
-  ) {
-    this.realtimePublisher.publishToRoom(
+  ): void {
+    events.publish(
       buildRealtimeRoom('server', channel.serverId),
       RealtimeEvent.ChannelChanged,
       {
@@ -284,11 +288,11 @@ export class ChannelsService {
     );
   }
 
-  private async publishPermissionChanged(
+  private async enqueuePermissionChanged(
+    events: EventCollector,
     channel: ChannelRow,
-    changeScope: 'channel',
     requestId?: string,
-  ) {
+  ): Promise<void> {
     const [serverUsers, allowedUsers] = await Promise.all([
       this.channelsRepo.listServerActiveUserIds(channel.serverId),
       this.permissionsService.listUsersWithChannelPermission(channel.id, PermissionAction.ViewChannel),
@@ -312,12 +316,12 @@ export class ChannelsService {
     }
 
     for (const userId of serverUsers) {
-      this.realtimePublisher.publishToRoom(
+      events.publish(
         buildUserRoom(userId),
         RealtimeEvent.PermissionChanged,
         {
           affected_user_ids: serverUsers,
-          change_scope: changeScope,
+          change_scope: 'channel',
           resource_id: channel.id,
           server_id: channel.serverId,
         },
@@ -333,7 +337,7 @@ export class ChannelsService {
         userId,
       });
       if (notifResult.created) {
-        this.notificationsService.publishCreated(notifResult.notification, requestId);
+        this.notificationsService.publishCreated(events, notifResult.notification, requestId);
       }
     }
   }
@@ -344,7 +348,7 @@ export class ChannelsService {
     targetId: string,
     failureReason: string,
     requestId?: string,
-  ) {
+  ): Promise<void> {
     await this.auditService.record({
       action,
       actorId,

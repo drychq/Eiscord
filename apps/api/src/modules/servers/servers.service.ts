@@ -6,6 +6,8 @@ import { ErrorCode, RealtimeEvent } from '@eiscord/shared';
 
 import { AuthenticatedUserContext } from '../../common/auth/auth.types';
 import { AppError } from '../../common/errors/app-error';
+import type { EventCollector } from '../../common/persistence/event-collector';
+import { PersistenceCoordinator } from '../../common/persistence/persistence-coordinator.service';
 import { PrismaService } from '../../common/persistence/prisma.service';
 import { PermissionAction } from '../../common/permissions/permission.types';
 import { PermissionsService } from '../../common/permissions/permissions.service';
@@ -42,6 +44,7 @@ export class ServersService {
     private readonly auditService: AuditService,
     private readonly notificationsService: NotificationsService,
     private readonly permissionsService: PermissionsService,
+    private readonly persistence: PersistenceCoordinator,
     private readonly prisma: PrismaService,
     private readonly realtimePublisher: RealtimePublisher,
     private readonly serversRepo: ServersRepository,
@@ -84,7 +87,8 @@ export class ServersService {
 
     const description = normalizeNullableText(dto.description);
     const inviteCode = createInviteCode();
-    const result = await this.prisma.$transaction(async (tx) => {
+
+    return this.persistence.runWithEvents(async (tx, events) => {
       const server = await this.serversRepo.insertServer(tx, {
         description,
         iconAttachmentId,
@@ -110,36 +114,33 @@ export class ServersService {
         serverId: server.id,
       });
 
-      return { defaultChannel, defaultRole, ownerMember, server };
+      events.audit({
+        action: 'CreateServer',
+        actorId: user.userId,
+        requestId,
+        result: 'success',
+        targetId: server.id,
+        targetType: 'server',
+      });
+      events.publish(
+        buildRealtimeRoom('server', server.id),
+        RealtimeEvent.MemberJoined,
+        {
+          joined_at: ownerMember.joinedAt.toISOString(),
+          member: toMemberSummaryWithRole(ownerMember, defaultRole.id),
+          server_id: server.id,
+        },
+        requestId,
+      );
+
+      return {
+        default_channel: toChannelSummary(defaultChannel),
+        default_role: toRoleSummary(defaultRole),
+        invite_code: inviteCode,
+        owner_member: toMemberSummaryWithRole(ownerMember, defaultRole.id),
+        server: toServerBaseSummary(server),
+      };
     });
-
-    await this.auditService.record({
-      action: 'CreateServer',
-      actorId: user.userId,
-      requestId,
-      result: 'success',
-      targetId: result.server.id,
-      targetType: 'server',
-    });
-
-    this.realtimePublisher.publishToRoom(
-      buildRealtimeRoom('server', result.server.id),
-      RealtimeEvent.MemberJoined,
-      {
-        joined_at: result.ownerMember.joinedAt.toISOString(),
-        member: toMemberSummaryWithRole(result.ownerMember, result.defaultRole.id),
-        server_id: result.server.id,
-      },
-      requestId,
-    );
-
-    return {
-      default_channel: toChannelSummary(result.defaultChannel),
-      default_role: toRoleSummary(result.defaultRole),
-      invite_code: inviteCode,
-      owner_member: toMemberSummaryWithRole(result.ownerMember, result.defaultRole.id),
-      server: toServerBaseSummary(result.server),
-    };
   }
 
   async listServers(user: AuthenticatedUserContext): Promise<ServerSummary[]> {
@@ -170,7 +171,7 @@ export class ServersService {
     dto: JoinServerDto,
     requestId?: string,
   ): Promise<ServerDetail> {
-    const serverId = await this.prisma.$transaction(async (tx) => {
+    const serverId = await this.persistence.runWithEvents(async (tx, events) => {
       const invitation = await this.serversRepo.getInvitationForUpdate(tx, dto.invite_code);
 
       if (!invitation) {
@@ -248,31 +249,34 @@ export class ServersService {
       await this.serversRepo.insertTextChannelReadStates(tx, user.userId, invitation.serverId);
       await this.serversRepo.incrementInvitationUseCount(tx, invitation.id);
 
+      events.audit({
+        action: 'JoinServer',
+        actorId: user.userId,
+        requestId,
+        result: 'success',
+        targetId: invitation.serverId,
+        targetType: 'server',
+      });
+
       return invitation.serverId;
     });
 
-    await this.auditService.record({
-      action: 'JoinServer',
-      actorId: user.userId,
-      requestId,
-      result: 'success',
-      targetId: serverId,
-      targetType: 'server',
-    });
-
     const detail = await this.getServerDetail(user, serverId);
-    this.realtimePublisher.publishToRoom(
-      buildRealtimeRoom('server', serverId),
-      RealtimeEvent.MemberJoined,
-      {
-        joined_at: detail.current_member.joined_at,
-        member: detail.current_member,
-        server_id: serverId,
-      },
-      requestId,
-    );
 
-    return detail;
+    return this.persistence.runWithEvents(async (_tx, events) => {
+      events.publish(
+        buildRealtimeRoom('server', serverId),
+        RealtimeEvent.MemberJoined,
+        {
+          joined_at: detail.current_member.joined_at,
+          member: detail.current_member,
+          server_id: serverId,
+        },
+        requestId,
+      );
+
+      return detail;
+    });
   }
 
   async leaveServer(
@@ -280,7 +284,7 @@ export class ServersService {
     serverId: string,
     requestId?: string,
   ): Promise<{ ok: true }> {
-    await this.prisma.$transaction(async (tx) => {
+    return this.persistence.runWithEvents(async (tx, events) => {
       const membership = await this.serversRepo.getServerMembershipForUpdate(
         tx,
         serverId,
@@ -307,37 +311,37 @@ export class ServersService {
 
       await this.serversRepo.deleteAllMembershipRoles(tx, membership.membershipId);
       await this.serversRepo.markMembershipRemoved(tx, membership.membershipId);
+
+      events.audit({
+        action: 'LeaveServer',
+        actorId: user.userId,
+        requestId,
+        result: 'success',
+        targetId: serverId,
+        targetType: 'server',
+      });
+      events.publish(
+        buildRealtimeRoom('server', serverId),
+        RealtimeEvent.MemberChanged,
+        {
+          change_type: 'left',
+          member: { user_id: user.userId },
+          membership_id: null,
+          server_id: serverId,
+        },
+        requestId,
+      );
+
+      await this.voiceService.releaseUserActiveSessionForServer(
+        serverId,
+        user.userId,
+        'server_left',
+        requestId,
+      );
+      await this.forceMemberLeaveServerRooms(serverId, user.userId);
+
+      return { ok: true };
     });
-
-    await this.auditService.record({
-      action: 'LeaveServer',
-      actorId: user.userId,
-      requestId,
-      result: 'success',
-      targetId: serverId,
-      targetType: 'server',
-    });
-
-    this.realtimePublisher.publishToRoom(
-      buildRealtimeRoom('server', serverId),
-      RealtimeEvent.MemberChanged,
-      {
-        change_type: 'left',
-        member: { user_id: user.userId },
-        membership_id: null,
-        server_id: serverId,
-      },
-      requestId,
-    );
-    await this.voiceService.releaseUserActiveSessionForServer(
-      serverId,
-      user.userId,
-      'server_left',
-      requestId,
-    );
-    await this.forceMemberLeaveServerRooms(serverId, user.userId);
-
-    return { ok: true };
   }
 
   async listMembers(user: AuthenticatedUserContext, serverId: string): Promise<MemberSummary[]> {
@@ -360,7 +364,8 @@ export class ServersService {
       membershipId,
       requestId,
     );
-    const member = await this.prisma.$transaction(async (tx) => {
+
+    return this.persistence.runWithEvents(async (tx, events) => {
       if (dto.action === 'remove') {
         await this.serversRepo.deleteAllMembershipRoles(tx, membershipId);
       }
@@ -385,54 +390,52 @@ export class ServersService {
       }
 
       const nextStatus = dto.action === 'mute' ? 'muted' : dto.action === 'restore' ? 'active' : 'removed';
+      const updated = await this.serversRepo.updateMembershipStatus(tx, serverId, membershipId, nextStatus);
+      const refreshed = dto.action === 'remove'
+        ? updated
+        : await this.getMemberRowByIdOrThrow(serverId, membershipId);
+      const summary = toMemberSummary(refreshed);
 
-      return this.serversRepo.updateMembershipStatus(tx, serverId, membershipId, nextStatus);
-    });
-    const refreshed = dto.action === 'remove'
-      ? member
-      : await this.getMemberRowByIdOrThrow(serverId, membershipId);
-    const summary = toMemberSummary(refreshed);
-
-    await this.auditService.record({
-      action: `ManageMember:${dto.action}`,
-      actorId: user.userId,
-      metadata: { reason: normalizeNullableText(dto.reason) },
-      requestId,
-      result: 'success',
-      targetId: membershipId,
-      targetType: 'membership',
-    });
-
-    this.publishMemberChanged(serverId, membershipId, `member_${dto.action}`, summary, requestId);
-    await this.publishPermissionChanged(serverId, 'member', membershipId, [target.userId], requestId);
-
-    if (dto.action === 'mute' || dto.action === 'remove') {
-      const notifResult = await this.notificationsService.createNotification(this.prisma, {
-        contentPreview: dto.action === 'mute'
-          ? 'You have been muted in a server'
-          : 'You have been removed from a server',
-        dedupeKey: `member:${membershipId}:${dto.action}`,
-        sourceId: serverId,
-        sourceType: 'server',
-        type: 'PERMISSION_CHANGED',
-        userId: target.userId,
-      });
-      if (notifResult.created) {
-        this.notificationsService.publishCreated(notifResult.notification, requestId);
-      }
-    }
-
-    if (dto.action === 'remove') {
-      await this.voiceService.releaseUserActiveSessionForServer(
-        serverId,
-        target.userId,
-        'member_removed',
+      events.audit({
+        action: `ManageMember:${dto.action}`,
+        actorId: user.userId,
+        metadata: { reason: normalizeNullableText(dto.reason) },
         requestId,
-      );
-      await this.forceMemberLeaveServerRooms(serverId, target.userId);
-    }
+        result: 'success',
+        targetId: membershipId,
+        targetType: 'membership',
+      });
+      this.enqueueMemberChanged(events, serverId, membershipId, `member_${dto.action}`, summary, requestId);
+      await this.enqueuePermissionChanged(events, serverId, 'member', membershipId, [target.userId], requestId);
 
-    return summary;
+      if (dto.action === 'mute' || dto.action === 'remove') {
+        const notifResult = await this.notificationsService.createNotification(tx, {
+          contentPreview: dto.action === 'mute'
+            ? 'You have been muted in a server'
+            : 'You have been removed from a server',
+          dedupeKey: `member:${membershipId}:${dto.action}`,
+          sourceId: serverId,
+          sourceType: 'server',
+          type: 'PERMISSION_CHANGED',
+          userId: target.userId,
+        });
+        if (notifResult.created) {
+          this.notificationsService.publishCreated(events, notifResult.notification, requestId);
+        }
+      }
+
+      if (dto.action === 'remove') {
+        await this.voiceService.releaseUserActiveSessionForServer(
+          serverId,
+          target.userId,
+          'member_removed',
+          requestId,
+        );
+        await this.forceMemberLeaveServerRooms(serverId, target.userId);
+      }
+
+      return summary;
+    });
   }
 
   async listRolesForUser(
@@ -464,18 +467,23 @@ export class ServersService {
       { desiredPermissionBits: permissionBits, desiredPriority: priority },
       requestId,
     );
-    const role = await this.serversRepo.insertRole({
-      color: normalizeNullableText(dto.color),
-      name,
-      permissionBits,
-      priority,
-      serverId,
+
+    return this.persistence.runWithEvents(async (tx, events) => {
+      const role = await this.serversRepo.insertRole(tx, {
+        color: normalizeNullableText(dto.color),
+        name,
+        permissionBits,
+        priority,
+        serverId,
+      });
+
+      this.enqueueRoleAudit(events, user.userId, 'CreateRole', role.id, requestId);
+      const affectedUserIds = await this.serversRepo.listServerUserIds(serverId);
+
+      await this.enqueuePermissionChanged(events, serverId, 'role', role.id, affectedUserIds, requestId);
+
+      return toRoleSummary(role);
     });
-
-    await this.auditRoleChange(user.userId, 'CreateRole', role.id, requestId);
-    await this.publishPermissionChanged(serverId, 'role', role.id, await this.serversRepo.listServerUserIds(serverId), requestId);
-
-    return toRoleSummary(role);
   }
 
   async updateRole(
@@ -517,24 +525,30 @@ export class ServersService {
       },
       requestId,
     );
-    const role = await this.serversRepo.updateRoleRow({
-      color: dto.color !== undefined ? normalizeNullableText(dto.color) : existing.color,
-      name,
-      permissionBits,
-      priority,
-      roleId,
+
+    return this.persistence.runWithEvents(async (tx, events) => {
+      const role = await this.serversRepo.updateRoleRow(tx, {
+        color: dto.color !== undefined ? normalizeNullableText(dto.color) : existing.color,
+        name,
+        permissionBits,
+        priority,
+        roleId,
+      });
+
+      this.enqueueRoleAudit(events, user.userId, 'UpdateRole', role.id, requestId);
+      const affectedUserIds = await this.serversRepo.listServerUserIds(role.serverId);
+
+      await this.enqueuePermissionChanged(
+        events,
+        role.serverId,
+        'role',
+        role.id,
+        affectedUserIds,
+        requestId,
+      );
+
+      return toRoleSummary(role);
     });
-
-    await this.auditRoleChange(user.userId, 'UpdateRole', role.id, requestId);
-    await this.publishPermissionChanged(
-      role.serverId,
-      'role',
-      role.id,
-      await this.serversRepo.listServerUserIds(role.serverId),
-      requestId,
-    );
-
-    return toRoleSummary(role);
   }
 
   async deleteRole(
@@ -559,17 +573,22 @@ export class ServersService {
       throw new AppError(ErrorCode.Conflict, 'Default role cannot be deleted.', HttpStatus.CONFLICT);
     }
 
-    await this.serversRepo.deleteRoleRow(roleId);
-    await this.auditRoleChange(user.userId, 'DeleteRole', roleId, requestId);
-    await this.publishPermissionChanged(
-      existing.serverId,
-      'role',
-      roleId,
-      await this.serversRepo.listServerUserIds(existing.serverId),
-      requestId,
-    );
+    return this.persistence.runWithEvents(async (tx, events) => {
+      await this.serversRepo.deleteRoleRow(tx, roleId);
+      this.enqueueRoleAudit(events, user.userId, 'DeleteRole', roleId, requestId);
+      const affectedUserIds = await this.serversRepo.listServerUserIds(existing.serverId);
 
-    return { ok: true };
+      await this.enqueuePermissionChanged(
+        events,
+        existing.serverId,
+        'role',
+        roleId,
+        affectedUserIds,
+        requestId,
+      );
+
+      return { ok: true };
+    });
   }
 
   async assignRoleToMember(
@@ -586,28 +605,36 @@ export class ServersService {
       dto.role_id,
       requestId,
     );
-    await this.serversRepo.insertMembershipRoleViaPrisma(membershipId, dto.role_id, user.userId);
-    const member = await this.getMemberRowByIdOrThrow(serverId, membershipId);
 
-    await this.auditRoleChange(user.userId, 'AssignRole', dto.role_id, requestId, membershipId);
-    this.publishMemberChanged(serverId, membershipId, 'role_assigned', toMemberSummary(member), requestId);
-    await this.publishPermissionChanged(serverId, 'member', membershipId, [member.userId], requestId);
+    return this.persistence.runWithEvents(async (tx, events) => {
+      await this.serversRepo.insertMembershipRoleIgnoreConflict(
+        tx,
+        membershipId,
+        dto.role_id,
+        user.userId,
+      );
+      const member = await this.getMemberRowByIdOrThrow(serverId, membershipId);
 
-    if (member.userId !== user.userId) {
-      const notifResult = await this.notificationsService.createNotification(this.prisma, {
-        contentPreview: 'Your roles have been updated',
-        dedupeKey: `role:${membershipId}:assign:${dto.role_id}`,
-        sourceId: serverId,
-        sourceType: 'server',
-        type: 'PERMISSION_CHANGED',
-        userId: member.userId,
-      });
-      if (notifResult.created) {
-        this.notificationsService.publishCreated(notifResult.notification, requestId);
+      this.enqueueRoleAudit(events, user.userId, 'AssignRole', dto.role_id, requestId, membershipId);
+      this.enqueueMemberChanged(events, serverId, membershipId, 'role_assigned', toMemberSummary(member), requestId);
+      await this.enqueuePermissionChanged(events, serverId, 'member', membershipId, [member.userId], requestId);
+
+      if (member.userId !== user.userId) {
+        const notifResult = await this.notificationsService.createNotification(tx, {
+          contentPreview: 'Your roles have been updated',
+          dedupeKey: `role:${membershipId}:assign:${dto.role_id}`,
+          sourceId: serverId,
+          sourceType: 'server',
+          type: 'PERMISSION_CHANGED',
+          userId: member.userId,
+        });
+        if (notifResult.created) {
+          this.notificationsService.publishCreated(events, notifResult.notification, requestId);
+        }
       }
-    }
 
-    return toMemberSummary(member);
+      return toMemberSummary(member);
+    });
   }
 
   async removeRoleFromMember(
@@ -629,28 +656,30 @@ export class ServersService {
       throw new AppError(ErrorCode.Conflict, 'Default role cannot be removed from members.', HttpStatus.CONFLICT);
     }
 
-    await this.serversRepo.deleteMembershipRole(membershipId, roleId);
-    const member = await this.getMemberRowByIdOrThrow(serverId, membershipId);
+    return this.persistence.runWithEvents(async (tx, events) => {
+      await this.serversRepo.deleteMembershipRole(tx, membershipId, roleId);
+      const member = await this.getMemberRowByIdOrThrow(serverId, membershipId);
 
-    await this.auditRoleChange(user.userId, 'RemoveRole', roleId, requestId, membershipId);
-    this.publishMemberChanged(serverId, membershipId, 'role_removed', toMemberSummary(member), requestId);
-    await this.publishPermissionChanged(serverId, 'member', membershipId, [member.userId], requestId);
+      this.enqueueRoleAudit(events, user.userId, 'RemoveRole', roleId, requestId, membershipId);
+      this.enqueueMemberChanged(events, serverId, membershipId, 'role_removed', toMemberSummary(member), requestId);
+      await this.enqueuePermissionChanged(events, serverId, 'member', membershipId, [member.userId], requestId);
 
-    if (member.userId !== user.userId) {
-      const notifResult = await this.notificationsService.createNotification(this.prisma, {
-        contentPreview: 'Your roles have been updated',
-        dedupeKey: `role:${membershipId}:remove:${roleId}`,
-        sourceId: serverId,
-        sourceType: 'server',
-        type: 'PERMISSION_CHANGED',
-        userId: member.userId,
-      });
-      if (notifResult.created) {
-        this.notificationsService.publishCreated(notifResult.notification, requestId);
+      if (member.userId !== user.userId) {
+        const notifResult = await this.notificationsService.createNotification(tx, {
+          contentPreview: 'Your roles have been updated',
+          dedupeKey: `role:${membershipId}:remove:${roleId}`,
+          sourceId: serverId,
+          sourceType: 'server',
+          type: 'PERMISSION_CHANGED',
+          userId: member.userId,
+        });
+        if (notifResult.created) {
+          this.notificationsService.publishCreated(events, notifResult.notification, requestId);
+        }
       }
-    }
 
-    return toMemberSummary(member);
+      return toMemberSummary(member);
+    });
   }
 
   private async getActiveServerMembership(
@@ -714,14 +743,15 @@ export class ServersService {
     return member;
   }
 
-  private async auditRoleChange(
+  private enqueueRoleAudit(
+    events: EventCollector,
     actorId: string,
     action: string,
     roleId: string,
     requestId?: string,
     membershipId?: string,
-  ): Promise<void> {
-    await this.auditService.record({
+  ): void {
+    events.audit({
       action,
       actorId,
       metadata: membershipId ? { membership_id: membershipId } : undefined,
@@ -732,14 +762,15 @@ export class ServersService {
     });
   }
 
-  private publishMemberChanged(
+  private enqueueMemberChanged(
+    events: EventCollector,
     serverId: string,
     membershipId: string,
     changeType: string,
     member: MemberSummary,
     requestId?: string,
   ): void {
-    this.realtimePublisher.publishToRoom(
+    events.publish(
       buildRealtimeRoom('server', serverId),
       RealtimeEvent.MemberChanged,
       {
@@ -752,7 +783,8 @@ export class ServersService {
     );
   }
 
-  private async publishPermissionChanged(
+  private async enqueuePermissionChanged(
+    events: EventCollector,
     serverId: string,
     changeScope: 'member' | 'role',
     resourceId: string,
@@ -766,7 +798,7 @@ export class ServersService {
       server_id: serverId,
     };
 
-    this.realtimePublisher.publishToRoom(
+    events.publish(
       buildRealtimeRoom('server', serverId),
       RealtimeEvent.PermissionChanged,
       payload,
@@ -774,7 +806,7 @@ export class ServersService {
     );
 
     for (const userId of affectedUserIds) {
-      this.realtimePublisher.publishToRoom(
+      events.publish(
         buildUserRoom(userId),
         RealtimeEvent.PermissionChanged,
         payload,
@@ -808,7 +840,7 @@ export class ServersService {
     actorId: string,
     failureReason: string,
     requestId?: string,
-  ) {
+  ): Promise<void> {
     await this.auditService.record({
       action,
       actorId,

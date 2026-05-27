@@ -650,8 +650,8 @@ export class ServersRepository {
     `.then((rows) => rows[0] ?? null);
   }
 
-  async insertRole(input: InsertRoleInput): Promise<RoleRow> {
-    const [role] = await this.prisma.$queryRaw<RoleRow[]>`
+  async insertRole(executor: RawSqlExecutor, input: InsertRoleInput): Promise<RoleRow> {
+    const [role] = await executor.$queryRaw<RoleRow[]>`
       INSERT INTO roles (id, server_id, name, permission_bits, color, priority, is_default)
       VALUES (
         ${randomUUID()}::uuid,
@@ -675,8 +675,8 @@ export class ServersRepository {
     return role;
   }
 
-  async updateRoleRow(input: UpdateRoleInput): Promise<RoleRow> {
-    const [role] = await this.prisma.$queryRaw<RoleRow[]>`
+  async updateRoleRow(executor: RawSqlExecutor, input: UpdateRoleInput): Promise<RoleRow> {
+    const [role] = await executor.$queryRaw<RoleRow[]>`
       UPDATE roles
       SET
         name = ${input.name},
@@ -698,27 +698,19 @@ export class ServersRepository {
     return role;
   }
 
-  async deleteRoleRow(roleId: string): Promise<void> {
-    await this.prisma.$executeRaw`
+  async deleteRoleRow(executor: RawSqlExecutor, roleId: string): Promise<void> {
+    await executor.$executeRaw`
       DELETE FROM roles
       WHERE id = ${roleId}::uuid
     `;
   }
 
-  async insertMembershipRoleViaPrisma(
+  async deleteMembershipRole(
+    executor: RawSqlExecutor,
     membershipId: string,
     roleId: string,
-    assignedById: string,
   ): Promise<void> {
-    await this.prisma.$executeRaw`
-      INSERT INTO membership_roles (membership_id, role_id, assigned_by_id)
-      VALUES (${membershipId}::uuid, ${roleId}::uuid, ${assignedById}::uuid)
-      ON CONFLICT (membership_id, role_id) DO NOTHING
-    `;
-  }
-
-  async deleteMembershipRole(membershipId: string, roleId: string): Promise<void> {
-    await this.prisma.$executeRaw`
+    await executor.$executeRaw`
       DELETE FROM membership_roles
       WHERE membership_id = ${membershipId}::uuid
         AND role_id = ${roleId}::uuid

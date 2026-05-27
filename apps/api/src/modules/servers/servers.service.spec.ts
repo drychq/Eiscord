@@ -1,6 +1,7 @@
 import { ErrorCode, RealtimeEvent } from '@eiscord/shared';
 
 import { AppError } from '../../common/errors/app-error';
+import { PersistenceCoordinator } from '../../common/persistence/persistence-coordinator.service';
 import { PrismaService } from '../../common/persistence/prisma.service';
 import { PermissionsService } from '../../common/permissions/permissions.service';
 import { AuditService } from '../audit/audit.service';
@@ -17,15 +18,13 @@ const bob = { accountStatus: 'active', sessionId: 'session-2', userId: userId(2)
 describe('ServersService', () => {
   let auditService: jest.Mocked<AuditService>;
   let notificationsService: { createNotification: jest.Mock; publishCreated: jest.Mock };
-  let prisma: {
-    $executeRaw: jest.Mock;
-    $queryRaw: jest.Mock;
-    $transaction: jest.Mock;
-  };
+  let prisma: { $executeRaw: jest.Mock; $queryRaw: jest.Mock };
   let permissionsService: jest.Mocked<PermissionsService>;
   let realtimePublisher: jest.Mocked<RealtimePublisher>;
   let serversRepo: jest.Mocked<ServersRepository>;
   let voiceService: jest.Mocked<VoiceService>;
+  let events: { audit: jest.Mock; publish: jest.Mock };
+  let persistence: { runWithEvents: jest.Mock };
   let service: ServersService;
   let tx: { $executeRaw: jest.Mock; $queryRaw: jest.Mock };
 
@@ -40,7 +39,6 @@ describe('ServersService', () => {
     prisma = {
       $executeRaw: jest.fn().mockResolvedValue(1),
       $queryRaw: jest.fn(),
-      $transaction: jest.fn((callback: (transaction: typeof tx) => unknown) => callback(tx)),
     };
     notificationsService = {
       createNotification: jest.fn().mockResolvedValue({ created: false, notification: {} }),
@@ -85,7 +83,6 @@ describe('ServersService', () => {
       insertRole: jest.fn(),
       updateRoleRow: jest.fn(),
       deleteRoleRow: jest.fn().mockResolvedValue(undefined),
-      insertMembershipRoleViaPrisma: jest.fn().mockResolvedValue(undefined),
       deleteMembershipRole: jest.fn().mockResolvedValue(undefined),
       listServerUserIds: jest.fn().mockResolvedValue([]),
       listServerChannels: jest.fn().mockResolvedValue([]),
@@ -94,10 +91,18 @@ describe('ServersService', () => {
       releaseUserActiveSessionForServer: jest.fn().mockResolvedValue(null),
       releaseUsersActiveSessionsWithoutJoinPermission: jest.fn().mockResolvedValue([]),
     } as unknown as jest.Mocked<VoiceService>;
+    events = { audit: jest.fn(), publish: jest.fn() };
+    persistence = {
+      runWithEvents: jest.fn(
+        async (fn: (transaction: typeof tx, collector: typeof events) => Promise<unknown>) =>
+          fn(tx, events),
+      ),
+    };
     service = new ServersService(
       auditService,
       notificationsService as unknown as NotificationsService,
       permissionsService,
+      persistence as unknown as PersistenceCoordinator,
       prisma as unknown as PrismaService,
       realtimePublisher,
       serversRepo,
@@ -131,7 +136,7 @@ describe('ServersService', () => {
     expect(serversRepo.insertMembershipRole).toHaveBeenCalledTimes(1);
     expect(serversRepo.insertChannelReadState).toHaveBeenCalledTimes(1);
     expect(serversRepo.insertInvitation).toHaveBeenCalledTimes(1);
-    expect(realtimePublisher.publishToRoom).toHaveBeenCalledWith(
+    expect(events.publish).toHaveBeenCalledWith(
       `server:${serverId()}`,
       RealtimeEvent.MemberJoined,
       expect.objectContaining({ server_id: serverId() }),
@@ -149,7 +154,7 @@ describe('ServersService', () => {
       }),
     ).rejects.toMatchObject<AppError>({ code: ErrorCode.ResourceNotFound });
 
-    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(persistence.runWithEvents).not.toHaveBeenCalled();
   });
 
   it('joins a server by active invite', async () => {
@@ -175,7 +180,7 @@ describe('ServersService', () => {
     expect(serversRepo.insertMembershipRoleIgnoreConflict).toHaveBeenCalledTimes(1);
     expect(serversRepo.insertTextChannelReadStates).toHaveBeenCalledTimes(1);
     expect(serversRepo.incrementInvitationUseCount).toHaveBeenCalledTimes(1);
-    expect(auditService.record).toHaveBeenCalledWith(
+    expect(events.audit).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'JoinServer', result: 'success' }),
     );
   });
@@ -240,10 +245,10 @@ describe('ServersService', () => {
 
     expect(serversRepo.deleteAllMembershipRoles).toHaveBeenCalledTimes(1);
     expect(serversRepo.markMembershipRemoved).toHaveBeenCalledTimes(1);
-    expect(auditService.record).toHaveBeenCalledWith(
+    expect(events.audit).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'LeaveServer', result: 'success' }),
     );
-    expect(realtimePublisher.publishToRoom).toHaveBeenCalledWith(
+    expect(events.publish).toHaveBeenCalledWith(
       `server:${serverId()}`,
       RealtimeEvent.MemberChanged,
       expect.objectContaining({ change_type: 'left' }),
@@ -268,10 +273,10 @@ describe('ServersService', () => {
       service.manageMember(alice, serverId(), membershipId(), { action: 'mute' }, 'request-1'),
     ).resolves.toMatchObject({ member_status: 'muted' });
 
-    expect(auditService.record).toHaveBeenCalledWith(
+    expect(events.audit).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'ManageMember:mute' }),
     );
-    expect(realtimePublisher.publishToRoom).toHaveBeenCalledWith(
+    expect(events.publish).toHaveBeenCalledWith(
       expect.stringContaining('server:'),
       RealtimeEvent.MemberChanged,
       expect.objectContaining({ change_type: 'member_mute' }),

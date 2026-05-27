@@ -430,8 +430,11 @@ export class MessagesRepository {
     `;
   }
 
-  loadMessageAttachments(messageId: string): Promise<MessageAttachmentRow[]> {
-    return this.prisma.$queryRaw<MessageAttachmentRow[]>`
+  loadMessageAttachments(
+    executor: RawSqlExecutor,
+    messageId: string,
+  ): Promise<MessageAttachmentRow[]> {
+    return executor.$queryRaw<MessageAttachmentRow[]>`
       SELECT
         ma.message_id AS "messageId",
         a.id AS "attachmentId",
@@ -445,8 +448,11 @@ export class MessagesRepository {
     `;
   }
 
-  loadMessageMentions(messageId: string): Promise<MessageMentionRow[]> {
-    return this.prisma.$queryRaw<MessageMentionRow[]>`
+  loadMessageMentions(
+    executor: RawSqlExecutor,
+    messageId: string,
+  ): Promise<MessageMentionRow[]> {
+    return executor.$queryRaw<MessageMentionRow[]>`
       SELECT
         message_id AS "messageId",
         mentioned_user_id AS "mentionedUserId"

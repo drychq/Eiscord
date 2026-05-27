@@ -1,6 +1,7 @@
 import { ErrorCode, RealtimeEvent } from '@eiscord/shared';
 
 import { AppError } from '../../common/errors/app-error';
+import { PersistenceCoordinator } from '../../common/persistence/persistence-coordinator.service';
 import { PrismaService } from '../../common/persistence/prisma.service';
 import { PermissionsService } from '../../common/permissions/permissions.service';
 import { AuditService } from '../audit/audit.service';
@@ -17,14 +18,12 @@ describe('ChannelsService', () => {
   let auditService: jest.Mocked<AuditService>;
   let channelsRepo: jest.Mocked<ChannelsRepository>;
   let notificationsService: { createNotification: jest.Mock; publishCreated: jest.Mock };
-  let prisma: {
-    $executeRaw: jest.Mock;
-    $queryRaw: jest.Mock;
-    $transaction: jest.Mock;
-  };
+  let prisma: { $executeRaw: jest.Mock; $queryRaw: jest.Mock };
   let permissionsService: jest.Mocked<PermissionsService>;
   let realtimePublisher: jest.Mocked<RealtimePublisher>;
   let voiceService: jest.Mocked<VoiceService>;
+  let events: { audit: jest.Mock; publish: jest.Mock };
+  let persistence: { runWithEvents: jest.Mock };
   let service: ChannelsService;
   let tx: { $executeRaw: jest.Mock; $queryRaw: jest.Mock };
 
@@ -39,7 +38,6 @@ describe('ChannelsService', () => {
     prisma = {
       $executeRaw: jest.fn().mockResolvedValue(1),
       $queryRaw: jest.fn(),
-      $transaction: jest.fn((callback: (transaction: typeof tx) => unknown) => callback(tx)),
     };
     channelsRepo = {
       insertChannel: jest.fn(),
@@ -70,11 +68,19 @@ describe('ChannelsService', () => {
       releaseChannelActiveSessions: jest.fn().mockResolvedValue([]),
       releaseUsersActiveSessionsForChannel: jest.fn().mockResolvedValue([]),
     } as unknown as jest.Mocked<VoiceService>;
+    events = { audit: jest.fn(), publish: jest.fn() };
+    persistence = {
+      runWithEvents: jest.fn(
+        async (fn: (transaction: typeof tx, collector: typeof events) => Promise<unknown>) =>
+          fn(tx, events),
+      ),
+    };
     service = new ChannelsService(
       auditService,
       channelsRepo,
       notificationsService as unknown as NotificationsService,
       permissionsService,
+      persistence as unknown as PersistenceCoordinator,
       prisma as unknown as PrismaService,
       realtimePublisher,
       voiceService,
@@ -101,10 +107,10 @@ describe('ChannelsService', () => {
     expect(channelsRepo.insertChannel).toHaveBeenCalledTimes(1);
     expect(channelsRepo.seedChannelReadStates).toHaveBeenCalledTimes(1);
     expect(channelsRepo.deletePermissionOverwrites).toHaveBeenCalledTimes(1);
-    expect(auditService.record).toHaveBeenCalledWith(
+    expect(events.audit).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'CreateChannel', result: 'success' }),
     );
-    expect(realtimePublisher.publishToRoom).toHaveBeenCalledWith(
+    expect(events.publish).toHaveBeenCalledWith(
       `server:${serverId()}`,
       RealtimeEvent.ChannelChanged,
       expect.objectContaining({ change_type: 'created' }),
@@ -158,7 +164,7 @@ describe('ChannelsService', () => {
       service.createChannel(user, serverId(), { name: 'general', type: 'text' }),
     ).rejects.toMatchObject<AppError>({ code: ErrorCode.PermissionDenied });
 
-    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(persistence.runWithEvents).not.toHaveBeenCalled();
   });
 });
 

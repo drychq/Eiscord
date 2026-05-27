@@ -4,10 +4,10 @@ import { ErrorCode, RealtimeEvent } from '@eiscord/shared';
 
 import { AuthenticatedUserContext } from '../../common/auth/auth.types';
 import { AppError } from '../../common/errors/app-error';
+import type { EventCollector } from '../../common/persistence/event-collector';
 import { PrismaService } from '../../common/persistence/prisma.service';
 import type { RawSqlExecutor } from '../../common/persistence/types';
 import { buildUserRoom } from '../realtime/realtime.rooms';
-import { RealtimePublisher } from '../realtime/realtime.publisher';
 import { ListNotificationsDto } from './dto/list-notifications.dto';
 import { MarkNotificationsReadDto } from './dto/mark-notifications-read.dto';
 import {
@@ -37,10 +37,7 @@ type NotificationCursor = {
 
 @Injectable()
 export class NotificationsService {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly realtimePublisher: RealtimePublisher,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   async createNotification(
     tx: RawSqlExecutor,
@@ -101,8 +98,8 @@ export class NotificationsService {
     return { created: false, notification: existing };
   }
 
-  publishCreated(row: NotificationRow, requestId?: string) {
-    this.realtimePublisher.publishToRoom(
+  publishCreated(events: EventCollector, row: NotificationRow, requestId?: string): void {
+    events.publish(
       buildUserRoom(row.userId),
       RealtimeEvent.NotificationCreated,
       toNotificationSummary(row),

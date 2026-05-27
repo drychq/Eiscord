@@ -4,15 +4,14 @@ import { ErrorCode, RealtimeEvent } from '@eiscord/shared';
 
 import { AuthenticatedUserContext } from '../../common/auth/auth.types';
 import { AppError } from '../../common/errors/app-error';
+import type { EventCollector } from '../../common/persistence/event-collector';
+import { PersistenceCoordinator } from '../../common/persistence/persistence-coordinator.service';
 import { PrismaService } from '../../common/persistence/prisma.service';
 import type { RawSqlExecutor } from '../../common/persistence/types';
 import { PermissionAction } from '../../common/permissions/permission.types';
 import { PermissionsService } from '../../common/permissions/permissions.service';
-import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import type { CreateNotificationResult } from '../notifications/notifications.service';
 import { buildRealtimeRoom, buildUserRoom } from '../realtime/realtime.rooms';
-import { RealtimePublisher } from '../realtime/realtime.publisher';
 import { DeleteMessageDto } from './dto/delete-message.dto';
 import { LoadMessagesDto } from './dto/load-messages.dto';
 import { MarkReadDto } from './dto/mark-read.dto';
@@ -44,15 +43,20 @@ type NormalizedSendInput = {
   mentionUserIds: string[];
 };
 
+type UnreadScope = {
+  channelId: string | null;
+  conversationId: string | null;
+  scopeType: 'channel' | 'dm';
+};
+
 @Injectable()
 export class MessagesService {
   constructor(
-    private readonly auditService: AuditService,
     private readonly messagesRepo: MessagesRepository,
     private readonly notificationsService: NotificationsService,
     private readonly permissionsService: PermissionsService,
+    private readonly persistence: PersistenceCoordinator,
     private readonly prisma: PrismaService,
-    private readonly realtimePublisher: RealtimePublisher,
   ) {}
 
   async sendChannelMessage(
@@ -67,7 +71,8 @@ export class MessagesService {
       channelId,
       PermissionAction.ViewChannel,
     );
-    const result = await this.prisma.$transaction(async (tx) => {
+
+    return this.persistence.runWithEvents(async (tx, events) => {
       const existing = input.clientMessageId
         ? await this.messagesRepo.findExistingChannelMessage(
             tx,
@@ -78,7 +83,7 @@ export class MessagesService {
         : null;
 
       if (existing) {
-        return { created: false, message: existing, notifications: [], unreadRows: [] };
+        return this.hydrateMessage(tx, existing);
       }
 
       await this.assertReadyMessageAttachments(tx, user.userId, input.attachmentIds);
@@ -101,36 +106,33 @@ export class MessagesService {
       await this.messagesRepo.markSenderReadChannel(tx, user.userId, channelId, message.id);
       const recipients = readableUserIds.filter((userId) => userId !== user.userId);
       const unreadRows = await this.messagesRepo.incrementChannelUnread(tx, channelId, recipients);
-      const notifications: CreateNotificationResult[] = [];
+      const summary = await this.hydrateMessage(tx, message);
+      const room = buildRealtimeRoom('channel', channelId);
+
+      events.publish(room, RealtimeEvent.MessageCreated, summary, requestId);
+      this.enqueueUnreadEvents(
+        events,
+        unreadRows,
+        { channelId, conversationId: null, scopeType: 'channel' },
+        requestId,
+      );
 
       for (const mentionedUserId of mentionUserIds.filter((id) => id !== user.userId)) {
-        notifications.push(
-          await this.notificationsService.createNotification(tx, {
-            contentPreview: `${message.senderNickname} mentioned you`,
-            dedupeKey: `message:${message.id}:mention:${mentionedUserId}`,
-            sourceId: message.id,
-            sourceType: 'message',
-            type: 'channel_mention',
-            userId: mentionedUserId,
-          }),
-        );
+        const notifResult = await this.notificationsService.createNotification(tx, {
+          contentPreview: `${message.senderNickname} mentioned you`,
+          dedupeKey: `message:${message.id}:mention:${mentionedUserId}`,
+          sourceId: message.id,
+          sourceType: 'message',
+          type: 'channel_mention',
+          userId: mentionedUserId,
+        });
+        if (notifResult.created) {
+          this.notificationsService.publishCreated(events, notifResult.notification, requestId);
+        }
       }
 
-      return { created: true, message, notifications, unreadRows };
+      return summary;
     });
-    const summary = await this.hydrateMessage(result.message);
-
-    if (result.created) {
-      this.publishMessageCreated(summary, buildRealtimeRoom('channel', channelId), requestId);
-      this.publishUnreadUpdates(result.unreadRows, {
-        channelId,
-        conversationId: null,
-        scopeType: 'channel',
-      }, requestId);
-      this.publishNotifications(result.notifications, requestId);
-    }
-
-    return summary;
   }
 
   async sendDirectMessage(
@@ -140,7 +142,8 @@ export class MessagesService {
     requestId?: string,
   ): Promise<MessageSummary> {
     const input = normalizeSendInput(dto);
-    const result = await this.prisma.$transaction(async (tx) => {
+
+    return this.persistence.runWithEvents(async (tx, events) => {
       const conversation = await this.getDirectConversationForRead(tx, user.userId, conversationId);
       const existing = input.clientMessageId
         ? await this.messagesRepo.findExistingDirectMessage(
@@ -152,7 +155,7 @@ export class MessagesService {
         : null;
 
       if (existing) {
-        return { created: false, message: existing, notifications: [], unreadRows: [] };
+        return this.hydrateMessage(tx, existing);
       }
 
       await this.assertReadyMessageAttachments(tx, user.userId, input.attachmentIds);
@@ -176,7 +179,18 @@ export class MessagesService {
       const unreadRows = [
         await this.messagesRepo.incrementDirectUnread(tx, conversationId, recipientId),
       ];
-      const notification = await this.notificationsService.createNotification(tx, {
+      const summary = await this.hydrateMessage(tx, message);
+      const room = buildRealtimeRoom('dm', conversationId);
+
+      events.publish(room, RealtimeEvent.MessageCreated, summary, requestId);
+      this.enqueueUnreadEvents(
+        events,
+        unreadRows,
+        { channelId: null, conversationId, scopeType: 'dm' },
+        requestId,
+      );
+
+      const notifResult = await this.notificationsService.createNotification(tx, {
         contentPreview: `${message.senderNickname}: ${previewContent(input.content)}`,
         dedupeKey: `message:${message.id}:dm:${recipientId}`,
         sourceId: message.id,
@@ -184,22 +198,12 @@ export class MessagesService {
         type: 'direct_message',
         userId: recipientId,
       });
+      if (notifResult.created) {
+        this.notificationsService.publishCreated(events, notifResult.notification, requestId);
+      }
 
-      return { created: true, message, notifications: [notification], unreadRows };
+      return summary;
     });
-    const summary = await this.hydrateMessage(result.message);
-
-    if (result.created) {
-      this.publishMessageCreated(summary, buildRealtimeRoom('dm', conversationId), requestId);
-      this.publishUnreadUpdates(result.unreadRows, {
-        channelId: null,
-        conversationId,
-        scopeType: 'dm',
-      }, requestId);
-      this.publishNotifications(result.notifications, requestId);
-    }
-
-    return summary;
   }
 
   async loadChannelMessages(
@@ -219,7 +223,7 @@ export class MessagesService {
     const readState = await this.messagesRepo.ensureChannelReadState(user.userId, channelId);
 
     return {
-      items: await Promise.all(page.map((row) => this.hydrateMessage(row))),
+      items: await Promise.all(page.map((row) => this.hydrateMessage(this.prisma, row))),
       next_cursor: rows.length > limit ? encodeCursor(page[page.length - 1]) : null,
       read_state: toReadStateSummary(readState),
     };
@@ -242,7 +246,7 @@ export class MessagesService {
     const readState = await this.messagesRepo.ensureDirectReadState(user.userId, conversationId);
 
     return {
-      items: await Promise.all(page.map((row) => this.hydrateMessage(row))),
+      items: await Promise.all(page.map((row) => this.hydrateMessage(this.prisma, row))),
       next_cursor: rows.length > limit ? encodeCursor(page[page.length - 1]) : null,
       read_state: toReadStateSummary(readState),
     };
@@ -259,26 +263,31 @@ export class MessagesService {
       }
 
       await this.getChannelForRead(user, dto.channel_id);
-      const readState = await this.markScopeRead(
-        user.userId,
-        'channel',
-        dto.channel_id,
-        null,
-        dto.last_read_message_id,
-      );
-      this.publishUnreadUpdates(
-        [
-          {
-            lastReadMessageId: readState.lastReadMessageId,
-            unreadCount: readState.unreadCount,
-            userId: user.userId,
-          },
-        ],
-        { channelId: dto.channel_id, conversationId: null, scopeType: 'channel' },
-        requestId,
-      );
+      const channelId = dto.channel_id;
 
-      return toReadStateSummary(readState);
+      return this.persistence.runWithEvents(async (_tx, events) => {
+        const readState = await this.markScopeRead(
+          user.userId,
+          'channel',
+          channelId,
+          null,
+          dto.last_read_message_id,
+        );
+        this.enqueueUnreadEvents(
+          events,
+          [
+            {
+              lastReadMessageId: readState.lastReadMessageId,
+              unreadCount: readState.unreadCount,
+              userId: user.userId,
+            },
+          ],
+          { channelId, conversationId: null, scopeType: 'channel' },
+          requestId,
+        );
+
+        return toReadStateSummary(readState);
+      });
     }
 
     if (!dto.conversation_id) {
@@ -286,26 +295,31 @@ export class MessagesService {
     }
 
     await this.getDirectConversationForRead(this.prisma, user.userId, dto.conversation_id);
-    const readState = await this.markScopeRead(
-      user.userId,
-      'dm',
-      null,
-      dto.conversation_id,
-      dto.last_read_message_id,
-    );
-    this.publishUnreadUpdates(
-      [
-        {
-          lastReadMessageId: readState.lastReadMessageId,
-          unreadCount: readState.unreadCount,
-          userId: user.userId,
-        },
-      ],
-      { channelId: null, conversationId: dto.conversation_id, scopeType: 'dm' },
-      requestId,
-    );
+    const conversationId = dto.conversation_id;
 
-    return toReadStateSummary(readState);
+    return this.persistence.runWithEvents(async (_tx, events) => {
+      const readState = await this.markScopeRead(
+        user.userId,
+        'dm',
+        null,
+        conversationId,
+        dto.last_read_message_id,
+      );
+      this.enqueueUnreadEvents(
+        events,
+        [
+          {
+            lastReadMessageId: readState.lastReadMessageId,
+            unreadCount: readState.unreadCount,
+            userId: user.userId,
+          },
+        ],
+        { channelId: null, conversationId, scopeType: 'dm' },
+        requestId,
+      );
+
+      return toReadStateSummary(readState);
+    });
   }
 
   async deleteMessage(
@@ -342,7 +356,8 @@ export class MessagesService {
     }
 
     const visibility = dto.operation === 'retract' ? 'retracted' : 'deleted';
-    const result = await this.prisma.$transaction(async (tx) => {
+
+    return this.persistence.runWithEvents(async (tx, events) => {
       const updated = await this.messagesRepo.markMessageDeleted(tx, messageId, visibility);
 
       if (!updated) {
@@ -354,55 +369,58 @@ export class MessagesService {
         : updated.conversationId
           ? await this.messagesRepo.recomputeDirectUnreadAfterDelete(tx, updated.conversationId)
           : [];
+      const summary = await this.hydrateMessage(tx, updated);
+      const room =
+        summary.scope_type === 'channel'
+          ? buildRealtimeRoom('channel', summary.channel_id!)
+          : buildRealtimeRoom('dm', summary.conversation_id!);
 
-      return { message: updated, unreadRows };
-    });
-    const summary = await this.hydrateMessage(result.message);
-    const room =
-      summary.scope_type === 'channel'
-        ? buildRealtimeRoom('channel', summary.channel_id!)
-        : buildRealtimeRoom('dm', summary.conversation_id!);
-
-    await this.auditService.record({
-      action: `DeleteMessage:${dto.operation}`,
-      actorId: user.userId,
-      metadata: { reason: normalizeNullableString(dto.reason) },
-      requestId,
-      result: 'success',
-      targetId: messageId,
-      targetType: 'message',
-    });
-    this.realtimePublisher.publishToRoom(
-      room,
-      RealtimeEvent.MessageDeleted,
-      {
-        deleted_at: new Date().toISOString(),
-        message_id: messageId,
-        operation: dto.operation,
-      },
-      requestId,
-    );
-    this.publishUnreadUpdates(result.unreadRows, {
-      channelId: summary.channel_id,
-      conversationId: summary.conversation_id,
-      scopeType: summary.scope_type as 'channel' | 'dm',
-    }, requestId);
-
-    if (dto.operation === 'delete' && message.senderId !== user.userId) {
-      const notifResult = await this.notificationsService.createNotification(this.prisma, {
-        contentPreview: 'Your message was deleted by a moderator',
-        dedupeKey: `message:${messageId}:deleted`,
-        sourceId: messageId,
-        sourceType: 'message',
-        type: 'PERMISSION_CHANGED',
-        userId: message.senderId,
+      events.audit({
+        action: `DeleteMessage:${dto.operation}`,
+        actorId: user.userId,
+        metadata: { reason: normalizeNullableString(dto.reason) },
+        requestId,
+        result: 'success',
+        targetId: messageId,
+        targetType: 'message',
       });
-      if (notifResult.created) {
-        this.notificationsService.publishCreated(notifResult.notification, requestId);
-      }
-    }
+      events.publish(
+        room,
+        RealtimeEvent.MessageDeleted,
+        {
+          deleted_at: new Date().toISOString(),
+          message_id: messageId,
+          operation: dto.operation,
+        },
+        requestId,
+      );
+      this.enqueueUnreadEvents(
+        events,
+        unreadRows,
+        {
+          channelId: summary.channel_id,
+          conversationId: summary.conversation_id,
+          scopeType: summary.scope_type as 'channel' | 'dm',
+        },
+        requestId,
+      );
 
-    return summary;
+      if (dto.operation === 'delete' && message.senderId !== user.userId) {
+        const notifResult = await this.notificationsService.createNotification(tx, {
+          contentPreview: 'Your message was deleted by a moderator',
+          dedupeKey: `message:${messageId}:deleted`,
+          sourceId: messageId,
+          sourceType: 'message',
+          type: 'PERMISSION_CHANGED',
+          userId: message.senderId,
+        });
+        if (notifResult.created) {
+          this.notificationsService.publishCreated(events, notifResult.notification, requestId);
+        }
+      }
+
+      return summary;
+    });
   }
 
   private async getChannelForSend(
@@ -517,10 +535,13 @@ export class MessagesService {
     return validUserIds;
   }
 
-  private async hydrateMessage(row: MessageRow): Promise<MessageSummary> {
+  private async hydrateMessage(
+    executor: RawSqlExecutor,
+    row: MessageRow,
+  ): Promise<MessageSummary> {
     const [attachments, mentions] = await Promise.all([
-      this.messagesRepo.loadMessageAttachments(row.id),
-      this.messagesRepo.loadMessageMentions(row.id),
+      this.messagesRepo.loadMessageAttachments(executor, row.id),
+      this.messagesRepo.loadMessageMentions(executor, row.id),
     ]);
 
     return toMessageSummary(row, attachments, mentions);
@@ -580,17 +601,14 @@ export class MessagesService {
     );
   }
 
-  private publishMessageCreated(summary: MessageSummary, room: string, requestId?: string) {
-    this.realtimePublisher.publishToRoom(room, RealtimeEvent.MessageCreated, summary, requestId);
-  }
-
-  private publishUnreadUpdates(
+  private enqueueUnreadEvents(
+    events: EventCollector,
     rows: UnreadRow[],
-    scope: { channelId: string | null; conversationId: string | null; scopeType: 'channel' | 'dm' },
+    scope: UnreadScope,
     requestId?: string,
-  ) {
+  ): void {
     for (const row of rows) {
-      this.realtimePublisher.publishToRoom(
+      events.publish(
         buildUserRoom(row.userId),
         RealtimeEvent.UnreadUpdated,
         {
@@ -602,14 +620,6 @@ export class MessagesService {
         },
         requestId,
       );
-    }
-  }
-
-  private publishNotifications(results: CreateNotificationResult[], requestId?: string) {
-    for (const result of results) {
-      if (result.created) {
-        this.notificationsService.publishCreated(result.notification, requestId);
-      }
     }
   }
 }

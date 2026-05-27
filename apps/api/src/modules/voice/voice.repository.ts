@@ -116,8 +116,11 @@ export class VoiceRepository {
     return created;
   }
 
-  async updateVoiceSessionState(input: UpdateVoiceSessionStateInput): Promise<VoiceSessionRow> {
-    const [updated] = await this.prisma.$queryRaw<VoiceSessionRow[]>`
+  async updateVoiceSessionState(
+    tx: RawSqlExecutor,
+    input: UpdateVoiceSessionStateInput,
+  ): Promise<VoiceSessionRow> {
+    const [updated] = await tx.$queryRaw<VoiceSessionRow[]>`
       UPDATE voice_sessions
       SET
         mute_state = ${input.muteState},

@@ -1,6 +1,7 @@
 import { ErrorCode } from '@eiscord/shared';
 
 import { AppError } from '../../common/errors/app-error';
+import { PersistenceCoordinator } from '../../common/persistence/persistence-coordinator.service';
 import { PrismaService } from '../../common/persistence/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AuditService } from '../audit/audit.service';
@@ -20,6 +21,8 @@ describe('FriendsService', () => {
   let notificationsService: jest.Mocked<NotificationsService>;
   let service: FriendsService;
   let tx: { $executeRaw: jest.Mock; $queryRaw: jest.Mock };
+  let events: { audit: jest.Mock; publish: jest.Mock };
+  let persistence: { runWithEvents: jest.Mock };
 
   beforeEach(() => {
     auditService = {
@@ -52,9 +55,17 @@ describe('FriendsService', () => {
       }),
       publishCreated: jest.fn(),
     } as unknown as jest.Mocked<NotificationsService>;
+    events = { audit: jest.fn(), publish: jest.fn() };
+    persistence = {
+      runWithEvents: jest.fn(
+        async (fn: (transaction: typeof tx, collector: typeof events) => Promise<unknown>) =>
+          fn(tx, events),
+      ),
+    };
     service = new FriendsService(
       auditService,
       notificationsService,
+      persistence as unknown as PersistenceCoordinator,
       prisma as unknown as PrismaService,
     );
   });
@@ -62,7 +73,7 @@ describe('FriendsService', () => {
   it('creates friend requests and notifies the addressee', async () => {
     prisma.$queryRaw.mockResolvedValueOnce([friendUserRow()]);
     prisma.$queryRaw.mockResolvedValueOnce([]);
-    prisma.$queryRaw.mockResolvedValueOnce([friendshipRecord({ status: 'pending' })]);
+    tx.$queryRaw.mockResolvedValueOnce([friendshipRecord({ status: 'pending' })]);
     prisma.$queryRaw.mockResolvedValueOnce([friendshipRow({ status: 'pending' })]);
 
     const result = await service.createFriendRequest(
@@ -76,14 +87,18 @@ describe('FriendsService', () => {
       friend: { user_id: bobId },
       status: 'pending',
     });
-    expect(auditService.record).toHaveBeenCalledWith(
+    expect(events.audit).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'CreateFriendRequest', result: 'success' }),
     );
     expect(notificationsService.createNotification).toHaveBeenCalledWith(
-      prisma,
+      tx,
       expect.objectContaining({ type: 'friend_request', userId: bobId }),
     );
-    expect(notificationsService.publishCreated).toHaveBeenCalled();
+    expect(notificationsService.publishCreated).toHaveBeenCalledWith(
+      events,
+      expect.any(Object),
+      'request-1',
+    );
   });
 
   it('rejects self friend requests', async () => {
@@ -138,7 +153,7 @@ describe('FriendsService', () => {
       status: 'accepted',
     });
     expect(tx.$queryRaw).toHaveBeenCalledTimes(3);
-    expect(auditService.record).toHaveBeenCalledWith(
+    expect(events.audit).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'AcceptFriendRequest', result: 'success' }),
     );
   });

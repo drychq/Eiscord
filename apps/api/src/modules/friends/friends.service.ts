@@ -6,6 +6,7 @@ import { ErrorCode } from '@eiscord/shared';
 
 import { AuthenticatedUserContext } from '../../common/auth/auth.types';
 import { AppError } from '../../common/errors/app-error';
+import { PersistenceCoordinator } from '../../common/persistence/persistence-coordinator.service';
 import { PrismaService } from '../../common/persistence/prisma.service';
 import type { RawSqlExecutor } from '../../common/persistence/types';
 import { AuditService } from '../audit/audit.service';
@@ -47,6 +48,7 @@ export class FriendsService {
   constructor(
     private readonly auditService: AuditService,
     private readonly notificationsService: NotificationsService,
+    private readonly persistence: PersistenceCoordinator,
     private readonly prisma: PrismaService,
   ) {}
 
@@ -134,41 +136,45 @@ export class FriendsService {
     }
 
     try {
-      const [friendship] = await this.prisma.$queryRaw<FriendshipRecord[]>`
-        INSERT INTO friendships (id, requester_id, addressee_id, status)
-        VALUES (${randomUUID()}::uuid, ${user.userId}::uuid, ${dto.target_user_id}::uuid, 'pending')
-        RETURNING
-          id,
-          requester_id AS "requesterId",
-          addressee_id AS "addresseeId",
-          status,
-          created_at AS "createdAt",
-          updated_at AS "updatedAt"
-      `;
+      const friendshipId = await this.persistence.runWithEvents(async (tx, events) => {
+        const [friendship] = await tx.$queryRaw<FriendshipRecord[]>`
+          INSERT INTO friendships (id, requester_id, addressee_id, status)
+          VALUES (${randomUUID()}::uuid, ${user.userId}::uuid, ${dto.target_user_id}::uuid, 'pending')
+          RETURNING
+            id,
+            requester_id AS "requesterId",
+            addressee_id AS "addresseeId",
+            status,
+            created_at AS "createdAt",
+            updated_at AS "updatedAt"
+        `;
 
-      await this.auditService.record({
-        action: 'CreateFriendRequest',
-        actorId: user.userId,
-        requestId,
-        result: 'success',
-        targetId: friendship.id,
-        targetType: 'friendship',
+        events.audit({
+          action: 'CreateFriendRequest',
+          actorId: user.userId,
+          requestId,
+          result: 'success',
+          targetId: friendship.id,
+          targetType: 'friendship',
+        });
+
+        const notification = await this.notificationsService.createNotification(tx, {
+          contentPreview: 'New friend request',
+          dedupeKey: `friendship:${friendship.id}:request`,
+          sourceId: friendship.id,
+          sourceType: 'friendship',
+          type: 'friend_request',
+          userId: dto.target_user_id,
+        });
+
+        if (notification.created) {
+          this.notificationsService.publishCreated(events, notification.notification, requestId);
+        }
+
+        return friendship.id;
       });
 
-      const notification = await this.notificationsService.createNotification(this.prisma, {
-        contentPreview: 'New friend request',
-        dedupeKey: `friendship:${friendship.id}:request`,
-        sourceId: friendship.id,
-        sourceType: 'friendship',
-        type: 'friend_request',
-        userId: dto.target_user_id,
-      });
-
-      if (notification.created) {
-        this.notificationsService.publishCreated(notification.notification, requestId);
-      }
-
-      return this.getFriendshipSummary(friendship.id, user.userId);
+      return this.getFriendshipSummary(friendshipId, user.userId);
     } catch (error) {
       if (isUniqueConflict(error)) {
         await this.recordFailure(
@@ -239,7 +245,7 @@ export class FriendsService {
     nextStatus: 'accepted' | 'rejected',
     requestId?: string,
   ): Promise<FriendshipSummary> {
-    const friendship = await this.prisma.$transaction(async (tx) => {
+    const updatedFriendshipId = await this.persistence.runWithEvents(async (tx, events) => {
       const current = await this.getFriendshipForUpdate(tx, friendshipId);
 
       if (!current) {
@@ -296,34 +302,34 @@ export class FriendsService {
         await this.createOrReuseDirectConversation(tx, updated.requesterId, updated.addresseeId);
       }
 
-      return updated;
-    });
-
-    await this.auditService.record({
-      action: statusAction(nextStatus),
-      actorId: user.userId,
-      requestId,
-      result: 'success',
-      targetId: friendship.id,
-      targetType: 'friendship',
-    });
-
-    if (nextStatus === 'accepted') {
-      const notification = await this.notificationsService.createNotification(this.prisma, {
-        contentPreview: 'Friend request accepted',
-        dedupeKey: `friendship:${friendship.id}:accepted`,
-        sourceId: friendship.id,
-        sourceType: 'friendship',
-        type: 'friend_request',
-        userId: friendship.requesterId,
+      events.audit({
+        action: statusAction(nextStatus),
+        actorId: user.userId,
+        requestId,
+        result: 'success',
+        targetId: updated.id,
+        targetType: 'friendship',
       });
 
-      if (notification.created) {
-        this.notificationsService.publishCreated(notification.notification, requestId);
-      }
-    }
+      if (nextStatus === 'accepted') {
+        const notification = await this.notificationsService.createNotification(tx, {
+          contentPreview: 'Friend request accepted',
+          dedupeKey: `friendship:${updated.id}:accepted`,
+          sourceId: updated.id,
+          sourceType: 'friendship',
+          type: 'friend_request',
+          userId: updated.requesterId,
+        });
 
-    return this.getFriendshipSummary(friendship.id, user.userId);
+        if (notification.created) {
+          this.notificationsService.publishCreated(events, notification.notification, requestId);
+        }
+      }
+
+      return updated.id;
+    });
+
+    return this.getFriendshipSummary(updatedFriendshipId, user.userId);
   }
 
   private async getFriendshipForUpdate(

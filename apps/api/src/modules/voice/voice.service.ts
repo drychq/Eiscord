@@ -5,10 +5,11 @@ import { ErrorCode, JoinVoiceMediaResponse, RealtimeEvent } from '@eiscord/share
 
 import { AuthenticatedUserContext } from '../../common/auth/auth.types';
 import { AppError } from '../../common/errors/app-error';
+import type { EventCollector } from '../../common/persistence/event-collector';
+import { PersistenceCoordinator } from '../../common/persistence/persistence-coordinator.service';
 import { PrismaService } from '../../common/persistence/prisma.service';
 import { PermissionAction } from '../../common/permissions/permission.types';
 import { PermissionsService } from '../../common/permissions/permissions.service';
-import { AuditService } from '../audit/audit.service';
 import { MediaSignalingService } from '../media-signaling/media-signaling.service';
 import { TurnCredentialService } from '../media-signaling/turn-credential.service';
 import { buildRealtimeRoom } from '../realtime/realtime.rooms';
@@ -32,10 +33,10 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
   private negotiationSweepTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(
-    private readonly auditService: AuditService,
     private readonly configService: ConfigService,
     private readonly mediaSignalingService: MediaSignalingService,
     private readonly permissionsService: PermissionsService,
+    private readonly persistence: PersistenceCoordinator,
     private readonly prisma: PrismaService,
     private readonly realtimePublisher: RealtimePublisher,
     private readonly turnCredentialService: TurnCredentialService,
@@ -78,7 +79,7 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
     const negotiationTimeoutMs = this.configService.get<number>('VOICE_NEGOTIATION_TIMEOUT_MS') ?? 30000;
     const router = await this.prepareVoiceRouter(channelId);
 
-    const result = await this.prisma.$transaction(async (tx) => {
+    const result = await this.persistence.runWithEvents(async (tx, events) => {
       const previous = await this.voiceRepo.findActiveSessionForUser(tx, user.userId);
 
       if (previous) {
@@ -94,11 +95,23 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
         userId: user.userId,
       });
 
+      if (previous) {
+        this.enqueueVoiceLeft(events, previous, 'switch_channel', requestId);
+      }
+      this.enqueueVoiceJoined(events, created, requestId);
+      events.audit({
+        action: 'JoinVoiceChannel',
+        actorId: user.userId,
+        requestId,
+        result: 'success',
+        targetId: channelId,
+        targetType: 'voice_channel',
+      });
+
       return { created, previous };
     });
 
     if (result.previous) {
-      this.publishVoiceLeft(result.previous, 'switch_channel', requestId);
       void this.mediaSignalingService.releaseSession(result.previous.id, 'switch_channel').catch((error) => {
         this.logger.warn(`Failed to release previous voice session: ${String(error)}`);
       });
@@ -108,17 +121,6 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
       this.prisma,
       channelId,
     );
-
-    this.publishVoiceJoined(result.created, requestId);
-
-    await this.auditService.record({
-      action: 'JoinVoiceChannel',
-      actorId: user.userId,
-      requestId,
-      result: 'success',
-      targetId: channelId,
-      targetType: 'voice_channel',
-    });
 
     return {
       ...toVoiceSessionSummary(result.created),
@@ -205,21 +207,20 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
       );
     }
 
-    await this.prisma.$transaction(async (tx) => {
+    await this.persistence.runWithEvents(async (tx, events) => {
       await this.voiceRepo.endSession(tx, sessionId);
+      this.enqueueVoiceLeft(events, current, 'manual_leave', requestId);
+      events.audit({
+        action: 'LeaveVoiceChannel',
+        actorId: user.userId,
+        requestId,
+        result: 'success',
+        targetId: sessionId,
+        targetType: 'voice_session',
+      });
     });
     await this.mediaSignalingService.releaseSession(sessionId, 'manual_leave').catch((error) => {
       this.logger.warn(`Failed to release voice session media plane: ${String(error)}`);
-    });
-    this.publishVoiceLeft(current, 'manual_leave', requestId);
-
-    await this.auditService.record({
-      action: 'LeaveVoiceChannel',
-      actorId: user.userId,
-      requestId,
-      result: 'success',
-      targetId: sessionId,
-      targetType: 'voice_session',
     });
 
     return { ok: true };
@@ -257,11 +258,25 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
       );
     }
 
-    const updated = await this.voiceRepo.updateVoiceSessionState({
-      connectionStatus: dto.connection_status ?? current.connectionStatus,
-      deafenState: dto.deafen_state ?? current.deafenState,
-      muteState: dto.mute_state ?? current.muteState,
-      sessionId,
+    const updated = await this.persistence.runWithEvents(async (tx, events) => {
+      const row = await this.voiceRepo.updateVoiceSessionState(tx, {
+        connectionStatus: dto.connection_status ?? current.connectionStatus,
+        deafenState: dto.deafen_state ?? current.deafenState,
+        muteState: dto.mute_state ?? current.muteState,
+        sessionId,
+      });
+
+      this.enqueueVoiceStateChanged(events, row, requestId);
+      events.audit({
+        action: 'UpdateVoiceState',
+        actorId: user.userId,
+        requestId,
+        result: 'success',
+        targetId: sessionId,
+        targetType: 'voice_session',
+      });
+
+      return row;
     });
 
     if (dto.mute_state !== undefined && dto.mute_state !== current.muteState) {
@@ -272,17 +287,6 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
         this.logger.warn(`Failed to toggle producer state: ${String(error)}`);
       });
     }
-
-    this.publishVoiceStateChanged(updated, requestId);
-
-    await this.auditService.record({
-      action: 'UpdateVoiceState',
-      actorId: user.userId,
-      requestId,
-      result: 'success',
-      targetId: sessionId,
-      targetType: 'voice_session',
-    });
 
     return toVoiceSessionSummary(updated);
   }
@@ -298,11 +302,11 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
       return null;
     }
 
-    await this.prisma.$transaction(async (tx) => {
+    await this.persistence.runWithEvents(async (tx, events) => {
       await this.voiceRepo.endSession(tx, current.id);
+      this.enqueueVoiceLeft(events, current, reason, requestId);
     });
     await this.mediaSignalingService.releaseSession(current.id, reason).catch(() => undefined);
-    this.publishVoiceLeft(current, reason, requestId);
 
     return toVoiceSessionSummary(current);
   }
@@ -319,11 +323,11 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
       return null;
     }
 
-    await this.prisma.$transaction(async (tx) => {
+    await this.persistence.runWithEvents(async (tx, events) => {
       await this.voiceRepo.endSession(tx, current.id);
+      this.enqueueVoiceLeft(events, current, reason, requestId);
     });
     await this.mediaSignalingService.releaseSession(current.id, reason).catch(() => undefined);
-    this.publishVoiceLeft(current, reason, requestId);
 
     return toVoiceSessionSummary(current);
   }
@@ -363,15 +367,15 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
       return [];
     }
 
-    await this.prisma.$transaction(async (tx) => {
+    await this.persistence.runWithEvents(async (tx, events) => {
       for (const session of targeted) {
         await this.voiceRepo.endSession(tx, session.id);
+        this.enqueueVoiceLeft(events, session, reason, requestId);
       }
     });
 
     for (const session of targeted) {
       await this.mediaSignalingService.releaseSession(session.id, reason).catch(() => undefined);
-      this.publishVoiceLeft(session, reason, requestId);
     }
 
     return targeted.map(toVoiceSessionSummary);
@@ -415,15 +419,15 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
       return [];
     }
 
-    await this.prisma.$transaction(async (tx) => {
+    await this.persistence.runWithEvents(async (tx, events) => {
       for (const session of toRelease) {
         await this.voiceRepo.endSession(tx, session.id);
+        this.enqueueVoiceLeft(events, session, reason, requestId);
       }
     });
 
     for (const session of toRelease) {
       await this.mediaSignalingService.releaseSession(session.id, reason).catch(() => undefined);
-      this.publishVoiceLeft(session, reason, requestId);
     }
 
     return toRelease.map(toVoiceSessionSummary);
@@ -440,15 +444,15 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
       return [];
     }
 
-    await this.prisma.$transaction(async (tx) => {
+    await this.persistence.runWithEvents(async (tx, events) => {
       for (const session of current) {
         await this.voiceRepo.endSession(tx, session.id);
+        this.enqueueVoiceLeft(events, session, reason, requestId);
       }
     });
 
     for (const session of current) {
       await this.mediaSignalingService.releaseSession(session.id, reason).catch(() => undefined);
-      this.publishVoiceLeft(session, reason, requestId);
     }
 
     return current.map(toVoiceSessionSummary);
@@ -461,15 +465,15 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
       return [];
     }
 
-    await this.prisma.$transaction(async (tx) => {
+    await this.persistence.runWithEvents(async (tx, events) => {
       for (const session of expired) {
         await this.voiceRepo.endSession(tx, session.id);
+        this.enqueueVoiceLeft(events, session, 'signaling_timeout');
       }
     });
 
     for (const session of expired) {
       await this.mediaSignalingService.releaseSession(session.id, 'signaling_timeout').catch(() => undefined);
-      this.publishVoiceLeft(session, 'signaling_timeout');
     }
 
     return expired.map(toVoiceSessionSummary);
@@ -496,8 +500,8 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
     return this.voiceRepo.findActiveSessionForUser(this.prisma, userId);
   }
 
-  private publishVoiceJoined(row: VoiceSessionRow, requestId?: string) {
-    this.realtimePublisher.publishToRoom(
+  private enqueueVoiceJoined(events: EventCollector, row: VoiceSessionRow, requestId?: string) {
+    events.publish(
       buildRealtimeRoom('voice', row.channelId),
       RealtimeEvent.VoiceMemberJoined,
       toVoiceSessionSummary(row),
@@ -505,9 +509,14 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
-  private publishVoiceLeft(row: VoiceSessionRow, reason: string, requestId?: string) {
+  private enqueueVoiceLeft(
+    events: EventCollector,
+    row: VoiceSessionRow,
+    reason: string,
+    requestId?: string,
+  ) {
     this.realtimePublisher.leaveUserRooms([row.userId], buildRealtimeRoom('voice', row.channelId));
-    this.realtimePublisher.publishToRoom(
+    events.publish(
       buildRealtimeRoom('voice', row.channelId),
       RealtimeEvent.VoiceMemberLeft,
       {
@@ -520,8 +529,8 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
-  private publishVoiceStateChanged(row: VoiceSessionRow, requestId?: string) {
-    this.realtimePublisher.publishToRoom(
+  private enqueueVoiceStateChanged(events: EventCollector, row: VoiceSessionRow, requestId?: string) {
+    events.publish(
       buildRealtimeRoom('voice', row.channelId),
       RealtimeEvent.VoiceStateChanged,
       {

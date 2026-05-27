@@ -2,9 +2,9 @@ import { ConfigService } from '@nestjs/config';
 
 import { ErrorCode, RealtimeEvent } from '@eiscord/shared';
 
+import { PersistenceCoordinator } from '../../common/persistence/persistence-coordinator.service';
 import { PrismaService } from '../../common/persistence/prisma.service';
 import { PermissionsService } from '../../common/permissions/permissions.service';
-import { AuditService } from '../audit/audit.service';
 import { MediaSignalingService } from '../media-signaling/media-signaling.service';
 import { TurnCredentialService } from '../media-signaling/turn-credential.service';
 import { RealtimePublisher } from '../realtime/realtime.publisher';
@@ -15,11 +15,12 @@ const now = new Date('2026-05-04T00:00:00.000Z');
 const user = { accountStatus: 'active' as const, sessionId: sessionId(), userId: userId(1) };
 
 describe('VoiceService', () => {
-  let auditService: jest.Mocked<AuditService>;
   let configService: { get: jest.Mock };
+  let events: { audit: jest.Mock; publish: jest.Mock };
   let mediaSignalingService: jest.Mocked<MediaSignalingService>;
   let permissionsService: jest.Mocked<PermissionsService>;
-  let prisma: { $executeRaw: jest.Mock; $queryRaw: jest.Mock; $transaction: jest.Mock };
+  let persistence: { runWithEvents: jest.Mock };
+  let prisma: { $executeRaw: jest.Mock; $queryRaw: jest.Mock };
   let realtimePublisher: jest.Mocked<RealtimePublisher>;
   let service: VoiceService;
   let tx: { $executeRaw: jest.Mock; $queryRaw: jest.Mock };
@@ -27,9 +28,6 @@ describe('VoiceService', () => {
   let voiceRepo: jest.Mocked<VoiceRepository>;
 
   beforeEach(() => {
-    auditService = {
-      record: jest.fn().mockResolvedValue(undefined),
-    } as unknown as jest.Mocked<AuditService>;
     configService = {
       get: jest.fn((key: string) => {
         if (key === 'VOICE_NEGOTIATION_TIMEOUT_MS') return 30_000;
@@ -54,7 +52,13 @@ describe('VoiceService', () => {
     prisma = {
       $executeRaw: jest.fn().mockResolvedValue(1),
       $queryRaw: jest.fn(),
-      $transaction: jest.fn((callback: (transaction: typeof tx) => unknown) => callback(tx)),
+    };
+    events = { audit: jest.fn(), publish: jest.fn() };
+    persistence = {
+      runWithEvents: jest.fn(
+        async (fn: (transaction: typeof tx, collector: typeof events) => Promise<unknown>) =>
+          fn(tx, events),
+      ),
     };
     realtimePublisher = {
       leaveUserRooms: jest.fn(),
@@ -84,10 +88,10 @@ describe('VoiceService', () => {
       endSession: jest.fn().mockResolvedValue(undefined),
     } as unknown as jest.Mocked<VoiceRepository>;
     service = new VoiceService(
-      auditService,
       configService as unknown as ConfigService,
       mediaSignalingService,
       permissionsService,
+      persistence as unknown as PersistenceCoordinator,
       prisma as unknown as PrismaService,
       realtimePublisher,
       turnCredentialService,
@@ -147,11 +151,14 @@ describe('VoiceService', () => {
       }),
     );
     expect(turnCredentialService.signCredential).toHaveBeenCalledWith(user.userId);
-    expect(realtimePublisher.publishToRoom).toHaveBeenCalledWith(
+    expect(events.publish).toHaveBeenCalledWith(
       `voice:${channelId(2)}`,
       RealtimeEvent.VoiceMemberJoined,
       expect.objectContaining({ session_id: sessionId(2) }),
       'request-1',
+    );
+    expect(events.audit).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'JoinVoiceChannel', targetId: channelId(2) }),
     );
   });
 
@@ -167,11 +174,11 @@ describe('VoiceService', () => {
       message: 'Voice media service is unavailable.',
     });
 
-    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(persistence.runWithEvents).not.toHaveBeenCalled();
     expect(voiceRepo.insertVoiceSession).not.toHaveBeenCalled();
     expect(mediaSignalingService.releaseSession).not.toHaveBeenCalled();
-    expect(realtimePublisher.publishToRoom).not.toHaveBeenCalled();
-    expect(auditService.record).not.toHaveBeenCalled();
+    expect(events.publish).not.toHaveBeenCalled();
+    expect(events.audit).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('Failed to prepare voice router'));
   });
 
@@ -190,7 +197,11 @@ describe('VoiceService', () => {
 
     expect(voiceRepo.endSession).toHaveBeenCalledWith(tx, sessionId(1));
     expect(mediaSignalingService.releaseSession).toHaveBeenCalledWith(sessionId(1), 'switch_channel');
-    expect(realtimePublisher.publishToRoom).toHaveBeenCalledWith(
+    expect(realtimePublisher.leaveUserRooms).toHaveBeenCalledWith(
+      [userId(1)],
+      `voice:${channelId(1)}`,
+    );
+    expect(events.publish).toHaveBeenCalledWith(
       `voice:${channelId(1)}`,
       RealtimeEvent.VoiceMemberLeft,
       expect.objectContaining({ reason: 'switch_channel', user_id: userId(1) }),
@@ -205,7 +216,7 @@ describe('VoiceService', () => {
     await expect(service.joinChannel(user, channelId(2), {}, 'request-full')).rejects.toThrow(
       'Voice channel is full.',
     );
-    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(persistence.runWithEvents).not.toHaveBeenCalled();
   });
 
   it('toggles producer pause when mute state flips', async () => {
@@ -218,12 +229,19 @@ describe('VoiceService', () => {
 
     await service.updateState(user, sessionId(1), { mute_state: true }, 'request-3');
 
+    expect(voiceRepo.updateVoiceSessionState).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({ muteState: true, sessionId: sessionId(1) }),
+    );
     expect(mediaSignalingService.pauseProducer).toHaveBeenCalledWith('producer-1');
-    expect(realtimePublisher.publishToRoom).toHaveBeenCalledWith(
+    expect(events.publish).toHaveBeenCalledWith(
       `voice:${channelId(1)}`,
       RealtimeEvent.VoiceStateChanged,
       expect.objectContaining({ mute_state: true, session_id: sessionId(1) }),
       'request-3',
+    );
+    expect(events.audit).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'UpdateVoiceState', targetId: sessionId(1) }),
     );
   });
 
@@ -233,6 +251,9 @@ describe('VoiceService', () => {
     await service.leaveSession(user, sessionId(1), 'request-4');
 
     expect(mediaSignalingService.releaseSession).toHaveBeenCalledWith(sessionId(1), 'manual_leave');
+    expect(events.audit).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'LeaveVoiceChannel', targetId: sessionId(1) }),
+    );
   });
 
   it('sweeps expired negotiations and broadcasts signaling timeout', async () => {
@@ -243,7 +264,7 @@ describe('VoiceService', () => {
     await service.sweepNegotiationTimeouts();
 
     expect(mediaSignalingService.releaseSession).toHaveBeenCalledWith(sessionId(9), 'signaling_timeout');
-    expect(realtimePublisher.publishToRoom).toHaveBeenCalledWith(
+    expect(events.publish).toHaveBeenCalledWith(
       `voice:${channelId(1)}`,
       RealtimeEvent.VoiceMemberLeft,
       expect.objectContaining({ reason: 'signaling_timeout' }),

@@ -1,12 +1,12 @@
+import type { EventCollector } from '../../common/persistence/event-collector';
 import { PrismaService } from '../../common/persistence/prisma.service';
-import { RealtimePublisher } from '../realtime/realtime.publisher';
 import { NotificationsService } from './notifications.service';
 
 const now = new Date('2026-05-03T00:00:00.000Z');
 
 describe('NotificationsService', () => {
   let prisma: { $executeRaw: jest.Mock; $queryRaw: jest.Mock };
-  let realtimePublisher: jest.Mocked<RealtimePublisher>;
+  let events: jest.Mocked<EventCollector>;
   let service: NotificationsService;
 
   beforeEach(() => {
@@ -14,13 +14,11 @@ describe('NotificationsService', () => {
       $executeRaw: jest.fn(),
       $queryRaw: jest.fn(),
     };
-    realtimePublisher = {
-      publishToRoom: jest.fn(),
-    } as unknown as jest.Mocked<RealtimePublisher>;
-    service = new NotificationsService(
-      prisma as unknown as PrismaService,
-      realtimePublisher,
-    );
+    events = {
+      publish: jest.fn(),
+      audit: jest.fn(),
+    } as unknown as jest.Mocked<EventCollector>;
+    service = new NotificationsService(prisma as unknown as PrismaService);
   });
 
   it('creates notifications and publishes to the recipient user room', async () => {
@@ -36,8 +34,8 @@ describe('NotificationsService', () => {
     });
 
     expect(result.created).toBe(true);
-    service.publishCreated(result.notification, 'request-1');
-    expect(realtimePublisher.publishToRoom).toHaveBeenCalledWith(
+    service.publishCreated(events, result.notification, 'request-1');
+    expect(events.publish).toHaveBeenCalledWith(
       `user:${userId()}`,
       'NotificationCreated',
       expect.objectContaining({ notification_id: notificationId() }),

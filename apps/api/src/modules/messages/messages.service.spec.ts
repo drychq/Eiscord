@@ -1,11 +1,10 @@
 import { ErrorCode, RealtimeEvent } from '@eiscord/shared';
 
 import { AppError } from '../../common/errors/app-error';
+import { PersistenceCoordinator } from '../../common/persistence/persistence-coordinator.service';
 import { PrismaService } from '../../common/persistence/prisma.service';
 import { PermissionsService } from '../../common/permissions/permissions.service';
-import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { RealtimePublisher } from '../realtime/realtime.publisher';
 import { MessagesRepository } from './messages.repository';
 import { MessagesService } from './messages.service';
 
@@ -14,22 +13,22 @@ const user = { accountStatus: 'active', sessionId: sessionId(), userId: userId(1
 
 describe('MessagesService', () => {
   let notificationsService: jest.Mocked<NotificationsService>;
-  let auditService: jest.Mocked<AuditService>;
   let permissionsService: jest.Mocked<PermissionsService>;
-  let prisma: { $executeRaw: jest.Mock; $queryRaw: jest.Mock; $transaction: jest.Mock };
+  let prisma: { $executeRaw: jest.Mock; $queryRaw: jest.Mock };
   let messagesRepo: jest.Mocked<MessagesRepository>;
-  let realtimePublisher: jest.Mocked<RealtimePublisher>;
+  let events: { audit: jest.Mock; publish: jest.Mock };
+  let persistence: { runWithEvents: jest.Mock };
   let service: MessagesService;
   let tx: { $executeRaw: jest.Mock; $queryRaw: jest.Mock };
 
   beforeEach(() => {
     notificationsService = {
-      createNotification: jest.fn(),
+      createNotification: jest.fn().mockResolvedValue({
+        created: false,
+        notification: { userId: userId(2) },
+      }),
       publishCreated: jest.fn(),
     } as unknown as jest.Mocked<NotificationsService>;
-    auditService = {
-      record: jest.fn().mockResolvedValue(undefined),
-    } as unknown as jest.Mocked<AuditService>;
     permissionsService = {
       assertAllowed: jest.fn().mockResolvedValue(undefined),
       listUsersWithChannelPermission: jest.fn().mockResolvedValue([userId(1), userId(2)]),
@@ -41,7 +40,6 @@ describe('MessagesService', () => {
     prisma = {
       $executeRaw: jest.fn().mockResolvedValue(1),
       $queryRaw: jest.fn(),
-      $transaction: jest.fn((callback: (transaction: typeof tx) => unknown) => callback(tx)),
     };
     messagesRepo = {
       findActiveTextChannel: jest.fn(),
@@ -74,16 +72,19 @@ describe('MessagesService', () => {
       recomputeDirectUnreadAfterDelete: jest.fn(),
       findCurrentReadState: jest.fn(),
     } as unknown as jest.Mocked<MessagesRepository>;
-    realtimePublisher = {
-      publishToRoom: jest.fn(),
-    } as unknown as jest.Mocked<RealtimePublisher>;
+    events = { audit: jest.fn(), publish: jest.fn() };
+    persistence = {
+      runWithEvents: jest.fn(
+        async (fn: (transaction: typeof tx, collector: typeof events) => Promise<unknown>) =>
+          fn(tx, events),
+      ),
+    };
     service = new MessagesService(
-      auditService,
       messagesRepo,
       notificationsService,
       permissionsService,
+      persistence as unknown as PersistenceCoordinator,
       prisma as unknown as PrismaService,
-      realtimePublisher,
     );
   });
 
@@ -113,13 +114,15 @@ describe('MessagesService', () => {
       channelId(),
       messageId(),
     );
-    expect(realtimePublisher.publishToRoom).toHaveBeenCalledWith(
+    expect(messagesRepo.loadMessageAttachments).toHaveBeenCalledWith(tx, messageId());
+    expect(messagesRepo.loadMessageMentions).toHaveBeenCalledWith(tx, messageId());
+    expect(events.publish).toHaveBeenCalledWith(
       `channel:${channelId()}`,
       RealtimeEvent.MessageCreated,
       expect.objectContaining({ message_id: messageId() }),
       'request-1',
     );
-    expect(realtimePublisher.publishToRoom).toHaveBeenCalledWith(
+    expect(events.publish).toHaveBeenCalledWith(
       `user:${userId(2)}`,
       RealtimeEvent.UnreadUpdated,
       expect.objectContaining({ unread_count: 1 }),
@@ -132,7 +135,7 @@ describe('MessagesService', () => {
       service.sendChannelMessage(user, channelId(), { content: '   ' }),
     ).rejects.toMatchObject<AppError>({ code: ErrorCode.ValidationFailed });
 
-    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(persistence.runWithEvents).not.toHaveBeenCalled();
   });
 
   it('rejects illegal message attachments', async () => {

@@ -108,8 +108,11 @@ export class ChannelsRepository {
     return updated;
   }
 
-  async markChannelDeleted(channelId: string): Promise<ChannelRow> {
-    const [deleted] = await this.prisma.$queryRaw<ChannelRow[]>`
+  async markChannelDeleted(
+    executor: RawSqlExecutor,
+    channelId: string,
+  ): Promise<ChannelRow> {
+    const [deleted] = await executor.$queryRaw<ChannelRow[]>`
       UPDATE channels
       SET status = 'deleted', updated_at = NOW()
       WHERE id = ${channelId}::uuid
