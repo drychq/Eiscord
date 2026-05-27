@@ -6,6 +6,7 @@ import { PermissionsService } from '../../common/permissions/permissions.service
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RealtimePublisher } from '../realtime/realtime.publisher';
+import { MessagesRepository } from './messages.repository';
 import { MessagesService } from './messages.service';
 
 const now = new Date('2026-05-03T00:00:00.000Z');
@@ -16,6 +17,7 @@ describe('MessagesService', () => {
   let auditService: jest.Mocked<AuditService>;
   let permissionsService: jest.Mocked<PermissionsService>;
   let prisma: { $executeRaw: jest.Mock; $queryRaw: jest.Mock; $transaction: jest.Mock };
+  let messagesRepo: jest.Mocked<MessagesRepository>;
   let realtimePublisher: jest.Mocked<RealtimePublisher>;
   let service: MessagesService;
   let tx: { $executeRaw: jest.Mock; $queryRaw: jest.Mock };
@@ -41,11 +43,43 @@ describe('MessagesService', () => {
       $queryRaw: jest.fn(),
       $transaction: jest.fn((callback: (transaction: typeof tx) => unknown) => callback(tx)),
     };
+    messagesRepo = {
+      findActiveTextChannel: jest.fn(),
+      findDirectConversationForUser: jest.fn(),
+      findExistingChannelMessage: jest.fn(),
+      findExistingDirectMessage: jest.fn(),
+      insertMessage: jest.fn(),
+      findMessageById: jest.fn(),
+      findReadyMessageAttachment: jest.fn(),
+      findServerMembership: jest.fn(),
+      insertMessageAttachments: jest.fn().mockResolvedValue(undefined),
+      insertMessageMentions: jest.fn().mockResolvedValue(undefined),
+      updateDirectConversationLastMessage: jest.fn().mockResolvedValue(undefined),
+      markSenderReadChannel: jest.fn().mockResolvedValue(undefined),
+      markSenderReadDirect: jest.fn().mockResolvedValue(undefined),
+      incrementChannelUnread: jest.fn(),
+      incrementDirectUnread: jest.fn(),
+      loadChannelMessages: jest.fn(),
+      loadDirectMessages: jest.fn(),
+      loadMessageAttachments: jest.fn().mockResolvedValue([]),
+      loadMessageMentions: jest.fn().mockResolvedValue([]),
+      ensureChannelReadState: jest.fn(),
+      ensureDirectReadState: jest.fn(),
+      upsertChannelReadStateAtMessage: jest.fn(),
+      upsertDirectReadStateAtMessage: jest.fn(),
+      findMessageInScope: jest.fn(),
+      findVisibleMessageWithDeletion: jest.fn(),
+      markMessageDeleted: jest.fn(),
+      recomputeChannelUnreadAfterDelete: jest.fn(),
+      recomputeDirectUnreadAfterDelete: jest.fn(),
+      findCurrentReadState: jest.fn(),
+    } as unknown as jest.Mocked<MessagesRepository>;
     realtimePublisher = {
       publishToRoom: jest.fn(),
     } as unknown as jest.Mocked<RealtimePublisher>;
     service = new MessagesService(
       auditService,
+      messagesRepo,
       notificationsService,
       permissionsService,
       prisma as unknown as PrismaService,
@@ -54,13 +88,11 @@ describe('MessagesService', () => {
   });
 
   it('sends channel messages, increments unread, and publishes realtime events', async () => {
-    prisma.$queryRaw.mockResolvedValueOnce([{ channelId: channelId(), serverId: serverId() }]);
-    tx.$queryRaw.mockResolvedValueOnce([messageRow()]);
-    tx.$queryRaw.mockResolvedValueOnce([
+    messagesRepo.findActiveTextChannel.mockResolvedValueOnce({ channelId: channelId(), serverId: serverId() });
+    messagesRepo.insertMessage.mockResolvedValueOnce(messageRow());
+    messagesRepo.incrementChannelUnread.mockResolvedValueOnce([
       { lastReadMessageId: null, unreadCount: 1, userId: userId(2) },
     ]);
-    prisma.$queryRaw.mockResolvedValueOnce([]);
-    prisma.$queryRaw.mockResolvedValueOnce([]);
 
     const result = await service.sendChannelMessage(
       user,
@@ -74,7 +106,13 @@ describe('MessagesService', () => {
       content: 'hello',
       message_id: messageId(),
     });
-    expect(tx.$executeRaw).toHaveBeenCalledTimes(2);
+    expect(messagesRepo.insertMessage).toHaveBeenCalledTimes(1);
+    expect(messagesRepo.markSenderReadChannel).toHaveBeenCalledWith(
+      tx,
+      user.userId,
+      channelId(),
+      messageId(),
+    );
     expect(realtimePublisher.publishToRoom).toHaveBeenCalledWith(
       `channel:${channelId()}`,
       RealtimeEvent.MessageCreated,
@@ -98,8 +136,8 @@ describe('MessagesService', () => {
   });
 
   it('rejects illegal message attachments', async () => {
-    prisma.$queryRaw.mockResolvedValueOnce([{ channelId: channelId(), serverId: serverId() }]);
-    tx.$queryRaw.mockResolvedValueOnce([]);
+    messagesRepo.findActiveTextChannel.mockResolvedValueOnce({ channelId: channelId(), serverId: serverId() });
+    messagesRepo.findReadyMessageAttachment.mockResolvedValueOnce(null);
 
     await expect(
       service.sendChannelMessage(user, channelId(), {

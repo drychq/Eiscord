@@ -5,6 +5,7 @@ import { ErrorCode, RealtimeEvent } from '@eiscord/shared';
 import { AuthenticatedUserContext } from '../../common/auth/auth.types';
 import { AppError } from '../../common/errors/app-error';
 import { PrismaService } from '../../common/persistence/prisma.service';
+import type { RawSqlExecutor } from '../../common/persistence/types';
 import { buildUserRoom } from '../realtime/realtime.rooms';
 import { RealtimePublisher } from '../realtime/realtime.publisher';
 import { ListNotificationsDto } from './dto/list-notifications.dto';
@@ -14,8 +15,6 @@ import {
   NotificationRow,
   toNotificationSummary,
 } from './notifications.presenter';
-
-type RawSqlExecutor = Pick<PrismaService, '$executeRaw' | '$queryRaw'>;
 
 export type CreateNotificationInput = {
   contentPreview: string;

@@ -7,12 +7,13 @@ import { PermissionsModule } from '../permissions/permissions.module';
 import { VoiceModule } from '../voice/voice.module';
 import { RolesController } from './roles.controller';
 import { ServersController } from './servers.controller';
+import { ServersRepository } from './servers.repository';
 import { ServersService } from './servers.service';
 
 @Module({
   imports: [AuditModule, NotificationsModule, PermissionsModule, RealtimeModule, forwardRef(() => VoiceModule)],
   controllers: [RolesController, ServersController],
-  providers: [ServersService],
+  providers: [ServersRepository, ServersService],
   exports: [ServersService],
 })
 export class ServersModule {}

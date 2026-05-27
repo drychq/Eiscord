@@ -7,6 +7,7 @@ import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RealtimePublisher } from '../realtime/realtime.publisher';
 import { VoiceService } from '../voice/voice.service';
+import { ChannelsRepository } from './channels.repository';
 import { ChannelsService } from './channels.service';
 
 const now = new Date('2026-05-03T00:00:00.000Z');
@@ -14,6 +15,7 @@ const user = { accountStatus: 'active', sessionId: sessionId(), userId: userId()
 
 describe('ChannelsService', () => {
   let auditService: jest.Mocked<AuditService>;
+  let channelsRepo: jest.Mocked<ChannelsRepository>;
   let notificationsService: { createNotification: jest.Mock; publishCreated: jest.Mock };
   let prisma: {
     $executeRaw: jest.Mock;
@@ -39,6 +41,19 @@ describe('ChannelsService', () => {
       $queryRaw: jest.fn(),
       $transaction: jest.fn((callback: (transaction: typeof tx) => unknown) => callback(tx)),
     };
+    channelsRepo = {
+      insertChannel: jest.fn(),
+      seedChannelReadStates: jest.fn().mockResolvedValue(undefined),
+      updateChannel: jest.fn(),
+      markChannelDeleted: jest.fn(),
+      findActiveChannelForMember: jest.fn(),
+      deletePermissionOverwrites: jest.fn().mockResolvedValue(undefined),
+      insertPermissionOverwrite: jest.fn().mockResolvedValue(undefined),
+      findRoleInServer: jest.fn(),
+      findActiveMembership: jest.fn(),
+      listPermissionOverwrites: jest.fn().mockResolvedValue([]),
+      listServerActiveUserIds: jest.fn().mockResolvedValue([]),
+    } as unknown as jest.Mocked<ChannelsRepository>;
     notificationsService = {
       createNotification: jest.fn().mockResolvedValue({ created: false, notification: {} }),
       publishCreated: jest.fn(),
@@ -57,6 +72,7 @@ describe('ChannelsService', () => {
     } as unknown as jest.Mocked<VoiceService>;
     service = new ChannelsService(
       auditService,
+      channelsRepo,
       notificationsService as unknown as NotificationsService,
       permissionsService,
       prisma as unknown as PrismaService,
@@ -66,8 +82,8 @@ describe('ChannelsService', () => {
   });
 
   it('creates channels for server members and publishes channel changes', async () => {
-    tx.$queryRaw.mockResolvedValueOnce([channelRow({ name: 'general' })]);
-    tx.$queryRaw.mockResolvedValueOnce([]);
+    channelsRepo.insertChannel.mockResolvedValueOnce(channelRow({ name: 'general' }));
+    channelsRepo.listPermissionOverwrites.mockResolvedValueOnce([]);
 
     const result = await service.createChannel(
       user,
@@ -82,7 +98,9 @@ describe('ChannelsService', () => {
       sort_order: 10,
       type: 'text',
     });
-    expect(tx.$executeRaw).toHaveBeenCalledTimes(2);
+    expect(channelsRepo.insertChannel).toHaveBeenCalledTimes(1);
+    expect(channelsRepo.seedChannelReadStates).toHaveBeenCalledTimes(1);
+    expect(channelsRepo.deletePermissionOverwrites).toHaveBeenCalledTimes(1);
     expect(auditService.record).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'CreateChannel', result: 'success' }),
     );
@@ -95,9 +113,9 @@ describe('ChannelsService', () => {
   });
 
   it('accepts permission overwrites in M4', async () => {
-    tx.$queryRaw.mockResolvedValueOnce([channelRow({ name: 'private' })]);
-    tx.$queryRaw.mockResolvedValueOnce([{ id: roleId() }]);
-    tx.$queryRaw.mockResolvedValueOnce([
+    channelsRepo.insertChannel.mockResolvedValueOnce(channelRow({ name: 'private' }));
+    channelsRepo.findRoleInServer.mockResolvedValueOnce({ id: roleId() });
+    channelsRepo.listPermissionOverwrites.mockResolvedValueOnce([
       {
         allowBits: '0',
         channelId: channelId(),
@@ -107,7 +125,7 @@ describe('ChannelsService', () => {
         targetType: 'role',
       },
     ]);
-    prisma.$queryRaw.mockResolvedValueOnce([{ userId: userId() }]);
+    channelsRepo.listServerActiveUserIds.mockResolvedValueOnce([userId()]);
 
     const result = await service.createChannel(
       user,

@@ -1,5 +1,3 @@
-import { randomUUID } from 'node:crypto';
-
 import { HttpStatus, Injectable } from '@nestjs/common';
 
 import { ErrorCode, RealtimeEvent } from '@eiscord/shared';
@@ -7,6 +5,7 @@ import { ErrorCode, RealtimeEvent } from '@eiscord/shared';
 import { AuthenticatedUserContext } from '../../common/auth/auth.types';
 import { AppError } from '../../common/errors/app-error';
 import { PrismaService } from '../../common/persistence/prisma.service';
+import type { RawSqlExecutor } from '../../common/persistence/types';
 import { PermissionAction } from '../../common/permissions/permission.types';
 import { PermissionsService } from '../../common/permissions/permissions.service';
 import { AuditService } from '../audit/audit.service';
@@ -19,28 +18,19 @@ import { LoadMessagesDto } from './dto/load-messages.dto';
 import { MarkReadDto } from './dto/mark-read.dto';
 import { SendMessageDto } from './dto/send-message.dto';
 import {
-  MessageAttachmentRow,
   MessageListResponse,
-  MessageMentionRow,
   MessageRow,
   MessageSummary,
   ReadStateRow,
   toMessageSummary,
   toReadStateSummary,
 } from './messages.presenter';
-
-type RawSqlExecutor = Pick<PrismaService, '$executeRaw' | '$queryRaw'>;
-
-type ChannelAccessRow = {
-  channelId: string;
-  serverId: string;
-};
-
-type DirectConversationAccessRow = {
-  conversationId: string;
-  participantAId: string;
-  participantBId: string;
-};
+import {
+  MessagesRepository,
+  type ChannelAccessRow,
+  type DirectConversationAccessRow,
+  type UnreadRow,
+} from './messages.repository';
 
 type Cursor = {
   created_at: string;
@@ -54,24 +44,11 @@ type NormalizedSendInput = {
   mentionUserIds: string[];
 };
 
-type UnreadRow = {
-  lastReadMessageId: string | null;
-  unreadCount: number;
-  userId: string;
-};
-
-type CurrentReadStateRow = ReadStateRow & {
-  lastReadCreatedAt: Date | null;
-};
-
-type DeleteMessageRow = MessageRow & {
-  deletedAt: Date | null;
-};
-
 @Injectable()
 export class MessagesService {
   constructor(
     private readonly auditService: AuditService,
+    private readonly messagesRepo: MessagesRepository,
     private readonly notificationsService: NotificationsService,
     private readonly permissionsService: PermissionsService,
     private readonly prisma: PrismaService,
@@ -91,12 +68,14 @@ export class MessagesService {
       PermissionAction.ViewChannel,
     );
     const result = await this.prisma.$transaction(async (tx) => {
-      const existing = await this.getExistingChannelMessage(
-        tx,
-        user.userId,
-        channelId,
-        input.clientMessageId,
-      );
+      const existing = input.clientMessageId
+        ? await this.messagesRepo.findExistingChannelMessage(
+            tx,
+            user.userId,
+            channelId,
+            input.clientMessageId,
+          )
+        : null;
 
       if (existing) {
         return { created: false, message: existing, notifications: [], unreadRows: [] };
@@ -109,7 +88,7 @@ export class MessagesService {
         input.mentionUserIds,
         readableUserIds,
       );
-      const message = await this.insertMessage(tx, {
+      const message = await this.messagesRepo.insertMessage(tx, {
         channelId,
         clientMessageId: input.clientMessageId,
         content: input.content,
@@ -117,15 +96,11 @@ export class MessagesService {
         scopeType: 'channel',
         senderId: user.userId,
       });
-      await this.insertMessageAttachments(tx, message.id, input.attachmentIds);
-      await this.insertMessageMentions(tx, message.id, mentionUserIds);
-      await this.markSenderRead(tx, user.userId, 'channel', channelId, null, message.id);
-      const unreadRows = await this.incrementChannelUnread(
-        tx,
-        channelId,
-        user.userId,
-        readableUserIds,
-      );
+      await this.messagesRepo.insertMessageAttachments(tx, message.id, input.attachmentIds);
+      await this.messagesRepo.insertMessageMentions(tx, message.id, mentionUserIds);
+      await this.messagesRepo.markSenderReadChannel(tx, user.userId, channelId, message.id);
+      const recipients = readableUserIds.filter((userId) => userId !== user.userId);
+      const unreadRows = await this.messagesRepo.incrementChannelUnread(tx, channelId, recipients);
       const notifications: CreateNotificationResult[] = [];
 
       for (const mentionedUserId of mentionUserIds.filter((id) => id !== user.userId)) {
@@ -166,13 +141,15 @@ export class MessagesService {
   ): Promise<MessageSummary> {
     const input = normalizeSendInput(dto);
     const result = await this.prisma.$transaction(async (tx) => {
-      const conversation = await this.getDirectConversationForSend(tx, user.userId, conversationId);
-      const existing = await this.getExistingDirectMessage(
-        tx,
-        user.userId,
-        conversationId,
-        input.clientMessageId,
-      );
+      const conversation = await this.getDirectConversationForRead(tx, user.userId, conversationId);
+      const existing = input.clientMessageId
+        ? await this.messagesRepo.findExistingDirectMessage(
+            tx,
+            user.userId,
+            conversationId,
+            input.clientMessageId,
+          )
+        : null;
 
       if (existing) {
         return { created: false, message: existing, notifications: [], unreadRows: [] };
@@ -184,7 +161,7 @@ export class MessagesService {
         conversation.participantAId === user.userId
           ? conversation.participantBId
           : conversation.participantAId;
-      const message = await this.insertMessage(tx, {
+      const message = await this.messagesRepo.insertMessage(tx, {
         channelId: null,
         clientMessageId: input.clientMessageId,
         content: input.content,
@@ -192,15 +169,13 @@ export class MessagesService {
         scopeType: 'dm',
         senderId: user.userId,
       });
-      await this.insertMessageAttachments(tx, message.id, input.attachmentIds);
-      await this.insertMessageMentions(tx, message.id, mentionUserIds);
-      await tx.$executeRaw`
-        UPDATE direct_conversations
-        SET last_message_id = ${message.id}::uuid, updated_at = NOW()
-        WHERE id = ${conversationId}::uuid
-      `;
-      await this.markSenderRead(tx, user.userId, 'dm', null, conversationId, message.id);
-      const unreadRows = [await this.incrementDirectUnread(tx, conversationId, recipientId)];
+      await this.messagesRepo.insertMessageAttachments(tx, message.id, input.attachmentIds);
+      await this.messagesRepo.insertMessageMentions(tx, message.id, mentionUserIds);
+      await this.messagesRepo.updateDirectConversationLastMessage(tx, conversationId, message.id);
+      await this.messagesRepo.markSenderReadDirect(tx, user.userId, conversationId, message.id);
+      const unreadRows = [
+        await this.messagesRepo.incrementDirectUnread(tx, conversationId, recipientId),
+      ];
       const notification = await this.notificationsService.createNotification(tx, {
         contentPreview: `${message.senderNickname}: ${previewContent(input.content)}`,
         dedupeKey: `message:${message.id}:dm:${recipientId}`,
@@ -233,13 +208,19 @@ export class MessagesService {
     dto: LoadMessagesDto,
   ): Promise<MessageListResponse> {
     await this.getChannelForRead(user, channelId);
-    const rows = await this.loadMessages('channel', channelId, dto);
-    const page = rows.slice(0, pageLimit(dto));
-    const readState = await this.ensureReadState(user.userId, 'channel', channelId, null);
+    const limit = pageLimit(dto);
+    const cursor = decodeCursor(dto.cursor);
+    const rows = await this.messagesRepo.loadChannelMessages(
+      channelId,
+      { createdAt: cursor?.created_at ?? null, id: cursor?.id ?? null },
+      limit + 1,
+    );
+    const page = rows.slice(0, limit);
+    const readState = await this.messagesRepo.ensureChannelReadState(user.userId, channelId);
 
     return {
       items: await Promise.all(page.map((row) => this.hydrateMessage(row))),
-      next_cursor: rows.length > pageLimit(dto) ? encodeCursor(page[page.length - 1]) : null,
+      next_cursor: rows.length > limit ? encodeCursor(page[page.length - 1]) : null,
       read_state: toReadStateSummary(readState),
     };
   }
@@ -250,13 +231,19 @@ export class MessagesService {
     dto: LoadMessagesDto,
   ): Promise<MessageListResponse> {
     await this.getDirectConversationForRead(this.prisma, user.userId, conversationId);
-    const rows = await this.loadMessages('dm', conversationId, dto);
-    const page = rows.slice(0, pageLimit(dto));
-    const readState = await this.ensureReadState(user.userId, 'dm', null, conversationId);
+    const limit = pageLimit(dto);
+    const cursor = decodeCursor(dto.cursor);
+    const rows = await this.messagesRepo.loadDirectMessages(
+      conversationId,
+      { createdAt: cursor?.created_at ?? null, id: cursor?.id ?? null },
+      limit + 1,
+    );
+    const page = rows.slice(0, limit);
+    const readState = await this.messagesRepo.ensureDirectReadState(user.userId, conversationId);
 
     return {
       items: await Promise.all(page.map((row) => this.hydrateMessage(row))),
-      next_cursor: rows.length > pageLimit(dto) ? encodeCursor(page[page.length - 1]) : null,
+      next_cursor: rows.length > limit ? encodeCursor(page[page.length - 1]) : null,
       read_state: toReadStateSummary(readState),
     };
   }
@@ -327,7 +314,11 @@ export class MessagesService {
     dto: DeleteMessageDto,
     requestId?: string,
   ): Promise<MessageSummary> {
-    const message = await this.getMessageForDelete(messageId);
+    const message = await this.messagesRepo.findVisibleMessageWithDeletion(messageId);
+
+    if (!message) {
+      throw new AppError(ErrorCode.ResourceNotFound, 'Message was not found.', HttpStatus.NOT_FOUND);
+    }
 
     if (dto.operation === 'retract') {
       if (message.senderId !== user.userId) {
@@ -352,25 +343,17 @@ export class MessagesService {
 
     const visibility = dto.operation === 'retract' ? 'retracted' : 'deleted';
     const result = await this.prisma.$transaction(async (tx) => {
-      const [updated] = await tx.$queryRaw<MessageRow[]>`
-        UPDATE messages
-        SET visibility = ${visibility}, deleted_at = NOW(), updated_at = NOW()
-        WHERE id = ${messageId}::uuid
-          AND visibility = 'visible'
-        RETURNING
-          id,
-          scope_type AS "scopeType",
-          channel_id AS "channelId",
-          conversation_id AS "conversationId",
-          sender_id AS "senderId",
-          content,
-          visibility,
-          created_at AS "createdAt",
-          (SELECT username FROM users WHERE id = messages.sender_id) AS "senderUsername",
-          (SELECT nickname FROM users WHERE id = messages.sender_id) AS "senderNickname",
-          (SELECT avatar_attachment_id FROM users WHERE id = messages.sender_id) AS "avatarAttachmentId"
-      `;
-      const unreadRows = await this.recomputeUnreadAfterDelete(tx, updated);
+      const updated = await this.messagesRepo.markMessageDeleted(tx, messageId, visibility);
+
+      if (!updated) {
+        throw new AppError(ErrorCode.ResourceNotFound, 'Message was not found.', HttpStatus.NOT_FOUND);
+      }
+
+      const unreadRows = updated.scopeType === 'channel' && updated.channelId
+        ? await this.messagesRepo.recomputeChannelUnreadAfterDelete(tx, updated.channelId)
+        : updated.conversationId
+          ? await this.messagesRepo.recomputeDirectUnreadAfterDelete(tx, updated.conversationId)
+          : [];
 
       return { message: updated, unreadRows };
     });
@@ -433,16 +416,7 @@ export class MessagesService {
       resource: { id: channelId, type: 'channel' },
       user,
     });
-    const [channel] = await this.prisma.$queryRaw<ChannelAccessRow[]>`
-      SELECT c.id AS "channelId", c.server_id AS "serverId"
-      FROM channels c
-      INNER JOIN servers s ON s.id = c.server_id
-      WHERE c.id = ${channelId}::uuid
-        AND c.status = 'active'
-        AND c.type = 'text'
-        AND s.status = 'active'
-      LIMIT 1
-    `;
+    const channel = await this.messagesRepo.findActiveTextChannel(channelId);
 
     if (!channel) {
       throw new AppError(ErrorCode.PermissionDenied, 'Permission denied.', HttpStatus.FORBIDDEN);
@@ -460,16 +434,7 @@ export class MessagesService {
       resource: { id: channelId, type: 'channel' },
       user,
     });
-    const [channel] = await this.prisma.$queryRaw<ChannelAccessRow[]>`
-      SELECT c.id AS "channelId", c.server_id AS "serverId"
-      FROM channels c
-      INNER JOIN servers s ON s.id = c.server_id
-      WHERE c.id = ${channelId}::uuid
-        AND c.status = 'active'
-        AND c.type = 'text'
-        AND s.status = 'active'
-      LIMIT 1
-    `;
+    const channel = await this.messagesRepo.findActiveTextChannel(channelId);
 
     if (!channel) {
       throw new AppError(ErrorCode.PermissionDenied, 'Permission denied.', HttpStatus.FORBIDDEN);
@@ -478,32 +443,16 @@ export class MessagesService {
     return channel;
   }
 
-  private async getDirectConversationForSend(
-    tx: RawSqlExecutor,
-    userId: string,
-    conversationId: string,
-  ): Promise<DirectConversationAccessRow> {
-    return this.getDirectConversationForRead(tx, userId, conversationId);
-  }
-
   private async getDirectConversationForRead(
-    tx: RawSqlExecutor,
+    executor: RawSqlExecutor,
     userId: string,
     conversationId: string,
   ): Promise<DirectConversationAccessRow> {
-    const [conversation] = await tx.$queryRaw<DirectConversationAccessRow[]>`
-      SELECT
-        id AS "conversationId",
-        participant_a_id AS "participantAId",
-        participant_b_id AS "participantBId"
-      FROM direct_conversations
-      WHERE id = ${conversationId}::uuid
-        AND (
-          participant_a_id = ${userId}::uuid
-          OR participant_b_id = ${userId}::uuid
-        )
-      LIMIT 1
-    `;
+    const conversation = await this.messagesRepo.findDirectConversationForUser(
+      executor,
+      userId,
+      conversationId,
+    );
 
     if (!conversation) {
       throw new AppError(ErrorCode.PermissionDenied, 'Permission denied.', HttpStatus.FORBIDDEN);
@@ -512,151 +461,17 @@ export class MessagesService {
     return conversation;
   }
 
-  private async getExistingChannelMessage(
-    tx: RawSqlExecutor,
-    senderId: string,
-    channelId: string,
-    clientMessageId: string | null,
-  ): Promise<MessageRow | null> {
-    if (!clientMessageId) {
-      return null;
-    }
-
-    const [message] = await tx.$queryRaw<MessageRow[]>`
-      SELECT
-        msg.id,
-        msg.scope_type AS "scopeType",
-        msg.channel_id AS "channelId",
-        msg.conversation_id AS "conversationId",
-        msg.sender_id AS "senderId",
-        msg.content,
-        msg.visibility,
-        msg.created_at AS "createdAt",
-        u.username AS "senderUsername",
-        u.nickname AS "senderNickname",
-        u.avatar_attachment_id AS "avatarAttachmentId"
-      FROM messages msg
-      INNER JOIN users u ON u.id = msg.sender_id
-      WHERE msg.sender_id = ${senderId}::uuid
-        AND msg.channel_id = ${channelId}::uuid
-        AND msg.client_message_id = ${clientMessageId}
-      LIMIT 1
-    `;
-
-    return message ?? null;
-  }
-
-  private async getExistingDirectMessage(
-    tx: RawSqlExecutor,
-    senderId: string,
-    conversationId: string,
-    clientMessageId: string | null,
-  ): Promise<MessageRow | null> {
-    if (!clientMessageId) {
-      return null;
-    }
-
-    const [message] = await tx.$queryRaw<MessageRow[]>`
-      SELECT
-        msg.id,
-        msg.scope_type AS "scopeType",
-        msg.channel_id AS "channelId",
-        msg.conversation_id AS "conversationId",
-        msg.sender_id AS "senderId",
-        msg.content,
-        msg.visibility,
-        msg.created_at AS "createdAt",
-        u.username AS "senderUsername",
-        u.nickname AS "senderNickname",
-        u.avatar_attachment_id AS "avatarAttachmentId"
-      FROM messages msg
-      INNER JOIN users u ON u.id = msg.sender_id
-      WHERE msg.sender_id = ${senderId}::uuid
-        AND msg.conversation_id = ${conversationId}::uuid
-        AND msg.client_message_id = ${clientMessageId}
-      LIMIT 1
-    `;
-
-    return message ?? null;
-  }
-
-  private async insertMessage(
-    tx: RawSqlExecutor,
-    input: {
-      channelId: string | null;
-      clientMessageId: string | null;
-      content: string | null;
-      conversationId: string | null;
-      scopeType: 'channel' | 'dm';
-      senderId: string;
-    },
-  ): Promise<MessageRow> {
-    const messageId = randomUUID();
-
-    await tx.$executeRaw`
-      INSERT INTO messages (
-        id,
-        scope_type,
-        channel_id,
-        conversation_id,
-        sender_id,
-        content,
-        visibility,
-        client_message_id
-      )
-      VALUES (
-        ${messageId}::uuid,
-        ${input.scopeType},
-        ${input.channelId}::uuid,
-        ${input.conversationId}::uuid,
-        ${input.senderId}::uuid,
-        ${input.content},
-        'visible',
-        ${input.clientMessageId}
-      )
-    `;
-
-    return this.getMessageById(tx, messageId);
-  }
-
-  private async getMessageById(tx: RawSqlExecutor, messageId: string): Promise<MessageRow> {
-    const [message] = await tx.$queryRaw<MessageRow[]>`
-      SELECT
-        msg.id,
-        msg.scope_type AS "scopeType",
-        msg.channel_id AS "channelId",
-        msg.conversation_id AS "conversationId",
-        msg.sender_id AS "senderId",
-        msg.content,
-        msg.visibility,
-        msg.created_at AS "createdAt",
-        u.username AS "senderUsername",
-        u.nickname AS "senderNickname",
-        u.avatar_attachment_id AS "avatarAttachmentId"
-      FROM messages msg
-      INNER JOIN users u ON u.id = msg.sender_id
-      WHERE msg.id = ${messageId}::uuid
-      LIMIT 1
-    `;
-
-    return message;
-  }
-
   private async assertReadyMessageAttachments(
-    tx: RawSqlExecutor,
+    executor: RawSqlExecutor,
     userId: string,
     attachmentIds: string[],
-  ) {
+  ): Promise<void> {
     for (const attachmentId of attachmentIds) {
-      const [attachment] = await tx.$queryRaw<{ id: string }[]>`
-        SELECT id
-        FROM attachments
-        WHERE id = ${attachmentId}::uuid
-          AND owner_id = ${userId}::uuid
-          AND purpose = 'message'
-          AND status = 'ready'
-        LIMIT 1
-      `;
+      const attachment = await this.messagesRepo.findReadyMessageAttachment(
+        executor,
+        attachmentId,
+        userId,
+      );
 
       if (!attachment) {
         throw new AppError(
@@ -669,7 +484,7 @@ export class MessagesService {
   }
 
   private async filterChannelMentionUsers(
-    tx: RawSqlExecutor,
+    executor: RawSqlExecutor,
     serverId: string,
     mentionUserIds: string[],
     readableUserIds: string[],
@@ -678,14 +493,7 @@ export class MessagesService {
     const readableUsers = new Set(readableUserIds);
 
     for (const userId of mentionUserIds) {
-      const [member] = await tx.$queryRaw<{ userId: string }[]>`
-        SELECT user_id AS "userId"
-        FROM memberships
-        WHERE server_id = ${serverId}::uuid
-          AND user_id = ${userId}::uuid
-          AND member_status IN ('active', 'muted')
-        LIMIT 1
-      `;
+      const member = await this.messagesRepo.findServerMembership(executor, serverId, userId);
 
       if (!member) {
         throw new AppError(
@@ -709,259 +517,13 @@ export class MessagesService {
     return validUserIds;
   }
 
-  private async insertMessageAttachments(
-    tx: RawSqlExecutor,
-    messageId: string,
-    attachmentIds: string[],
-  ) {
-    for (const attachmentId of attachmentIds) {
-      await tx.$executeRaw`
-        INSERT INTO message_attachments (message_id, attachment_id)
-        VALUES (${messageId}::uuid, ${attachmentId}::uuid)
-        ON CONFLICT (message_id, attachment_id) DO NOTHING
-      `;
-    }
-  }
-
-  private async insertMessageMentions(
-    tx: RawSqlExecutor,
-    messageId: string,
-    mentionUserIds: string[],
-  ) {
-    for (const userId of mentionUserIds) {
-      await tx.$executeRaw`
-        INSERT INTO message_mentions (message_id, mentioned_user_id)
-        VALUES (${messageId}::uuid, ${userId}::uuid)
-        ON CONFLICT (message_id, mentioned_user_id) DO NOTHING
-      `;
-    }
-  }
-
-  private async markSenderRead(
-    tx: RawSqlExecutor,
-    userId: string,
-    scopeType: 'channel' | 'dm',
-    channelId: string | null,
-    conversationId: string | null,
-    messageId: string,
-  ) {
-    if (scopeType === 'channel') {
-      await tx.$executeRaw`
-        INSERT INTO read_states (
-          id,
-          user_id,
-          scope_type,
-          channel_id,
-          last_read_message_id,
-          unread_count
-        )
-        VALUES (gen_random_uuid(), ${userId}::uuid, 'channel', ${channelId}::uuid, ${messageId}::uuid, 0)
-        ON CONFLICT (user_id, channel_id)
-        DO UPDATE SET
-          last_read_message_id = ${messageId}::uuid,
-          unread_count = 0,
-          updated_at = NOW()
-      `;
-      return;
-    }
-
-    await tx.$executeRaw`
-      INSERT INTO read_states (
-        id,
-        user_id,
-        scope_type,
-        conversation_id,
-        last_read_message_id,
-        unread_count
-      )
-      VALUES (gen_random_uuid(), ${userId}::uuid, 'dm', ${conversationId}::uuid, ${messageId}::uuid, 0)
-      ON CONFLICT (user_id, conversation_id)
-      DO UPDATE SET
-        last_read_message_id = ${messageId}::uuid,
-        unread_count = 0,
-        updated_at = NOW()
-    `;
-  }
-
-  private async incrementChannelUnread(
-    tx: RawSqlExecutor,
-    channelId: string,
-    senderId: string,
-    readableUserIds: string[],
-  ): Promise<UnreadRow[]> {
-    const recipients = readableUserIds.filter((userId) => userId !== senderId);
-
-    if (recipients.length === 0) {
-      return [];
-    }
-
-    return tx.$queryRaw<UnreadRow[]>`
-      INSERT INTO read_states (id, user_id, scope_type, channel_id, last_read_message_id, unread_count)
-      SELECT gen_random_uuid(), user_id, 'channel', ${channelId}::uuid, null, 1
-      FROM unnest(${recipients}::uuid[]) AS readable(user_id)
-      ON CONFLICT (user_id, channel_id)
-      DO UPDATE SET
-        unread_count = read_states.unread_count + 1,
-        updated_at = NOW()
-      RETURNING
-        user_id AS "userId",
-        unread_count AS "unreadCount",
-        last_read_message_id AS "lastReadMessageId"
-    `;
-  }
-
-  private async incrementDirectUnread(
-    tx: RawSqlExecutor,
-    conversationId: string,
-    userId: string,
-  ): Promise<UnreadRow> {
-    const [row] = await tx.$queryRaw<UnreadRow[]>`
-      INSERT INTO read_states (id, user_id, scope_type, conversation_id, last_read_message_id, unread_count)
-      VALUES (gen_random_uuid(), ${userId}::uuid, 'dm', ${conversationId}::uuid, null, 1)
-      ON CONFLICT (user_id, conversation_id)
-      DO UPDATE SET
-        unread_count = read_states.unread_count + 1,
-        updated_at = NOW()
-      RETURNING
-        user_id AS "userId",
-        unread_count AS "unreadCount",
-        last_read_message_id AS "lastReadMessageId"
-    `;
-
-    return row;
-  }
-
-  private async loadMessages(
-    scopeType: 'channel' | 'dm',
-    scopeId: string,
-    dto: LoadMessagesDto,
-  ): Promise<MessageRow[]> {
-    const cursor = decodeCursor(dto.cursor);
-    const cursorCreatedAt = cursor?.created_at ?? null;
-    const cursorId = cursor?.id ?? null;
-    const limit = pageLimit(dto);
-
-    if (scopeType === 'channel') {
-      return this.prisma.$queryRaw<MessageRow[]>`
-        SELECT
-          msg.id,
-          msg.scope_type AS "scopeType",
-          msg.channel_id AS "channelId",
-          msg.conversation_id AS "conversationId",
-          msg.sender_id AS "senderId",
-          msg.content,
-          msg.visibility,
-          msg.created_at AS "createdAt",
-          u.username AS "senderUsername",
-          u.nickname AS "senderNickname",
-          u.avatar_attachment_id AS "avatarAttachmentId"
-        FROM messages msg
-        INNER JOIN users u ON u.id = msg.sender_id
-        WHERE msg.channel_id = ${scopeId}::uuid
-          AND msg.visibility = 'visible'
-          AND (
-            ${cursorCreatedAt}::timestamptz IS NULL
-            OR msg.created_at < ${cursorCreatedAt}::timestamptz
-            OR (msg.created_at = ${cursorCreatedAt}::timestamptz AND msg.id::text < ${cursorId})
-          )
-        ORDER BY msg.created_at DESC, msg.id DESC
-        LIMIT ${limit + 1}
-      `;
-    }
-
-    return this.prisma.$queryRaw<MessageRow[]>`
-      SELECT
-        msg.id,
-        msg.scope_type AS "scopeType",
-        msg.channel_id AS "channelId",
-        msg.conversation_id AS "conversationId",
-        msg.sender_id AS "senderId",
-        msg.content,
-        msg.visibility,
-        msg.created_at AS "createdAt",
-        u.username AS "senderUsername",
-        u.nickname AS "senderNickname",
-        u.avatar_attachment_id AS "avatarAttachmentId"
-      FROM messages msg
-      INNER JOIN users u ON u.id = msg.sender_id
-      WHERE msg.conversation_id = ${scopeId}::uuid
-        AND msg.visibility = 'visible'
-        AND (
-          ${cursorCreatedAt}::timestamptz IS NULL
-          OR msg.created_at < ${cursorCreatedAt}::timestamptz
-          OR (msg.created_at = ${cursorCreatedAt}::timestamptz AND msg.id::text < ${cursorId})
-        )
-      ORDER BY msg.created_at DESC, msg.id DESC
-      LIMIT ${limit + 1}
-    `;
-  }
-
   private async hydrateMessage(row: MessageRow): Promise<MessageSummary> {
     const [attachments, mentions] = await Promise.all([
-      this.prisma.$queryRaw<MessageAttachmentRow[]>`
-        SELECT
-          ma.message_id AS "messageId",
-          a.id AS "attachmentId",
-          a.file_name AS "fileName",
-          a.mime_type AS "mimeType",
-          a.size_bytes AS "sizeBytes"
-        FROM message_attachments ma
-        INNER JOIN attachments a ON a.id = ma.attachment_id
-        WHERE ma.message_id = ${row.id}::uuid
-        ORDER BY ma.created_at ASC
-      `,
-      this.prisma.$queryRaw<MessageMentionRow[]>`
-        SELECT
-          message_id AS "messageId",
-          mentioned_user_id AS "mentionedUserId"
-        FROM message_mentions
-        WHERE message_id = ${row.id}::uuid
-        ORDER BY created_at ASC
-      `,
+      this.messagesRepo.loadMessageAttachments(row.id),
+      this.messagesRepo.loadMessageMentions(row.id),
     ]);
 
     return toMessageSummary(row, attachments, mentions);
-  }
-
-  private async ensureReadState(
-    userId: string,
-    scopeType: 'channel' | 'dm',
-    channelId: string | null,
-    conversationId: string | null,
-  ): Promise<ReadStateRow> {
-    if (scopeType === 'channel') {
-      const [row] = await this.prisma.$queryRaw<ReadStateRow[]>`
-        INSERT INTO read_states (id, user_id, scope_type, channel_id, last_read_message_id, unread_count)
-        VALUES (gen_random_uuid(), ${userId}::uuid, 'channel', ${channelId}::uuid, null, 0)
-        ON CONFLICT (user_id, channel_id) DO UPDATE SET updated_at = read_states.updated_at
-        RETURNING
-          user_id AS "userId",
-          scope_type AS "scopeType",
-          channel_id AS "channelId",
-          conversation_id AS "conversationId",
-          last_read_message_id AS "lastReadMessageId",
-          unread_count AS "unreadCount",
-          updated_at AS "updatedAt"
-      `;
-
-      return row;
-    }
-
-    const [row] = await this.prisma.$queryRaw<ReadStateRow[]>`
-      INSERT INTO read_states (id, user_id, scope_type, conversation_id, last_read_message_id, unread_count)
-      VALUES (gen_random_uuid(), ${userId}::uuid, 'dm', ${conversationId}::uuid, null, 0)
-      ON CONFLICT (user_id, conversation_id) DO UPDATE SET updated_at = read_states.updated_at
-      RETURNING
-        user_id AS "userId",
-        scope_type AS "scopeType",
-        channel_id AS "channelId",
-        conversation_id AS "conversationId",
-        last_read_message_id AS "lastReadMessageId",
-        unread_count AS "unreadCount",
-        updated_at AS "updatedAt"
-    `;
-
-    return row;
   }
 
   private async markScopeRead(
@@ -971,8 +533,27 @@ export class MessagesService {
     conversationId: string | null,
     lastReadMessageId: string,
   ): Promise<ReadStateRow> {
-    const target = await this.getMessageForScope(scopeType, channelId, conversationId, lastReadMessageId);
-    const current = await this.getCurrentReadState(userId, scopeType, channelId, conversationId);
+    const target = await this.messagesRepo.findMessageInScope(
+      scopeType,
+      channelId,
+      conversationId,
+      lastReadMessageId,
+    );
+
+    if (!target) {
+      throw new AppError(
+        ErrorCode.ResourceNotFound,
+        'Read target message was not found.',
+        HttpStatus.NOT_FOUND,
+      );
+    }
+
+    const current = await this.messagesRepo.findCurrentReadState(
+      userId,
+      scopeType,
+      channelId,
+      conversationId,
+    );
 
     if (current?.lastReadCreatedAt && current.lastReadCreatedAt > target.createdAt) {
       throw new AppError(
@@ -983,260 +564,20 @@ export class MessagesService {
     }
 
     if (scopeType === 'channel') {
-      const [row] = await this.prisma.$queryRaw<ReadStateRow[]>`
-        INSERT INTO read_states (
-          id,
-          user_id,
-          scope_type,
-          channel_id,
-          last_read_message_id,
-          unread_count
-        )
-        VALUES (
-          gen_random_uuid(),
-          ${userId}::uuid,
-          'channel',
-          ${channelId}::uuid,
-          ${lastReadMessageId}::uuid,
-          (
-            SELECT COUNT(*)::int
-            FROM messages
-            WHERE channel_id = ${channelId}::uuid
-              AND created_at > ${target.createdAt}
-              AND sender_id <> ${userId}::uuid
-              AND visibility = 'visible'
-          )
-        )
-        ON CONFLICT (user_id, channel_id)
-        DO UPDATE SET
-          last_read_message_id = ${lastReadMessageId}::uuid,
-          unread_count = (
-            SELECT COUNT(*)::int
-            FROM messages
-            WHERE channel_id = ${channelId}::uuid
-              AND created_at > ${target.createdAt}
-              AND sender_id <> ${userId}::uuid
-              AND visibility = 'visible'
-          ),
-          updated_at = NOW()
-        RETURNING
-          user_id AS "userId",
-          scope_type AS "scopeType",
-          channel_id AS "channelId",
-          conversation_id AS "conversationId",
-          last_read_message_id AS "lastReadMessageId",
-          unread_count AS "unreadCount",
-          updated_at AS "updatedAt"
-      `;
-
-      return row;
-    }
-
-    const [row] = await this.prisma.$queryRaw<ReadStateRow[]>`
-      INSERT INTO read_states (
-        id,
-        user_id,
-        scope_type,
-        conversation_id,
-        last_read_message_id,
-        unread_count
-      )
-      VALUES (
-        gen_random_uuid(),
-        ${userId}::uuid,
-        'dm',
-        ${conversationId}::uuid,
-        ${lastReadMessageId}::uuid,
-        (
-          SELECT COUNT(*)::int
-          FROM messages
-          WHERE conversation_id = ${conversationId}::uuid
-            AND created_at > ${target.createdAt}
-            AND sender_id <> ${userId}::uuid
-            AND visibility = 'visible'
-        )
-      )
-      ON CONFLICT (user_id, conversation_id)
-      DO UPDATE SET
-        last_read_message_id = ${lastReadMessageId}::uuid,
-        unread_count = (
-          SELECT COUNT(*)::int
-          FROM messages
-          WHERE conversation_id = ${conversationId}::uuid
-            AND created_at > ${target.createdAt}
-            AND sender_id <> ${userId}::uuid
-            AND visibility = 'visible'
-        ),
-        updated_at = NOW()
-      RETURNING
-        user_id AS "userId",
-        scope_type AS "scopeType",
-        channel_id AS "channelId",
-        conversation_id AS "conversationId",
-        last_read_message_id AS "lastReadMessageId",
-        unread_count AS "unreadCount",
-        updated_at AS "updatedAt"
-    `;
-
-    return row;
-  }
-
-  private async getMessageForScope(
-    scopeType: 'channel' | 'dm',
-    channelId: string | null,
-    conversationId: string | null,
-    messageId: string,
-  ): Promise<MessageRow> {
-    const [message] = await this.prisma.$queryRaw<MessageRow[]>`
-      SELECT
-        msg.id,
-        msg.scope_type AS "scopeType",
-        msg.channel_id AS "channelId",
-        msg.conversation_id AS "conversationId",
-        msg.sender_id AS "senderId",
-        msg.content,
-        msg.visibility,
-        msg.created_at AS "createdAt",
-        u.username AS "senderUsername",
-        u.nickname AS "senderNickname",
-        u.avatar_attachment_id AS "avatarAttachmentId"
-      FROM messages msg
-      INNER JOIN users u ON u.id = msg.sender_id
-      WHERE msg.id = ${messageId}::uuid
-        AND msg.scope_type = ${scopeType}
-        AND (${channelId}::uuid IS NULL OR msg.channel_id = ${channelId}::uuid)
-        AND (${conversationId}::uuid IS NULL OR msg.conversation_id = ${conversationId}::uuid)
-        AND msg.visibility = 'visible'
-      LIMIT 1
-    `;
-
-    if (!message) {
-      throw new AppError(
-        ErrorCode.ResourceNotFound,
-        'Read target message was not found.',
-        HttpStatus.NOT_FOUND,
+      return this.messagesRepo.upsertChannelReadStateAtMessage(
+        userId,
+        channelId!,
+        lastReadMessageId,
+        target.createdAt,
       );
     }
 
-    return message;
-  }
-
-  private async getMessageForDelete(messageId: string): Promise<DeleteMessageRow> {
-    const [message] = await this.prisma.$queryRaw<DeleteMessageRow[]>`
-      SELECT
-        msg.id,
-        msg.scope_type AS "scopeType",
-        msg.channel_id AS "channelId",
-        msg.conversation_id AS "conversationId",
-        msg.sender_id AS "senderId",
-        msg.content,
-        msg.visibility,
-        msg.created_at AS "createdAt",
-        msg.deleted_at AS "deletedAt",
-        u.username AS "senderUsername",
-        u.nickname AS "senderNickname",
-        u.avatar_attachment_id AS "avatarAttachmentId"
-      FROM messages msg
-      INNER JOIN users u ON u.id = msg.sender_id
-      WHERE msg.id = ${messageId}::uuid
-        AND msg.visibility = 'visible'
-      LIMIT 1
-    `;
-
-    if (!message) {
-      throw new AppError(ErrorCode.ResourceNotFound, 'Message was not found.', HttpStatus.NOT_FOUND);
-    }
-
-    return message;
-  }
-
-  private async recomputeUnreadAfterDelete(
-    tx: RawSqlExecutor,
-    message: MessageRow,
-  ): Promise<UnreadRow[]> {
-    if (message.scopeType === 'channel') {
-      return tx.$queryRaw<UnreadRow[]>`
-        UPDATE read_states rs
-        SET
-          unread_count = (
-            SELECT COUNT(*)::int
-            FROM messages msg
-            WHERE msg.channel_id = ${message.channelId}::uuid
-              AND msg.sender_id <> rs.user_id
-              AND msg.visibility = 'visible'
-              AND (
-                rs.last_read_message_id IS NULL
-                OR msg.created_at > (
-                  SELECT created_at
-                  FROM messages
-                  WHERE id = rs.last_read_message_id
-                )
-              )
-          ),
-          updated_at = NOW()
-        WHERE rs.scope_type = 'channel'
-          AND rs.channel_id = ${message.channelId}::uuid
-        RETURNING
-          rs.user_id AS "userId",
-          rs.unread_count AS "unreadCount",
-          rs.last_read_message_id AS "lastReadMessageId"
-      `;
-    }
-
-    return tx.$queryRaw<UnreadRow[]>`
-      UPDATE read_states rs
-      SET
-        unread_count = (
-          SELECT COUNT(*)::int
-          FROM messages msg
-          WHERE msg.conversation_id = ${message.conversationId}::uuid
-            AND msg.sender_id <> rs.user_id
-            AND msg.visibility = 'visible'
-            AND (
-              rs.last_read_message_id IS NULL
-              OR msg.created_at > (
-                SELECT created_at
-                FROM messages
-                WHERE id = rs.last_read_message_id
-              )
-            )
-        ),
-        updated_at = NOW()
-      WHERE rs.scope_type = 'dm'
-        AND rs.conversation_id = ${message.conversationId}::uuid
-      RETURNING
-        rs.user_id AS "userId",
-        rs.unread_count AS "unreadCount",
-        rs.last_read_message_id AS "lastReadMessageId"
-    `;
-  }
-
-  private async getCurrentReadState(
-    userId: string,
-    scopeType: 'channel' | 'dm',
-    channelId: string | null,
-    conversationId: string | null,
-  ): Promise<CurrentReadStateRow | null> {
-    const [row] = await this.prisma.$queryRaw<CurrentReadStateRow[]>`
-      SELECT
-        rs.user_id AS "userId",
-        rs.scope_type AS "scopeType",
-        rs.channel_id AS "channelId",
-        rs.conversation_id AS "conversationId",
-        rs.last_read_message_id AS "lastReadMessageId",
-        rs.unread_count AS "unreadCount",
-        rs.updated_at AS "updatedAt",
-        msg.created_at AS "lastReadCreatedAt"
-      FROM read_states rs
-      LEFT JOIN messages msg ON msg.id = rs.last_read_message_id
-      WHERE rs.user_id = ${userId}::uuid
-        AND rs.scope_type = ${scopeType}
-        AND (${channelId}::uuid IS NULL OR rs.channel_id = ${channelId}::uuid)
-        AND (${conversationId}::uuid IS NULL OR rs.conversation_id = ${conversationId}::uuid)
-      LIMIT 1
-    `;
-
-    return row ?? null;
+    return this.messagesRepo.upsertDirectReadStateAtMessage(
+      userId,
+      conversationId!,
+      lastReadMessageId,
+      target.createdAt,
+    );
   }
 
   private publishMessageCreated(summary: MessageSummary, room: string, requestId?: string) {

@@ -8,6 +8,7 @@ import { AuditService } from '../audit/audit.service';
 import { MediaSignalingService } from '../media-signaling/media-signaling.service';
 import { TurnCredentialService } from '../media-signaling/turn-credential.service';
 import { RealtimePublisher } from '../realtime/realtime.publisher';
+import { VoiceRepository } from './voice.repository';
 import { VoiceService } from './voice.service';
 
 const now = new Date('2026-05-04T00:00:00.000Z');
@@ -23,6 +24,7 @@ describe('VoiceService', () => {
   let service: VoiceService;
   let tx: { $executeRaw: jest.Mock; $queryRaw: jest.Mock };
   let turnCredentialService: jest.Mocked<TurnCredentialService>;
+  let voiceRepo: jest.Mocked<VoiceRepository>;
 
   beforeEach(() => {
     auditService = {
@@ -67,6 +69,20 @@ describe('VoiceService', () => {
         username: '1714915200:user',
       }),
     } as unknown as jest.Mocked<TurnCredentialService>;
+    voiceRepo = {
+      findActiveVoiceChannel: jest.fn(),
+      countActiveSessionsForChannel: jest.fn().mockResolvedValue(0),
+      insertVoiceSession: jest.fn(),
+      updateVoiceSessionState: jest.fn(),
+      findExpiredNegotiations: jest.fn().mockResolvedValue([]),
+      findActiveSessionById: jest.fn(),
+      findActiveSessionForUser: jest.fn().mockResolvedValue(null),
+      findActiveSessionForUserInServer: jest.fn().mockResolvedValue(null),
+      listActiveSessionsForChannel: jest.fn().mockResolvedValue([]),
+      listActiveProducerRowsForChannel: jest.fn().mockResolvedValue([]),
+      listActiveSessionsForUsersInServer: jest.fn().mockResolvedValue([]),
+      endSession: jest.fn().mockResolvedValue(undefined),
+    } as unknown as jest.Mocked<VoiceRepository>;
     service = new VoiceService(
       auditService,
       configService as unknown as ConfigService,
@@ -75,17 +91,18 @@ describe('VoiceService', () => {
       prisma as unknown as PrismaService,
       realtimePublisher,
       turnCredentialService,
+      voiceRepo,
     );
   });
 
   it('joins a voice channel with mediasoup negotiation metadata and TURN credentials', async () => {
-    prisma.$queryRaw.mockResolvedValueOnce([{ channelId: channelId(2), serverId: serverId() }]);
-    prisma.$queryRaw.mockResolvedValueOnce([{ count: '1' }]);
-    tx.$queryRaw.mockResolvedValueOnce([]);
-    tx.$queryRaw.mockResolvedValueOnce([
+    voiceRepo.findActiveVoiceChannel.mockResolvedValueOnce({ channelId: channelId(2), serverId: serverId() });
+    voiceRepo.countActiveSessionsForChannel.mockResolvedValueOnce(1);
+    voiceRepo.findActiveSessionForUser.mockResolvedValueOnce(null);
+    voiceRepo.insertVoiceSession.mockResolvedValueOnce(
       voiceSessionRow({ channelId: channelId(2), id: sessionId(2), mediaState: 'NEGOTIATING' }),
-    ]);
-    prisma.$queryRaw.mockResolvedValueOnce([
+    );
+    voiceRepo.listActiveProducerRowsForChannel.mockResolvedValueOnce([
       {
         channelId: channelId(2),
         muteState: false,
@@ -121,8 +138,14 @@ describe('VoiceService', () => {
       session_id: sessionId(2),
     });
     expect(mediaSignalingService.prepareRouter).toHaveBeenCalledWith(channelId(2));
-    expect(tx.$queryRaw.mock.calls[1][0].join('')).toContain('router_id');
-    expect(tx.$queryRaw.mock.calls[1]).toContain('router-1');
+    expect(voiceRepo.insertVoiceSession).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({
+        channelId: channelId(2),
+        routerId: 'router-1',
+        userId: user.userId,
+      }),
+    );
     expect(turnCredentialService.signCredential).toHaveBeenCalledWith(user.userId);
     expect(realtimePublisher.publishToRoom).toHaveBeenCalledWith(
       `voice:${channelId(2)}`,
@@ -135,8 +158,8 @@ describe('VoiceService', () => {
   it('does not create or end a voice session when media router preparation fails', async () => {
     const logger = (service as unknown as { logger: { warn: (message: string) => void } }).logger;
     const warn = jest.spyOn(logger, 'warn').mockImplementation(() => undefined);
-    prisma.$queryRaw.mockResolvedValueOnce([{ channelId: channelId(2), serverId: serverId() }]);
-    prisma.$queryRaw.mockResolvedValueOnce([{ count: '0' }]);
+    voiceRepo.findActiveVoiceChannel.mockResolvedValueOnce({ channelId: channelId(2), serverId: serverId() });
+    voiceRepo.countActiveSessionsForChannel.mockResolvedValueOnce(0);
     mediaSignalingService.prepareRouter.mockRejectedValueOnce(new Error('mediasoup worker exited.'));
 
     await expect(service.joinChannel(user, channelId(2), {}, 'request-media-down')).rejects.toMatchObject({
@@ -145,6 +168,7 @@ describe('VoiceService', () => {
     });
 
     expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(voiceRepo.insertVoiceSession).not.toHaveBeenCalled();
     expect(mediaSignalingService.releaseSession).not.toHaveBeenCalled();
     expect(realtimePublisher.publishToRoom).not.toHaveBeenCalled();
     expect(auditService.record).not.toHaveBeenCalled();
@@ -152,16 +176,19 @@ describe('VoiceService', () => {
   });
 
   it('switches to a new voice channel and releases the previous mediasoup session', async () => {
-    prisma.$queryRaw.mockResolvedValueOnce([{ channelId: channelId(2), serverId: serverId() }]);
-    prisma.$queryRaw.mockResolvedValueOnce([{ count: '0' }]);
-    tx.$queryRaw.mockResolvedValueOnce([voiceSessionRow({ channelId: channelId(1), id: sessionId(1) })]);
-    tx.$queryRaw.mockResolvedValueOnce([
+    voiceRepo.findActiveVoiceChannel.mockResolvedValueOnce({ channelId: channelId(2), serverId: serverId() });
+    voiceRepo.countActiveSessionsForChannel.mockResolvedValueOnce(0);
+    voiceRepo.findActiveSessionForUser.mockResolvedValueOnce(
+      voiceSessionRow({ channelId: channelId(1), id: sessionId(1) }),
+    );
+    voiceRepo.insertVoiceSession.mockResolvedValueOnce(
       voiceSessionRow({ channelId: channelId(2), id: sessionId(2), mediaState: 'NEGOTIATING' }),
-    ]);
-    prisma.$queryRaw.mockResolvedValueOnce([]);
+    );
+    voiceRepo.listActiveProducerRowsForChannel.mockResolvedValueOnce([]);
 
     await service.joinChannel(user, channelId(2), {}, 'request-2');
 
+    expect(voiceRepo.endSession).toHaveBeenCalledWith(tx, sessionId(1));
     expect(mediaSignalingService.releaseSession).toHaveBeenCalledWith(sessionId(1), 'switch_channel');
     expect(realtimePublisher.publishToRoom).toHaveBeenCalledWith(
       `voice:${channelId(1)}`,
@@ -172,8 +199,8 @@ describe('VoiceService', () => {
   });
 
   it('rejects joining when the voice channel reaches its participant limit', async () => {
-    prisma.$queryRaw.mockResolvedValueOnce([{ channelId: channelId(2), serverId: serverId() }]);
-    prisma.$queryRaw.mockResolvedValueOnce([{ count: '20' }]);
+    voiceRepo.findActiveVoiceChannel.mockResolvedValueOnce({ channelId: channelId(2), serverId: serverId() });
+    voiceRepo.countActiveSessionsForChannel.mockResolvedValueOnce(20);
 
     await expect(service.joinChannel(user, channelId(2), {}, 'request-full')).rejects.toThrow(
       'Voice channel is full.',
@@ -182,10 +209,12 @@ describe('VoiceService', () => {
   });
 
   it('toggles producer pause when mute state flips', async () => {
-    prisma.$queryRaw.mockResolvedValueOnce([voiceSessionRow({ muteState: false, producerId: 'producer-1' })]);
-    prisma.$queryRaw.mockResolvedValueOnce([
+    voiceRepo.findActiveSessionById.mockResolvedValueOnce(
+      voiceSessionRow({ muteState: false, producerId: 'producer-1' }),
+    );
+    voiceRepo.updateVoiceSessionState.mockResolvedValueOnce(
       voiceSessionRow({ muteState: true, producerId: 'producer-1' }),
-    ]);
+    );
 
     await service.updateState(user, sessionId(1), { mute_state: true }, 'request-3');
 
@@ -199,7 +228,7 @@ describe('VoiceService', () => {
   });
 
   it('releases the mediasoup session when leaving manually', async () => {
-    prisma.$queryRaw.mockResolvedValueOnce([voiceSessionRow({})]);
+    voiceRepo.findActiveSessionById.mockResolvedValueOnce(voiceSessionRow({}));
 
     await service.leaveSession(user, sessionId(1), 'request-4');
 
@@ -207,7 +236,9 @@ describe('VoiceService', () => {
   });
 
   it('sweeps expired negotiations and broadcasts signaling timeout', async () => {
-    prisma.$queryRaw.mockResolvedValueOnce([voiceSessionRow({ id: sessionId(9), mediaState: 'NEGOTIATING' })]);
+    voiceRepo.findExpiredNegotiations.mockResolvedValueOnce([
+      voiceSessionRow({ id: sessionId(9), mediaState: 'NEGOTIATING' }),
+    ]);
 
     await service.sweepNegotiationTimeouts();
 
@@ -221,7 +252,7 @@ describe('VoiceService', () => {
   });
 
   it('refreshes ICE servers for the session owner', async () => {
-    prisma.$queryRaw.mockResolvedValueOnce([voiceSessionRow({})]);
+    voiceRepo.findActiveSessionById.mockResolvedValueOnce(voiceSessionRow({}));
 
     const result = await service.refreshIceServers(user, sessionId(1));
 

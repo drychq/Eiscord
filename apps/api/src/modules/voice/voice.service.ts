@@ -1,7 +1,7 @@
 import { HttpStatus, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
-import { ErrorCode, JoinVoiceMediaResponse, RealtimeEvent, VoiceActiveProducer, VoiceConnectionStatus, VoiceMediaState } from '@eiscord/shared';
+import { ErrorCode, JoinVoiceMediaResponse, RealtimeEvent } from '@eiscord/shared';
 
 import { AuthenticatedUserContext } from '../../common/auth/auth.types';
 import { AppError } from '../../common/errors/app-error';
@@ -20,24 +20,7 @@ import {
   type VoiceSessionRow,
   type VoiceSessionSummary,
 } from './voice.presenter';
-
-type RawSqlExecutor = Pick<PrismaService, '$executeRaw' | '$queryRaw'>;
-
-type VoiceChannelRow = {
-  channelId: string;
-  serverId: string;
-};
-
-type VoiceRoomCountRow = {
-  count: bigint | number | string;
-};
-
-type VoiceActiveProducerRow = {
-  channelId: string;
-  muteState: boolean;
-  producerId: string;
-  userId: string;
-};
+import { VoiceRepository } from './voice.repository';
 
 export type JoinVoiceChannelResult = VoiceSessionSummary & {
   media: JoinVoiceMediaResponse;
@@ -56,6 +39,7 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
     private readonly prisma: PrismaService,
     private readonly realtimePublisher: RealtimePublisher,
     private readonly turnCredentialService: TurnCredentialService,
+    private readonly voiceRepo: VoiceRepository,
   ) {}
 
   onModuleInit() {
@@ -95,51 +79,20 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
     const router = await this.prepareVoiceRouter(channelId);
 
     const result = await this.prisma.$transaction(async (tx) => {
-      const previous = await this.getActiveSessionForUserInternal(tx, user.userId);
+      const previous = await this.voiceRepo.findActiveSessionForUser(tx, user.userId);
 
       if (previous) {
-        await this.endSession(tx, previous.id);
+        await this.voiceRepo.endSession(tx, previous.id);
       }
 
-      const [created] = await tx.$queryRaw<VoiceSessionRow[]>`
-        INSERT INTO voice_sessions (
-          channel_id,
-          user_id,
-          mute_state,
-          deafen_state,
-          connection_status,
-          media_state,
-          router_id,
-          negotiation_deadline
-        )
-        VALUES (
-          ${channelId}::uuid,
-          ${user.userId}::uuid,
-          ${dto.initial_mute_state ?? false},
-          ${dto.initial_deafen_state ?? false},
-          ${VoiceConnectionStatus.Connecting},
-          ${VoiceMediaState.Negotiating},
-          ${router.routerId},
-          NOW() + (${negotiationTimeoutMs}::int * INTERVAL '1 millisecond')
-        )
-        RETURNING
-          id,
-          channel_id AS "channelId",
-          user_id AS "userId",
-          mute_state AS "muteState",
-          deafen_state AS "deafenState",
-          connection_status AS "connectionStatus",
-          media_state AS "mediaState",
-          router_id AS "routerId",
-          send_transport_id AS "sendTransportId",
-          recv_transport_id AS "recvTransportId",
-          producer_id AS "producerId",
-          joined_at AS "joinedAt",
-          updated_at AS "updatedAt",
-          (SELECT username FROM users WHERE id = ${user.userId}::uuid) AS "username",
-          (SELECT nickname FROM users WHERE id = ${user.userId}::uuid) AS "userNickname",
-          (SELECT avatar_attachment_id FROM users WHERE id = ${user.userId}::uuid) AS "avatarAttachmentId"
-      `;
+      const created = await this.voiceRepo.insertVoiceSession(tx, {
+        channelId,
+        deafenState: dto.initial_deafen_state ?? false,
+        muteState: dto.initial_mute_state ?? false,
+        negotiationTimeoutMs,
+        routerId: router.routerId,
+        userId: user.userId,
+      });
 
       return { created, previous };
     });
@@ -151,7 +104,10 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
       });
     }
 
-    const activeProducers = await this.listActiveProducersForChannel(this.prisma, channelId);
+    const activeProducerRows = await this.voiceRepo.listActiveProducerRowsForChannel(
+      this.prisma,
+      channelId,
+    );
 
     this.publishVoiceJoined(result.created, requestId);
 
@@ -167,7 +123,13 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
     return {
       ...toVoiceSessionSummary(result.created),
       media: {
-        active_producers: activeProducers,
+        active_producers: activeProducerRows.map((row) => ({
+          channel_id: row.channelId,
+          kind: 'audio',
+          paused: row.muteState,
+          producer_id: row.producerId,
+          user_id: row.userId,
+        })),
         ice_servers: [this.turnCredentialService.signCredential(user.userId)],
         router_rtp_capabilities: router.rtpCapabilities,
         signaling_channel: buildRealtimeRoom('voice', channelId),
@@ -199,13 +161,13 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
       user,
     });
     await this.getActiveVoiceChannel(channelId);
-    const rows = await this.listActiveSessionsForChannel(this.prisma, channelId);
+    const rows = await this.voiceRepo.listActiveSessionsForChannel(this.prisma, channelId);
 
     return rows.map(toVoiceSessionSummary);
   }
 
   async refreshIceServers(user: AuthenticatedUserContext, sessionId: string) {
-    const current = await this.getActiveSessionById(this.prisma, sessionId);
+    const current = await this.voiceRepo.findActiveSessionById(this.prisma, sessionId);
 
     if (!current) {
       throw new AppError(ErrorCode.ResourceNotFound, 'Voice session was not found.', HttpStatus.NOT_FOUND);
@@ -229,7 +191,7 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
     sessionId: string,
     requestId?: string,
   ): Promise<{ ok: true }> {
-    const current = await this.getActiveSessionById(this.prisma, sessionId);
+    const current = await this.voiceRepo.findActiveSessionById(this.prisma, sessionId);
 
     if (!current) {
       return { ok: true };
@@ -244,7 +206,7 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
     }
 
     await this.prisma.$transaction(async (tx) => {
-      await this.endSession(tx, sessionId);
+      await this.voiceRepo.endSession(tx, sessionId);
     });
     await this.mediaSignalingService.releaseSession(sessionId, 'manual_leave').catch((error) => {
       this.logger.warn(`Failed to release voice session media plane: ${String(error)}`);
@@ -281,7 +243,7 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
       );
     }
 
-    const current = await this.getActiveSessionById(this.prisma, sessionId);
+    const current = await this.voiceRepo.findActiveSessionById(this.prisma, sessionId);
 
     if (!current) {
       throw new AppError(ErrorCode.ResourceNotFound, 'Voice session was not found.', HttpStatus.NOT_FOUND);
@@ -295,33 +257,12 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
       );
     }
 
-    const [updated] = await this.prisma.$queryRaw<VoiceSessionRow[]>`
-      UPDATE voice_sessions
-      SET
-        mute_state = ${dto.mute_state ?? current.muteState},
-        deafen_state = ${dto.deafen_state ?? current.deafenState},
-        connection_status = ${dto.connection_status ?? current.connectionStatus},
-        updated_at = NOW()
-      WHERE id = ${sessionId}::uuid
-        AND ended_at IS NULL
-      RETURNING
-        id,
-        channel_id AS "channelId",
-        user_id AS "userId",
-        mute_state AS "muteState",
-        deafen_state AS "deafenState",
-        connection_status AS "connectionStatus",
-        media_state AS "mediaState",
-        router_id AS "routerId",
-        send_transport_id AS "sendTransportId",
-        recv_transport_id AS "recvTransportId",
-        producer_id AS "producerId",
-        joined_at AS "joinedAt",
-        updated_at AS "updatedAt",
-        (SELECT username FROM users WHERE id = voice_sessions.user_id) AS "username",
-        (SELECT nickname FROM users WHERE id = voice_sessions.user_id) AS "userNickname",
-        (SELECT avatar_attachment_id FROM users WHERE id = voice_sessions.user_id) AS "avatarAttachmentId"
-    `;
+    const updated = await this.voiceRepo.updateVoiceSessionState({
+      connectionStatus: dto.connection_status ?? current.connectionStatus,
+      deafenState: dto.deafen_state ?? current.deafenState,
+      muteState: dto.mute_state ?? current.muteState,
+      sessionId,
+    });
 
     if (dto.mute_state !== undefined && dto.mute_state !== current.muteState) {
       const op = dto.mute_state
@@ -358,7 +299,7 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
     }
 
     await this.prisma.$transaction(async (tx) => {
-      await this.endSession(tx, current.id);
+      await this.voiceRepo.endSession(tx, current.id);
     });
     await this.mediaSignalingService.releaseSession(current.id, reason).catch(() => undefined);
     this.publishVoiceLeft(current, reason, requestId);
@@ -372,14 +313,14 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
     reason: string,
     requestId?: string,
   ): Promise<VoiceSessionSummary | null> {
-    const current = await this.getActiveSessionForUserInServer(this.prisma, serverId, userId);
+    const current = await this.voiceRepo.findActiveSessionForUserInServer(this.prisma, serverId, userId);
 
     if (!current) {
       return null;
     }
 
     await this.prisma.$transaction(async (tx) => {
-      await this.endSession(tx, current.id);
+      await this.voiceRepo.endSession(tx, current.id);
     });
     await this.mediaSignalingService.releaseSession(current.id, reason).catch(() => undefined);
     this.publishVoiceLeft(current, reason, requestId);
@@ -415,7 +356,7 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
       return [];
     }
 
-    const current = await this.listActiveSessionsForChannel(this.prisma, channelId);
+    const current = await this.voiceRepo.listActiveSessionsForChannel(this.prisma, channelId);
     const targeted = current.filter((session) => userIds.includes(session.userId));
 
     if (targeted.length === 0) {
@@ -424,7 +365,7 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
 
     await this.prisma.$transaction(async (tx) => {
       for (const session of targeted) {
-        await this.endSession(tx, session.id);
+        await this.voiceRepo.endSession(tx, session.id);
       }
     });
 
@@ -446,7 +387,11 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
       return [];
     }
 
-    const activeSessions = await this.listActiveSessionsForUsersInServer(this.prisma, serverId, userIds);
+    const activeSessions = await this.voiceRepo.listActiveSessionsForUsersInServer(
+      this.prisma,
+      serverId,
+      userIds,
+    );
     const toRelease: VoiceSessionRow[] = [];
 
     for (const session of activeSessions) {
@@ -472,7 +417,7 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
 
     await this.prisma.$transaction(async (tx) => {
       for (const session of toRelease) {
-        await this.endSession(tx, session.id);
+        await this.voiceRepo.endSession(tx, session.id);
       }
     });
 
@@ -489,7 +434,7 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
     reason: string,
     requestId?: string,
   ): Promise<VoiceSessionSummary[]> {
-    const current = await this.listActiveSessionsForChannel(this.prisma, channelId);
+    const current = await this.voiceRepo.listActiveSessionsForChannel(this.prisma, channelId);
 
     if (current.length === 0) {
       return [];
@@ -497,7 +442,7 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
 
     await this.prisma.$transaction(async (tx) => {
       for (const session of current) {
-        await this.endSession(tx, session.id);
+        await this.voiceRepo.endSession(tx, session.id);
       }
     });
 
@@ -510,32 +455,7 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
   }
 
   async sweepNegotiationTimeouts(): Promise<VoiceSessionSummary[]> {
-    const expired = await this.prisma.$queryRaw<VoiceSessionRow[]>`
-      SELECT
-        vs.id,
-        vs.channel_id AS "channelId",
-        vs.user_id AS "userId",
-        vs.mute_state AS "muteState",
-        vs.deafen_state AS "deafenState",
-        vs.connection_status AS "connectionStatus",
-        vs.media_state AS "mediaState",
-        vs.router_id AS "routerId",
-        vs.send_transport_id AS "sendTransportId",
-        vs.recv_transport_id AS "recvTransportId",
-        vs.producer_id AS "producerId",
-        vs.joined_at AS "joinedAt",
-        vs.updated_at AS "updatedAt",
-        u.username,
-        u.nickname AS "userNickname",
-        u.avatar_attachment_id AS "avatarAttachmentId"
-      FROM voice_sessions vs
-      INNER JOIN users u ON u.id = vs.user_id
-      WHERE vs.ended_at IS NULL
-        AND vs.media_state IN (${VoiceMediaState.Negotiating}, ${VoiceMediaState.Reconnecting})
-        AND vs.negotiation_deadline IS NOT NULL
-        AND vs.negotiation_deadline < NOW()
-      LIMIT 50
-    `;
+    const expired = await this.voiceRepo.findExpiredNegotiations();
 
     if (expired.length === 0) {
       return [];
@@ -543,7 +463,7 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
 
     await this.prisma.$transaction(async (tx) => {
       for (const session of expired) {
-        await this.endSession(tx, session.id);
+        await this.voiceRepo.endSession(tx, session.id);
       }
     });
 
@@ -555,36 +475,16 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
     return expired.map(toVoiceSessionSummary);
   }
 
-  private async getActiveVoiceChannel(channelId: string): Promise<VoiceChannelRow> {
-    const [channel] = await this.prisma.$queryRaw<VoiceChannelRow[]>`
-      SELECT
-        c.id AS "channelId",
-        c.server_id AS "serverId"
-      FROM channels c
-      INNER JOIN servers s ON s.id = c.server_id
-      WHERE c.id = ${channelId}::uuid
-        AND c.type = 'voice'
-        AND c.status = 'active'
-        AND s.status = 'active'
-      LIMIT 1
-    `;
+  private async getActiveVoiceChannel(channelId: string): Promise<void> {
+    const channel = await this.voiceRepo.findActiveVoiceChannel(channelId);
 
     if (!channel) {
       throw new AppError(ErrorCode.ResourceNotFound, 'Voice channel was not found.', HttpStatus.NOT_FOUND);
     }
-
-    return channel;
   }
 
   private async assertRoomCapacity(channelId: string, userId: string): Promise<void> {
-    const [row] = await this.prisma.$queryRaw<VoiceRoomCountRow[]>`
-      SELECT COUNT(*)::text AS "count"
-      FROM voice_sessions
-      WHERE channel_id = ${channelId}::uuid
-        AND user_id <> ${userId}::uuid
-        AND ended_at IS NULL
-    `;
-    const activeCount = Number(row?.count ?? 0);
+    const activeCount = await this.voiceRepo.countActiveSessionsForChannel(channelId, userId);
     const maxParticipants = this.configService.get<number>('VOICE_MAX_PARTICIPANTS_PER_ROOM') ?? 20;
 
     if (Number.isFinite(activeCount) && activeCount >= maxParticipants) {
@@ -592,216 +492,8 @@ export class VoiceService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private async getActiveSessionById(
-    tx: Pick<PrismaService, '$queryRaw'>,
-    sessionId: string,
-  ): Promise<VoiceSessionRow | null> {
-    const [row] = await tx.$queryRaw<VoiceSessionRow[]>`
-      SELECT
-        vs.id,
-        vs.channel_id AS "channelId",
-        vs.user_id AS "userId",
-        vs.mute_state AS "muteState",
-        vs.deafen_state AS "deafenState",
-        vs.connection_status AS "connectionStatus",
-        vs.media_state AS "mediaState",
-        vs.router_id AS "routerId",
-        vs.send_transport_id AS "sendTransportId",
-        vs.recv_transport_id AS "recvTransportId",
-        vs.producer_id AS "producerId",
-        vs.joined_at AS "joinedAt",
-        vs.updated_at AS "updatedAt",
-        u.username,
-        u.nickname AS "userNickname",
-        u.avatar_attachment_id AS "avatarAttachmentId"
-      FROM voice_sessions vs
-      INNER JOIN users u ON u.id = vs.user_id
-      INNER JOIN channels c ON c.id = vs.channel_id
-      WHERE vs.id = ${sessionId}::uuid
-        AND vs.ended_at IS NULL
-        AND c.status = 'active'
-      LIMIT 1
-    `;
-
-    return row ?? null;
-  }
-
   async getActiveSessionForUser(userId: string): Promise<VoiceSessionRow | null> {
-    return this.getActiveSessionForUserInternal(this.prisma, userId);
-  }
-
-  private async getActiveSessionForUserInternal(
-    tx: Pick<PrismaService, '$queryRaw'>,
-    userId: string,
-  ): Promise<VoiceSessionRow | null> {
-    const [row] = await tx.$queryRaw<VoiceSessionRow[]>`
-      SELECT
-        vs.id,
-        vs.channel_id AS "channelId",
-        vs.user_id AS "userId",
-        vs.mute_state AS "muteState",
-        vs.deafen_state AS "deafenState",
-        vs.connection_status AS "connectionStatus",
-        vs.media_state AS "mediaState",
-        vs.router_id AS "routerId",
-        vs.send_transport_id AS "sendTransportId",
-        vs.recv_transport_id AS "recvTransportId",
-        vs.producer_id AS "producerId",
-        vs.joined_at AS "joinedAt",
-        vs.updated_at AS "updatedAt",
-        u.username,
-        u.nickname AS "userNickname",
-        u.avatar_attachment_id AS "avatarAttachmentId"
-      FROM voice_sessions vs
-      INNER JOIN users u ON u.id = vs.user_id
-      INNER JOIN channels c ON c.id = vs.channel_id
-      WHERE vs.user_id = ${userId}::uuid
-        AND vs.ended_at IS NULL
-        AND c.status = 'active'
-      LIMIT 1
-    `;
-
-    return row ?? null;
-  }
-
-  private async getActiveSessionForUserInServer(
-    tx: Pick<PrismaService, '$queryRaw'>,
-    serverId: string,
-    userId: string,
-  ): Promise<VoiceSessionRow | null> {
-    const [row] = await tx.$queryRaw<VoiceSessionRow[]>`
-      SELECT
-        vs.id,
-        vs.channel_id AS "channelId",
-        vs.user_id AS "userId",
-        vs.mute_state AS "muteState",
-        vs.deafen_state AS "deafenState",
-        vs.connection_status AS "connectionStatus",
-        vs.media_state AS "mediaState",
-        vs.router_id AS "routerId",
-        vs.send_transport_id AS "sendTransportId",
-        vs.recv_transport_id AS "recvTransportId",
-        vs.producer_id AS "producerId",
-        vs.joined_at AS "joinedAt",
-        vs.updated_at AS "updatedAt",
-        u.username,
-        u.nickname AS "userNickname",
-        u.avatar_attachment_id AS "avatarAttachmentId"
-      FROM voice_sessions vs
-      INNER JOIN users u ON u.id = vs.user_id
-      INNER JOIN channels c ON c.id = vs.channel_id
-      WHERE vs.user_id = ${userId}::uuid
-        AND c.server_id = ${serverId}::uuid
-        AND vs.ended_at IS NULL
-        AND c.status = 'active'
-      LIMIT 1
-    `;
-
-    return row ?? null;
-  }
-
-  private async listActiveSessionsForChannel(
-    tx: Pick<PrismaService, '$queryRaw'>,
-    channelId: string,
-  ): Promise<VoiceSessionRow[]> {
-    return tx.$queryRaw<VoiceSessionRow[]>`
-      SELECT
-        vs.id,
-        vs.channel_id AS "channelId",
-        vs.user_id AS "userId",
-        vs.mute_state AS "muteState",
-        vs.deafen_state AS "deafenState",
-        vs.connection_status AS "connectionStatus",
-        vs.media_state AS "mediaState",
-        vs.router_id AS "routerId",
-        vs.send_transport_id AS "sendTransportId",
-        vs.recv_transport_id AS "recvTransportId",
-        vs.producer_id AS "producerId",
-        vs.joined_at AS "joinedAt",
-        vs.updated_at AS "updatedAt",
-        u.username,
-        u.nickname AS "userNickname",
-        u.avatar_attachment_id AS "avatarAttachmentId"
-      FROM voice_sessions vs
-      INNER JOIN users u ON u.id = vs.user_id
-      WHERE vs.channel_id = ${channelId}::uuid
-        AND vs.ended_at IS NULL
-      ORDER BY vs.joined_at ASC
-    `;
-  }
-
-  private async listActiveProducersForChannel(
-    tx: Pick<PrismaService, '$queryRaw'>,
-    channelId: string,
-  ): Promise<VoiceActiveProducer[]> {
-    const rows = await tx.$queryRaw<VoiceActiveProducerRow[]>`
-      SELECT
-        channel_id AS "channelId",
-        user_id AS "userId",
-        producer_id AS "producerId",
-        mute_state AS "muteState"
-      FROM voice_sessions
-      WHERE channel_id = ${channelId}::uuid
-        AND ended_at IS NULL
-        AND producer_id IS NOT NULL
-      ORDER BY joined_at ASC
-    `;
-
-    return rows.map((row) => ({
-      channel_id: row.channelId,
-      kind: 'audio',
-      paused: row.muteState,
-      producer_id: row.producerId,
-      user_id: row.userId,
-    }));
-  }
-
-  private async listActiveSessionsForUsersInServer(
-    tx: Pick<PrismaService, '$queryRaw'>,
-    serverId: string,
-    userIds: string[],
-  ): Promise<VoiceSessionRow[]> {
-    return tx.$queryRaw<VoiceSessionRow[]>`
-      SELECT
-        vs.id,
-        vs.channel_id AS "channelId",
-        vs.user_id AS "userId",
-        vs.mute_state AS "muteState",
-        vs.deafen_state AS "deafenState",
-        vs.connection_status AS "connectionStatus",
-        vs.media_state AS "mediaState",
-        vs.router_id AS "routerId",
-        vs.send_transport_id AS "sendTransportId",
-        vs.recv_transport_id AS "recvTransportId",
-        vs.producer_id AS "producerId",
-        vs.joined_at AS "joinedAt",
-        vs.updated_at AS "updatedAt",
-        u.username,
-        u.nickname AS "userNickname",
-        u.avatar_attachment_id AS "avatarAttachmentId"
-      FROM voice_sessions vs
-      INNER JOIN users u ON u.id = vs.user_id
-      INNER JOIN channels c ON c.id = vs.channel_id
-      WHERE c.server_id = ${serverId}::uuid
-        AND vs.user_id = ANY(${userIds}::uuid[])
-        AND vs.ended_at IS NULL
-        AND c.status = 'active'
-      ORDER BY vs.joined_at ASC
-    `;
-  }
-
-  private async endSession(tx: RawSqlExecutor, sessionId: string): Promise<void> {
-    await tx.$executeRaw`
-      UPDATE voice_sessions
-      SET
-        connection_status = ${VoiceConnectionStatus.Disconnected},
-        media_state = ${VoiceMediaState.Idle},
-        negotiation_deadline = NULL,
-        ended_at = COALESCE(ended_at, NOW()),
-        updated_at = NOW()
-      WHERE id = ${sessionId}::uuid
-        AND ended_at IS NULL
-    `;
+    return this.voiceRepo.findActiveSessionForUser(this.prisma, userId);
   }
 
   private publishVoiceJoined(row: VoiceSessionRow, requestId?: string) {

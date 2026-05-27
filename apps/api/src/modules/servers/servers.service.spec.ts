@@ -7,6 +7,7 @@ import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RealtimePublisher } from '../realtime/realtime.publisher';
 import { VoiceService } from '../voice/voice.service';
+import { ServersRepository } from './servers.repository';
 import { ServersService } from './servers.service';
 
 const now = new Date('2026-05-03T00:00:00.000Z');
@@ -23,6 +24,7 @@ describe('ServersService', () => {
   };
   let permissionsService: jest.Mocked<PermissionsService>;
   let realtimePublisher: jest.Mocked<RealtimePublisher>;
+  let serversRepo: jest.Mocked<ServersRepository>;
   let voiceService: jest.Mocked<VoiceService>;
   let service: ServersService;
   let tx: { $executeRaw: jest.Mock; $queryRaw: jest.Mock };
@@ -51,6 +53,43 @@ describe('ServersService', () => {
       publishToRoom: jest.fn(),
       leaveUserRooms: jest.fn(),
     } as unknown as jest.Mocked<RealtimePublisher>;
+    serversRepo = {
+      findReadyServerIconAttachment: jest.fn(),
+      insertServer: jest.fn(),
+      insertOwnerMembership: jest.fn(),
+      insertDefaultRole: jest.fn(),
+      insertMembershipRole: jest.fn().mockResolvedValue(undefined),
+      insertMembershipRoleIgnoreConflict: jest.fn().mockResolvedValue(undefined),
+      insertDefaultChannel: jest.fn(),
+      insertChannelReadState: jest.fn().mockResolvedValue(undefined),
+      insertInvitation: jest.fn().mockResolvedValue(undefined),
+      listMembershipServers: jest.fn().mockResolvedValue([]),
+      getInvitationForUpdate: jest.fn(),
+      getDefaultRole: jest.fn(),
+      getMembershipForUpdate: jest.fn(),
+      createMembership: jest.fn(),
+      restoreMembership: jest.fn(),
+      insertTextChannelReadStates: jest.fn().mockResolvedValue(undefined),
+      incrementInvitationUseCount: jest.fn().mockResolvedValue(undefined),
+      getServerMembershipForUpdate: jest.fn(),
+      deleteAllMembershipRoles: jest.fn().mockResolvedValue(undefined),
+      markMembershipRemoved: jest.fn().mockResolvedValue(undefined),
+      updateMembershipStatus: jest.fn(),
+      getActiveServerMembership: jest.fn(),
+      listActiveChannelsByServer: jest.fn().mockResolvedValue([]),
+      listRoleRows: jest.fn().mockResolvedValue([]),
+      listPermissionOverwritesForChannels: jest.fn().mockResolvedValue([]),
+      listServerMembersRows: jest.fn().mockResolvedValue([]),
+      getMemberRowById: jest.fn(),
+      getRoleRow: jest.fn(),
+      insertRole: jest.fn(),
+      updateRoleRow: jest.fn(),
+      deleteRoleRow: jest.fn().mockResolvedValue(undefined),
+      insertMembershipRoleViaPrisma: jest.fn().mockResolvedValue(undefined),
+      deleteMembershipRole: jest.fn().mockResolvedValue(undefined),
+      listServerUserIds: jest.fn().mockResolvedValue([]),
+      listServerChannels: jest.fn().mockResolvedValue([]),
+    } as unknown as jest.Mocked<ServersRepository>;
     voiceService = {
       releaseUserActiveSessionForServer: jest.fn().mockResolvedValue(null),
       releaseUsersActiveSessionsWithoutJoinPermission: jest.fn().mockResolvedValue([]),
@@ -61,15 +100,16 @@ describe('ServersService', () => {
       permissionsService,
       prisma as unknown as PrismaService,
       realtimePublisher,
+      serversRepo,
       voiceService,
     );
   });
 
   it('creates a server with owner membership, default role, default channel, and invite', async () => {
-    tx.$queryRaw.mockResolvedValueOnce([serverRow()]);
-    tx.$queryRaw.mockResolvedValueOnce([memberRow()]);
-    tx.$queryRaw.mockResolvedValueOnce([roleRow()]);
-    tx.$queryRaw.mockResolvedValueOnce([channelRow()]);
+    serversRepo.insertServer.mockResolvedValueOnce(serverRow());
+    serversRepo.insertOwnerMembership.mockResolvedValueOnce(memberRow());
+    serversRepo.insertDefaultRole.mockResolvedValueOnce(roleRow());
+    serversRepo.insertDefaultChannel.mockResolvedValueOnce(channelRow());
 
     const result = await service.createServer(
       alice,
@@ -84,8 +124,13 @@ describe('ServersService', () => {
       server: { name: 'Course', server_id: serverId() },
     });
     expect(result.invite_code).toEqual(expect.any(String));
-    expect(tx.$queryRaw).toHaveBeenCalledTimes(4);
-    expect(tx.$executeRaw).toHaveBeenCalledTimes(3);
+    expect(serversRepo.insertServer).toHaveBeenCalledTimes(1);
+    expect(serversRepo.insertOwnerMembership).toHaveBeenCalledTimes(1);
+    expect(serversRepo.insertDefaultRole).toHaveBeenCalledTimes(1);
+    expect(serversRepo.insertDefaultChannel).toHaveBeenCalledTimes(1);
+    expect(serversRepo.insertMembershipRole).toHaveBeenCalledTimes(1);
+    expect(serversRepo.insertChannelReadState).toHaveBeenCalledTimes(1);
+    expect(serversRepo.insertInvitation).toHaveBeenCalledTimes(1);
     expect(realtimePublisher.publishToRoom).toHaveBeenCalledWith(
       `server:${serverId()}`,
       RealtimeEvent.MemberJoined,
@@ -95,7 +140,7 @@ describe('ServersService', () => {
   });
 
   it('rejects invalid server icon attachments', async () => {
-    prisma.$queryRaw.mockResolvedValueOnce([]);
+    serversRepo.findReadyServerIconAttachment.mockResolvedValueOnce(null);
 
     await expect(
       service.createServer(alice, {
@@ -108,11 +153,18 @@ describe('ServersService', () => {
   });
 
   it('joins a server by active invite', async () => {
-    tx.$queryRaw.mockResolvedValueOnce([invitationRow()]);
-    tx.$queryRaw.mockResolvedValueOnce([roleRow()]);
-    tx.$queryRaw.mockResolvedValueOnce([]);
-    tx.$queryRaw.mockResolvedValueOnce([membershipLookup({ userId: bob.userId })]);
-    mockServerDetailQueries(bob.userId);
+    serversRepo.getInvitationForUpdate.mockResolvedValueOnce(invitationRow());
+    serversRepo.getDefaultRole.mockResolvedValueOnce(roleRow());
+    serversRepo.getMembershipForUpdate.mockResolvedValueOnce(null);
+    serversRepo.createMembership.mockResolvedValueOnce(membershipLookup({ userId: bob.userId }));
+    serversRepo.getActiveServerMembership.mockResolvedValueOnce({
+      ...serverRow(),
+      ...memberRow({ userId: bob.userId }),
+    });
+    serversRepo.listActiveChannelsByServer.mockResolvedValueOnce([channelRow()]);
+    serversRepo.listServerMembersRows.mockResolvedValueOnce([memberRow({ userId: bob.userId })]);
+    serversRepo.listRoleRows.mockResolvedValueOnce([roleRow()]);
+    serversRepo.listPermissionOverwritesForChannels.mockResolvedValueOnce([]);
 
     const result = await service.joinServer(bob, { invite_code: 'abc123' }, 'request-1');
 
@@ -120,14 +172,16 @@ describe('ServersService', () => {
       current_member: { user: { user_id: bob.userId } },
       server_id: serverId(),
     });
-    expect(tx.$executeRaw).toHaveBeenCalledTimes(3);
+    expect(serversRepo.insertMembershipRoleIgnoreConflict).toHaveBeenCalledTimes(1);
+    expect(serversRepo.insertTextChannelReadStates).toHaveBeenCalledTimes(1);
+    expect(serversRepo.incrementInvitationUseCount).toHaveBeenCalledTimes(1);
     expect(auditService.record).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'JoinServer', result: 'success' }),
     );
   });
 
   it('rejects missing invites', async () => {
-    tx.$queryRaw.mockResolvedValueOnce([]);
+    serversRepo.getInvitationForUpdate.mockResolvedValueOnce(null);
 
     await expect(
       service.joinServer(bob, { invite_code: 'missing' }),
@@ -135,9 +189,9 @@ describe('ServersService', () => {
   });
 
   it('rejects expired invites', async () => {
-    tx.$queryRaw.mockResolvedValueOnce([
+    serversRepo.getInvitationForUpdate.mockResolvedValueOnce(
       invitationRow({ expiresAt: new Date('2026-01-01T00:00:00.000Z') }),
-    ]);
+    );
 
     await expect(
       service.joinServer(bob, { invite_code: 'expired' }),
@@ -145,7 +199,9 @@ describe('ServersService', () => {
   });
 
   it('rejects invites that reached their use limit', async () => {
-    tx.$queryRaw.mockResolvedValueOnce([invitationRow({ maxUses: 1, usedCount: 1 })]);
+    serversRepo.getInvitationForUpdate.mockResolvedValueOnce(
+      invitationRow({ maxUses: 1, usedCount: 1 }),
+    );
 
     await expect(
       service.joinServer(bob, { invite_code: 'usedup' }),
@@ -153,11 +209,11 @@ describe('ServersService', () => {
   });
 
   it('rejects duplicate active memberships when joining', async () => {
-    tx.$queryRaw.mockResolvedValueOnce([invitationRow()]);
-    tx.$queryRaw.mockResolvedValueOnce([roleRow()]);
-    tx.$queryRaw.mockResolvedValueOnce([
+    serversRepo.getInvitationForUpdate.mockResolvedValueOnce(invitationRow());
+    serversRepo.getDefaultRole.mockResolvedValueOnce(roleRow());
+    serversRepo.getMembershipForUpdate.mockResolvedValueOnce(
       membershipLookup({ memberStatus: 'active', userId: bob.userId }),
-    ]);
+    );
 
     await expect(
       service.joinServer(bob, { invite_code: 'abc123' }),
@@ -165,9 +221,9 @@ describe('ServersService', () => {
   });
 
   it('prevents owners from leaving before ownership transfer', async () => {
-    tx.$queryRaw.mockResolvedValueOnce([
+    serversRepo.getServerMembershipForUpdate.mockResolvedValueOnce(
       serverMembershipRow({ membershipId: membershipId(), ownerId: alice.userId }),
-    ]);
+    );
 
     await expect(service.leaveServer(alice, serverId())).rejects.toMatchObject<AppError>({
       code: ErrorCode.Conflict,
@@ -175,14 +231,15 @@ describe('ServersService', () => {
   });
 
   it('lets ordinary members leave servers', async () => {
-    tx.$queryRaw.mockResolvedValueOnce([
+    serversRepo.getServerMembershipForUpdate.mockResolvedValueOnce(
       serverMembershipRow({ membershipId: membershipId(), ownerId: alice.userId }),
-    ]);
-    prisma.$queryRaw.mockResolvedValueOnce([]);
+    );
+    serversRepo.listServerChannels.mockResolvedValueOnce([]);
 
     await expect(service.leaveServer(bob, serverId(), 'request-1')).resolves.toEqual({ ok: true });
 
-    expect(tx.$executeRaw).toHaveBeenCalledTimes(2);
+    expect(serversRepo.deleteAllMembershipRoles).toHaveBeenCalledTimes(1);
+    expect(serversRepo.markMembershipRemoved).toHaveBeenCalledTimes(1);
     expect(auditService.record).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'LeaveServer', result: 'success' }),
     );
@@ -200,8 +257,12 @@ describe('ServersService', () => {
       userId: targetUserId,
       highestPriority: 0,
     });
-    tx.$queryRaw.mockResolvedValueOnce([memberRow({ userId: targetUserId, memberStatus: 'muted' })]);
-    prisma.$queryRaw.mockResolvedValueOnce([memberRow({ userId: targetUserId, memberStatus: 'muted' })]);
+    serversRepo.updateMembershipStatus.mockResolvedValueOnce(
+      memberRow({ userId: targetUserId, memberStatus: 'muted' }),
+    );
+    serversRepo.getMemberRowById.mockResolvedValueOnce(
+      memberRow({ userId: targetUserId, memberStatus: 'muted' }),
+    );
 
     await expect(
       service.manageMember(alice, serverId(), membershipId(), { action: 'mute' }, 'request-1'),
@@ -217,19 +278,6 @@ describe('ServersService', () => {
       'request-1',
     );
   });
-
-  function mockServerDetailQueries(currentUserId: string) {
-    prisma.$queryRaw.mockResolvedValueOnce([
-      {
-        ...serverRow(),
-        ...memberRow({ userId: currentUserId }),
-      },
-    ]);
-    prisma.$queryRaw.mockResolvedValueOnce([channelRow()]);
-    prisma.$queryRaw.mockResolvedValueOnce([memberRow({ userId: currentUserId })]);
-    prisma.$queryRaw.mockResolvedValueOnce([roleRow()]);
-    prisma.$queryRaw.mockResolvedValueOnce([]);
-  }
 });
 
 function userId(index: number): string {

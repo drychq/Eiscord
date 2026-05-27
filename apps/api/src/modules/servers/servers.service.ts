@@ -1,8 +1,8 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 
 import { HttpStatus, Injectable } from '@nestjs/common';
 
-import { DEFAULT_MEMBER_PERMISSION_BITS, ErrorCode, RealtimeEvent } from '@eiscord/shared';
+import { ErrorCode, RealtimeEvent } from '@eiscord/shared';
 
 import { AuthenticatedUserContext } from '../../common/auth/auth.types';
 import { AppError } from '../../common/errors/app-error';
@@ -24,11 +24,8 @@ import {
   ChannelRow,
   MemberSummary,
   MemberRow,
-  PermissionOverwriteRow,
-  RoleRow,
   ServerCreateResponse,
   ServerDetail,
-  ServerListRow,
   ServerRow,
   ServerSummary,
   toChannelSummary,
@@ -37,39 +34,7 @@ import {
   toServerBaseSummary,
   toServerSummary,
 } from './servers.presenter';
-
-type AttachmentLookupRow = {
-  id: string;
-};
-
-type InvitationRow = {
-  code: string;
-  expiresAt: Date | null;
-  id: string;
-  maxUses: number | null;
-  serverId: string;
-  serverStatus: string;
-  status: string;
-  usedCount: number;
-};
-
-type MembershipLookupRow = {
-  id: string;
-  memberStatus: string;
-  serverId: string;
-  userId: string;
-};
-
-type ServerMembershipRow = ServerRow & {
-  membershipId: string;
-  membershipStatus: string;
-};
-
-type RawSqlExecutor = Pick<PrismaService, '$executeRaw' | '$queryRaw'>;
-
-type ServerUserRow = {
-  userId: string;
-};
+import { ServersRepository } from './servers.repository';
 
 @Injectable()
 export class ServersService {
@@ -79,6 +44,7 @@ export class ServersService {
     private readonly permissionsService: PermissionsService,
     private readonly prisma: PrismaService,
     private readonly realtimePublisher: RealtimePublisher,
+    private readonly serversRepo: ServersRepository,
     private readonly voiceService: VoiceService,
   ) {}
 
@@ -101,15 +67,10 @@ export class ServersService {
     const iconAttachmentId = dto.icon_attachment_id ?? null;
 
     if (iconAttachmentId) {
-      const [attachment] = await this.prisma.$queryRaw<AttachmentLookupRow[]>`
-        SELECT id
-        FROM attachments
-        WHERE id = ${iconAttachmentId}::uuid
-          AND owner_id = ${user.userId}::uuid
-          AND purpose = 'server_icon'
-          AND status = 'ready'
-        LIMIT 1
-      `;
+      const attachment = await this.serversRepo.findReadyServerIconAttachment(
+        iconAttachmentId,
+        user.userId,
+      );
 
       if (!attachment) {
         await this.recordFailure('CreateServer', user.userId, 'invalid_icon_attachment', requestId);
@@ -124,116 +85,30 @@ export class ServersService {
     const description = normalizeNullableText(dto.description);
     const inviteCode = createInviteCode();
     const result = await this.prisma.$transaction(async (tx) => {
-      const [server] = await tx.$queryRaw<ServerRow[]>`
-        INSERT INTO servers (id, owner_id, name, icon_attachment_id, description, status)
-        VALUES (
-          ${randomUUID()}::uuid,
-          ${user.userId}::uuid,
-          ${name},
-          ${iconAttachmentId}::uuid,
-          ${description},
-          'active'
-        )
-        RETURNING
-          id,
-          owner_id AS "ownerId",
-          name,
-          icon_attachment_id AS "iconAttachmentId",
-          description,
-          status,
-          created_at AS "createdAt"
-      `;
+      const server = await this.serversRepo.insertServer(tx, {
+        description,
+        iconAttachmentId,
+        name,
+        ownerId: user.userId,
+      });
+      const ownerMember = await this.serversRepo.insertOwnerMembership(tx, server.id, user.userId);
+      const defaultRole = await this.serversRepo.insertDefaultRole(tx, server.id);
 
-      const [ownerMember] = await tx.$queryRaw<MemberRow[]>`
-        INSERT INTO memberships (id, server_id, user_id, nick_in_server, member_status)
-        SELECT
-          ${randomUUID()}::uuid,
-          ${server.id}::uuid,
-          ${user.userId}::uuid,
-          u.nickname,
-          'active'
-        FROM users u
-        WHERE u.id = ${user.userId}::uuid
-        RETURNING
-          id AS "membershipId",
-          server_id AS "serverId",
-          user_id AS "userId",
-          nick_in_server AS "nickInServer",
-          member_status AS "memberStatus",
-          joined_at AS "joinedAt",
-          ARRAY[]::text[] AS "roleIds",
-          (SELECT username FROM users WHERE id = ${user.userId}::uuid) AS "username",
-          (SELECT nickname FROM users WHERE id = ${user.userId}::uuid) AS "userNickname",
-          (SELECT avatar_attachment_id FROM users WHERE id = ${user.userId}::uuid) AS "avatarAttachmentId",
-          (SELECT presence_status FROM users WHERE id = ${user.userId}::uuid) AS "presenceStatus"
-      `;
+      await this.serversRepo.insertMembershipRole(
+        tx,
+        ownerMember.membershipId,
+        defaultRole.id,
+        user.userId,
+      );
 
-      const [defaultRole] = await tx.$queryRaw<RoleRow[]>`
-        INSERT INTO roles (id, server_id, name, permission_bits, color, priority, is_default)
-        VALUES (
-          ${randomUUID()}::uuid,
-          ${server.id}::uuid,
-          'Member',
-          ${BigInt(DEFAULT_MEMBER_PERMISSION_BITS)},
-          null,
-          0,
-          true
-        )
-        RETURNING
-          id,
-          server_id AS "serverId",
-          name,
-          permission_bits AS "permissionBits",
-          color,
-          priority,
-          is_default AS "isDefault"
-      `;
+      const defaultChannel = await this.serversRepo.insertDefaultChannel(tx, server.id);
 
-      await tx.$executeRaw`
-        INSERT INTO membership_roles (membership_id, role_id, assigned_by_id)
-        VALUES (${ownerMember.membershipId}::uuid, ${defaultRole.id}::uuid, ${user.userId}::uuid)
-      `;
-
-      const [defaultChannel] = await tx.$queryRaw<ChannelRow[]>`
-        INSERT INTO channels (id, server_id, name, type, topic, sort_order, status)
-        VALUES (${randomUUID()}::uuid, ${server.id}::uuid, 'general', 'text', null, 0, 'active')
-        RETURNING
-          id,
-          server_id AS "serverId",
-          name,
-          type,
-          topic,
-          sort_order AS "sortOrder",
-          status,
-          created_at AS "createdAt"
-      `;
-
-      await tx.$executeRaw`
-        INSERT INTO read_states (id, user_id, scope_type, channel_id, last_read_message_id, unread_count)
-        VALUES (
-          gen_random_uuid(),
-          ${user.userId}::uuid,
-          'channel',
-          ${defaultChannel.id}::uuid,
-          null,
-          0
-        )
-        ON CONFLICT (user_id, channel_id) DO NOTHING
-      `;
-
-      await tx.$executeRaw`
-        INSERT INTO invitations (id, server_id, code, created_by_id, expires_at, max_uses, used_count, status)
-        VALUES (
-          ${randomUUID()}::uuid,
-          ${server.id}::uuid,
-          ${inviteCode},
-          ${user.userId}::uuid,
-          null,
-          null,
-          0,
-          'active'
-        )
-      `;
+      await this.serversRepo.insertChannelReadState(tx, user.userId, defaultChannel.id);
+      await this.serversRepo.insertInvitation(tx, {
+        code: inviteCode,
+        createdById: user.userId,
+        serverId: server.id,
+      });
 
       return { defaultChannel, defaultRole, ownerMember, server };
     });
@@ -268,24 +143,7 @@ export class ServersService {
   }
 
   async listServers(user: AuthenticatedUserContext): Promise<ServerSummary[]> {
-    const rows = await this.prisma.$queryRaw<ServerListRow[]>`
-      SELECT
-        s.id,
-        s.owner_id AS "ownerId",
-        s.name,
-        s.icon_attachment_id AS "iconAttachmentId",
-        s.description,
-        s.status,
-        s.created_at AS "createdAt",
-        m.joined_at AS "joinedAt",
-        m.member_status AS "memberStatus"
-      FROM memberships m
-      INNER JOIN servers s ON s.id = m.server_id
-      WHERE m.user_id = ${user.userId}::uuid
-        AND m.member_status IN ('active', 'muted')
-        AND s.status = 'active'
-      ORDER BY m.joined_at DESC
-    `;
+    const rows = await this.serversRepo.listMembershipServers(user.userId);
 
     return rows.map(toServerSummary);
   }
@@ -294,8 +152,8 @@ export class ServersService {
     const membership = await this.getActiveServerMembership(user.userId, serverId);
     const [channels, members, roles] = await Promise.all([
       this.listVisibleChannels(user, serverId),
-      this.listServerMembersRows(serverId),
-      this.listRoleRows(serverId),
+      this.serversRepo.listServerMembersRows(serverId),
+      this.serversRepo.listRoleRows(serverId),
     ]);
 
     return {
@@ -313,7 +171,7 @@ export class ServersService {
     requestId?: string,
   ): Promise<ServerDetail> {
     const serverId = await this.prisma.$transaction(async (tx) => {
-      const invitation = await this.getInvitationForUpdate(tx, dto.invite_code);
+      const invitation = await this.serversRepo.getInvitationForUpdate(tx, dto.invite_code);
 
       if (!invitation) {
         await this.recordFailure('JoinServer', user.userId, 'invalid_invite', requestId);
@@ -343,8 +201,21 @@ export class ServersService {
         );
       }
 
-      const defaultRole = await this.getDefaultRole(tx, invitation.serverId);
-      const membership = await this.getMembershipForUpdate(tx, invitation.serverId, user.userId);
+      const defaultRole = await this.serversRepo.getDefaultRole(tx, invitation.serverId);
+
+      if (!defaultRole) {
+        throw new AppError(
+          ErrorCode.InternalError,
+          'Default server role is missing.',
+          HttpStatus.INTERNAL_SERVER_ERROR,
+        );
+      }
+
+      const membership = await this.serversRepo.getMembershipForUpdate(
+        tx,
+        invitation.serverId,
+        user.userId,
+      );
 
       if (membership?.memberStatus === 'active' || membership?.memberStatus === 'muted') {
         await this.recordFailure('JoinServer', user.userId, 'already_member', requestId);
@@ -365,30 +236,17 @@ export class ServersService {
       }
 
       const member = membership
-        ? await this.restoreMembership(tx, membership.id, user.userId)
-        : await this.createMembership(tx, invitation.serverId, user.userId);
+        ? await this.serversRepo.restoreMembership(tx, membership.id, user.userId)
+        : await this.serversRepo.createMembership(tx, invitation.serverId, user.userId);
 
-      await tx.$executeRaw`
-        INSERT INTO membership_roles (membership_id, role_id, assigned_by_id)
-        VALUES (${member.id}::uuid, ${defaultRole.id}::uuid, ${user.userId}::uuid)
-        ON CONFLICT (membership_id, role_id) DO NOTHING
-      `;
-
-      await tx.$executeRaw`
-        INSERT INTO read_states (id, user_id, scope_type, channel_id, last_read_message_id, unread_count)
-        SELECT gen_random_uuid(), ${user.userId}::uuid, 'channel', c.id, null, 0
-        FROM channels c
-        WHERE c.server_id = ${invitation.serverId}::uuid
-          AND c.type = 'text'
-          AND c.status = 'active'
-        ON CONFLICT (user_id, channel_id) DO NOTHING
-      `;
-
-      await tx.$executeRaw`
-        UPDATE invitations
-        SET used_count = used_count + 1, updated_at = NOW()
-        WHERE id = ${invitation.id}::uuid
-      `;
+      await this.serversRepo.insertMembershipRoleIgnoreConflict(
+        tx,
+        member.id,
+        defaultRole.id,
+        user.userId,
+      );
+      await this.serversRepo.insertTextChannelReadStates(tx, user.userId, invitation.serverId);
+      await this.serversRepo.incrementInvitationUseCount(tx, invitation.id);
 
       return invitation.serverId;
     });
@@ -423,7 +281,11 @@ export class ServersService {
     requestId?: string,
   ): Promise<{ ok: true }> {
     await this.prisma.$transaction(async (tx) => {
-      const membership = await this.getServerMembershipForUpdate(tx, serverId, user.userId);
+      const membership = await this.serversRepo.getServerMembershipForUpdate(
+        tx,
+        serverId,
+        user.userId,
+      );
 
       if (!membership) {
         await this.recordFailure('LeaveServer', user.userId, 'not_member', requestId);
@@ -443,16 +305,8 @@ export class ServersService {
         );
       }
 
-      await tx.$executeRaw`
-        DELETE FROM membership_roles
-        WHERE membership_id = ${membership.membershipId}::uuid
-      `;
-
-      await tx.$executeRaw`
-        UPDATE memberships
-        SET member_status = 'removed', updated_at = NOW()
-        WHERE id = ${membership.membershipId}::uuid
-      `;
+      await this.serversRepo.deleteAllMembershipRoles(tx, membership.membershipId);
+      await this.serversRepo.markMembershipRemoved(tx, membership.membershipId);
     });
 
     await this.auditService.record({
@@ -488,7 +342,7 @@ export class ServersService {
 
   async listMembers(user: AuthenticatedUserContext, serverId: string): Promise<MemberSummary[]> {
     await this.getActiveServerMembership(user.userId, serverId);
-    const rows = await this.listServerMembersRows(serverId);
+    const rows = await this.serversRepo.listServerMembersRows(serverId);
 
     return rows.map(toMemberSummary);
   }
@@ -508,47 +362,35 @@ export class ServersService {
     );
     const member = await this.prisma.$transaction(async (tx) => {
       if (dto.action === 'remove') {
-        await tx.$executeRaw`
-          DELETE FROM membership_roles
-          WHERE membership_id = ${membershipId}::uuid
-        `;
+        await this.serversRepo.deleteAllMembershipRoles(tx, membershipId);
       }
 
       if (dto.action === 'restore') {
-        const defaultRole = await this.getDefaultRole(tx, serverId);
+        const defaultRole = await this.serversRepo.getDefaultRole(tx, serverId);
 
-        await tx.$executeRaw`
-          INSERT INTO membership_roles (membership_id, role_id, assigned_by_id)
-          VALUES (${membershipId}::uuid, ${defaultRole.id}::uuid, ${user.userId}::uuid)
-          ON CONFLICT (membership_id, role_id) DO NOTHING
-        `;
+        if (!defaultRole) {
+          throw new AppError(
+            ErrorCode.InternalError,
+            'Default server role is missing.',
+            HttpStatus.INTERNAL_SERVER_ERROR,
+          );
+        }
+
+        await this.serversRepo.insertMembershipRoleIgnoreConflict(
+          tx,
+          membershipId,
+          defaultRole.id,
+          user.userId,
+        );
       }
 
       const nextStatus = dto.action === 'mute' ? 'muted' : dto.action === 'restore' ? 'active' : 'removed';
-      const [updated] = await tx.$queryRaw<MemberRow[]>`
-        UPDATE memberships
-        SET member_status = ${nextStatus}, updated_at = NOW()
-        WHERE id = ${membershipId}::uuid
-          AND server_id = ${serverId}::uuid
-        RETURNING
-          id AS "membershipId",
-          server_id AS "serverId",
-          user_id AS "userId",
-          nick_in_server AS "nickInServer",
-          member_status AS "memberStatus",
-          joined_at AS "joinedAt",
-          ARRAY[]::text[] AS "roleIds",
-          (SELECT username FROM users WHERE id = memberships.user_id) AS "username",
-          (SELECT nickname FROM users WHERE id = memberships.user_id) AS "userNickname",
-          (SELECT avatar_attachment_id FROM users WHERE id = memberships.user_id) AS "avatarAttachmentId",
-          (SELECT presence_status FROM users WHERE id = memberships.user_id) AS "presenceStatus"
-      `;
 
-      return updated;
+      return this.serversRepo.updateMembershipStatus(tx, serverId, membershipId, nextStatus);
     });
     const refreshed = dto.action === 'remove'
       ? member
-      : await this.getMemberRowById(serverId, membershipId);
+      : await this.getMemberRowByIdOrThrow(serverId, membershipId);
     const summary = toMemberSummary(refreshed);
 
     await this.auditService.record({
@@ -599,7 +441,7 @@ export class ServersService {
   ): Promise<ReturnType<typeof toRoleSummary>[]> {
     await this.getActiveServerMembership(user.userId, serverId);
 
-    return (await this.listRoleRows(serverId)).map(toRoleSummary);
+    return (await this.serversRepo.listRoleRows(serverId)).map(toRoleSummary);
   }
 
   async createRole(
@@ -622,29 +464,16 @@ export class ServersService {
       { desiredPermissionBits: permissionBits, desiredPriority: priority },
       requestId,
     );
-    const [role] = await this.prisma.$queryRaw<RoleRow[]>`
-      INSERT INTO roles (id, server_id, name, permission_bits, color, priority, is_default)
-      VALUES (
-        ${randomUUID()}::uuid,
-        ${serverId}::uuid,
-        ${name},
-        ${permissionBits},
-        ${normalizeNullableText(dto.color)},
-        ${priority},
-        false
-      )
-      RETURNING
-        id,
-        server_id AS "serverId",
-        name,
-        permission_bits AS "permissionBits",
-        color,
-        priority,
-        is_default AS "isDefault"
-    `;
+    const role = await this.serversRepo.insertRole({
+      color: normalizeNullableText(dto.color),
+      name,
+      permissionBits,
+      priority,
+      serverId,
+    });
 
     await this.auditRoleChange(user.userId, 'CreateRole', role.id, requestId);
-    await this.publishPermissionChanged(serverId, 'role', role.id, await this.listServerUserIds(serverId), requestId);
+    await this.publishPermissionChanged(serverId, 'role', role.id, await this.serversRepo.listServerUserIds(serverId), requestId);
 
     return toRoleSummary(role);
   }
@@ -655,7 +484,7 @@ export class ServersService {
     dto: UpdateRoleDto,
     requestId?: string,
   ): Promise<ReturnType<typeof toRoleSummary>> {
-    const existing = await this.getRoleRow(roleId);
+    const existing = await this.serversRepo.getRoleRow(roleId);
 
     if (!existing) {
       throw new AppError(ErrorCode.ResourceNotFound, 'Role was not found.', HttpStatus.NOT_FOUND);
@@ -688,31 +517,20 @@ export class ServersService {
       },
       requestId,
     );
-    const [role] = await this.prisma.$queryRaw<RoleRow[]>`
-      UPDATE roles
-      SET
-        name = ${name},
-        permission_bits = ${permissionBits},
-        color = ${dto.color !== undefined ? normalizeNullableText(dto.color) : existing.color},
-        priority = ${priority},
-        updated_at = NOW()
-      WHERE id = ${roleId}::uuid
-      RETURNING
-        id,
-        server_id AS "serverId",
-        name,
-        permission_bits AS "permissionBits",
-        color,
-        priority,
-        is_default AS "isDefault"
-    `;
+    const role = await this.serversRepo.updateRoleRow({
+      color: dto.color !== undefined ? normalizeNullableText(dto.color) : existing.color,
+      name,
+      permissionBits,
+      priority,
+      roleId,
+    });
 
     await this.auditRoleChange(user.userId, 'UpdateRole', role.id, requestId);
     await this.publishPermissionChanged(
       role.serverId,
       'role',
       role.id,
-      await this.listServerUserIds(role.serverId),
+      await this.serversRepo.listServerUserIds(role.serverId),
       requestId,
     );
 
@@ -724,7 +542,7 @@ export class ServersService {
     roleId: string,
     requestId?: string,
   ): Promise<{ ok: true }> {
-    const existing = await this.getRoleRow(roleId);
+    const existing = await this.serversRepo.getRoleRow(roleId);
 
     if (!existing) {
       throw new AppError(ErrorCode.ResourceNotFound, 'Role was not found.', HttpStatus.NOT_FOUND);
@@ -741,16 +559,13 @@ export class ServersService {
       throw new AppError(ErrorCode.Conflict, 'Default role cannot be deleted.', HttpStatus.CONFLICT);
     }
 
-    await this.prisma.$executeRaw`
-      DELETE FROM roles
-      WHERE id = ${roleId}::uuid
-    `;
+    await this.serversRepo.deleteRoleRow(roleId);
     await this.auditRoleChange(user.userId, 'DeleteRole', roleId, requestId);
     await this.publishPermissionChanged(
       existing.serverId,
       'role',
       roleId,
-      await this.listServerUserIds(existing.serverId),
+      await this.serversRepo.listServerUserIds(existing.serverId),
       requestId,
     );
 
@@ -771,12 +586,8 @@ export class ServersService {
       dto.role_id,
       requestId,
     );
-    await this.prisma.$executeRaw`
-      INSERT INTO membership_roles (membership_id, role_id, assigned_by_id)
-      VALUES (${membershipId}::uuid, ${dto.role_id}::uuid, ${user.userId}::uuid)
-      ON CONFLICT (membership_id, role_id) DO NOTHING
-    `;
-    const member = await this.getMemberRowById(serverId, membershipId);
+    await this.serversRepo.insertMembershipRoleViaPrisma(membershipId, dto.role_id, user.userId);
+    const member = await this.getMemberRowByIdOrThrow(serverId, membershipId);
 
     await this.auditRoleChange(user.userId, 'AssignRole', dto.role_id, requestId, membershipId);
     this.publishMemberChanged(serverId, membershipId, 'role_assigned', toMemberSummary(member), requestId);
@@ -818,12 +629,8 @@ export class ServersService {
       throw new AppError(ErrorCode.Conflict, 'Default role cannot be removed from members.', HttpStatus.CONFLICT);
     }
 
-    await this.prisma.$executeRaw`
-      DELETE FROM membership_roles
-      WHERE membership_id = ${membershipId}::uuid
-        AND role_id = ${roleId}::uuid
-    `;
-    const member = await this.getMemberRowById(serverId, membershipId);
+    await this.serversRepo.deleteMembershipRole(membershipId, roleId);
+    const member = await this.getMemberRowByIdOrThrow(serverId, membershipId);
 
     await this.auditRoleChange(user.userId, 'RemoveRole', roleId, requestId, membershipId);
     this.publishMemberChanged(serverId, membershipId, 'role_removed', toMemberSummary(member), requestId);
@@ -846,190 +653,11 @@ export class ServersService {
     return toMemberSummary(member);
   }
 
-  private async getInvitationForUpdate(
-    tx: RawSqlExecutor,
-    inviteCode: string,
-  ): Promise<InvitationRow | null> {
-    const [invitation] = await tx.$queryRaw<InvitationRow[]>`
-      SELECT
-        i.id,
-        i.server_id AS "serverId",
-        i.code,
-        i.expires_at AS "expiresAt",
-        i.max_uses AS "maxUses",
-        i.used_count AS "usedCount",
-        i.status,
-        s.status AS "serverStatus"
-      FROM invitations i
-      INNER JOIN servers s ON s.id = i.server_id
-      WHERE i.code = ${inviteCode}
-      LIMIT 1
-      FOR UPDATE OF i
-    `;
-
-    return invitation ?? null;
-  }
-
-  private async getDefaultRole(tx: RawSqlExecutor, serverId: string): Promise<RoleRow> {
-    const [role] = await tx.$queryRaw<RoleRow[]>`
-      SELECT
-        id,
-        server_id AS "serverId",
-        name,
-        permission_bits AS "permissionBits",
-        color,
-        priority,
-        is_default AS "isDefault"
-      FROM roles
-      WHERE server_id = ${serverId}::uuid
-        AND is_default = true
-      LIMIT 1
-    `;
-
-    if (!role) {
-      throw new AppError(
-        ErrorCode.InternalError,
-        'Default server role is missing.',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
-
-    return role;
-  }
-
-  private async getMembershipForUpdate(
-    tx: RawSqlExecutor,
-    serverId: string,
-    userId: string,
-  ): Promise<MembershipLookupRow | null> {
-    const [membership] = await tx.$queryRaw<MembershipLookupRow[]>`
-      SELECT
-        id,
-        server_id AS "serverId",
-        user_id AS "userId",
-        member_status AS "memberStatus"
-      FROM memberships
-      WHERE server_id = ${serverId}::uuid
-        AND user_id = ${userId}::uuid
-      LIMIT 1
-      FOR UPDATE
-    `;
-
-    return membership ?? null;
-  }
-
-  private async createMembership(
-    tx: RawSqlExecutor,
-    serverId: string,
-    userId: string,
-  ): Promise<MembershipLookupRow> {
-    const [membership] = await tx.$queryRaw<MembershipLookupRow[]>`
-      INSERT INTO memberships (id, server_id, user_id, nick_in_server, member_status)
-      SELECT
-        ${randomUUID()}::uuid,
-        ${serverId}::uuid,
-        ${userId}::uuid,
-        u.nickname,
-        'active'
-      FROM users u
-      WHERE u.id = ${userId}::uuid
-      RETURNING
-        id,
-        server_id AS "serverId",
-        user_id AS "userId",
-        member_status AS "memberStatus"
-    `;
-
-    return membership;
-  }
-
-  private async restoreMembership(
-    tx: RawSqlExecutor,
-    membershipId: string,
-    userId: string,
-  ): Promise<MembershipLookupRow> {
-    const [membership] = await tx.$queryRaw<MembershipLookupRow[]>`
-      UPDATE memberships
-      SET
-        member_status = 'active',
-        nick_in_server = (SELECT nickname FROM users WHERE id = ${userId}::uuid),
-        joined_at = NOW(),
-        updated_at = NOW()
-      WHERE id = ${membershipId}::uuid
-      RETURNING
-        id,
-        server_id AS "serverId",
-        user_id AS "userId",
-        member_status AS "memberStatus"
-    `;
-
-    return membership;
-  }
-
-  private async getServerMembershipForUpdate(
-    tx: RawSqlExecutor,
-    serverId: string,
-    userId: string,
-  ): Promise<ServerMembershipRow | null> {
-    const [membership] = await tx.$queryRaw<ServerMembershipRow[]>`
-      SELECT
-        s.id,
-        s.owner_id AS "ownerId",
-        s.name,
-        s.icon_attachment_id AS "iconAttachmentId",
-        s.description,
-        s.status,
-        s.created_at AS "createdAt",
-        m.id AS "membershipId",
-        m.member_status AS "membershipStatus"
-      FROM memberships m
-      INNER JOIN servers s ON s.id = m.server_id
-      WHERE m.server_id = ${serverId}::uuid
-        AND m.user_id = ${userId}::uuid
-        AND m.member_status IN ('active', 'muted')
-        AND s.status = 'active'
-      LIMIT 1
-      FOR UPDATE OF m
-    `;
-
-    return membership ?? null;
-  }
-
   private async getActiveServerMembership(
     userId: string,
     serverId: string,
   ): Promise<ServerRow & MemberRow> {
-    const [membership] = await this.prisma.$queryRaw<Array<ServerRow & MemberRow>>`
-      SELECT
-        s.id,
-        s.owner_id AS "ownerId",
-        s.name,
-        s.icon_attachment_id AS "iconAttachmentId",
-        s.description,
-        s.status,
-        s.created_at AS "createdAt",
-        m.id AS "membershipId",
-        m.server_id AS "serverId",
-        m.user_id AS "userId",
-        m.nick_in_server AS "nickInServer",
-        m.member_status AS "memberStatus",
-        m.joined_at AS "joinedAt",
-        COALESCE(array_agg(mr.role_id::text) FILTER (WHERE mr.role_id IS NOT NULL), ARRAY[]::text[]) AS "roleIds",
-        u.username,
-        u.nickname AS "userNickname",
-        u.avatar_attachment_id AS "avatarAttachmentId",
-        u.presence_status AS "presenceStatus"
-      FROM memberships m
-      INNER JOIN servers s ON s.id = m.server_id
-      INNER JOIN users u ON u.id = m.user_id
-      LEFT JOIN membership_roles mr ON mr.membership_id = m.id
-      WHERE m.server_id = ${serverId}::uuid
-        AND m.user_id = ${userId}::uuid
-        AND m.member_status IN ('active', 'muted')
-        AND s.status = 'active'
-      GROUP BY s.id, m.id, u.id
-      LIMIT 1
-    `;
+    const membership = await this.serversRepo.getActiveServerMembership(userId, serverId);
 
     if (!membership) {
       throw new AppError(
@@ -1046,21 +674,7 @@ export class ServersService {
     user: AuthenticatedUserContext,
     serverId: string,
   ): Promise<ReturnType<typeof toChannelSummary>[]> {
-    const rows = await this.prisma.$queryRaw<ChannelRow[]>`
-      SELECT
-        id,
-        server_id AS "serverId",
-        name,
-        type,
-        topic,
-        sort_order AS "sortOrder",
-        status,
-        created_at AS "createdAt"
-      FROM channels
-      WHERE server_id = ${serverId}::uuid
-        AND status = 'active'
-      ORDER BY sort_order ASC, created_at ASC
-    `;
+    const rows = await this.serversRepo.listActiveChannelsByServer(serverId);
     const visibleChannels: ChannelRow[] = [];
 
     for (const channel of rows) {
@@ -1075,7 +689,9 @@ export class ServersService {
       }
     }
 
-    const overwrites = await this.listPermissionOverwritesForChannels(visibleChannels.map((row) => row.id));
+    const overwrites = await this.serversRepo.listPermissionOverwritesForChannels(
+      visibleChannels.map((row) => row.id),
+    );
 
     return visibleChannels.map((channel) =>
       toChannelSummary(
@@ -1085,113 +701,17 @@ export class ServersService {
     );
   }
 
-  private async listRoleRows(serverId: string): Promise<RoleRow[]> {
-    return this.prisma.$queryRaw<RoleRow[]>`
-      SELECT
-        id,
-        server_id AS "serverId",
-        name,
-        permission_bits AS "permissionBits",
-        color,
-        priority,
-        is_default AS "isDefault"
-      FROM roles
-      WHERE server_id = ${serverId}::uuid
-      ORDER BY priority DESC, created_at ASC
-    `;
-  }
-
-  private async listPermissionOverwritesForChannels(
-    channelIds: string[],
-  ): Promise<PermissionOverwriteRow[]> {
-    if (channelIds.length === 0) {
-      return [];
-    }
-
-    return this.prisma.$queryRaw<PermissionOverwriteRow[]>`
-      SELECT
-        id,
-        channel_id AS "channelId",
-        target_type AS "targetType",
-        target_id AS "targetId",
-        allow_bits AS "allowBits",
-        deny_bits AS "denyBits"
-      FROM permission_overwrites
-      WHERE channel_id = ANY(${channelIds}::uuid[])
-      ORDER BY target_type ASC, created_at ASC
-    `;
-  }
-
-  private async listServerMembersRows(serverId: string): Promise<MemberRow[]> {
-    return this.prisma.$queryRaw<MemberRow[]>`
-      SELECT
-        m.id AS "membershipId",
-        m.server_id AS "serverId",
-        m.user_id AS "userId",
-        m.nick_in_server AS "nickInServer",
-        m.member_status AS "memberStatus",
-        m.joined_at AS "joinedAt",
-        COALESCE(array_agg(mr.role_id::text) FILTER (WHERE mr.role_id IS NOT NULL), ARRAY[]::text[]) AS "roleIds",
-        u.username,
-        u.nickname AS "userNickname",
-        u.avatar_attachment_id AS "avatarAttachmentId",
-        u.presence_status AS "presenceStatus"
-      FROM memberships m
-      INNER JOIN users u ON u.id = m.user_id
-      LEFT JOIN membership_roles mr ON mr.membership_id = m.id
-      WHERE m.server_id = ${serverId}::uuid
-        AND m.member_status IN ('active', 'muted')
-      GROUP BY m.id, u.id
-      ORDER BY m.joined_at ASC
-    `;
-  }
-
-  private async getMemberRowById(serverId: string, membershipId: string): Promise<MemberRow> {
-    const [member] = await this.prisma.$queryRaw<MemberRow[]>`
-      SELECT
-        m.id AS "membershipId",
-        m.server_id AS "serverId",
-        m.user_id AS "userId",
-        m.nick_in_server AS "nickInServer",
-        m.member_status AS "memberStatus",
-        m.joined_at AS "joinedAt",
-        COALESCE(array_agg(mr.role_id::text) FILTER (WHERE mr.role_id IS NOT NULL), ARRAY[]::text[]) AS "roleIds",
-        u.username,
-        u.nickname AS "userNickname",
-        u.avatar_attachment_id AS "avatarAttachmentId",
-        u.presence_status AS "presenceStatus"
-      FROM memberships m
-      INNER JOIN users u ON u.id = m.user_id
-      LEFT JOIN membership_roles mr ON mr.membership_id = m.id
-      WHERE m.server_id = ${serverId}::uuid
-        AND m.id = ${membershipId}::uuid
-      GROUP BY m.id, u.id
-      LIMIT 1
-    `;
+  private async getMemberRowByIdOrThrow(
+    serverId: string,
+    membershipId: string,
+  ): Promise<MemberRow> {
+    const member = await this.serversRepo.getMemberRowById(serverId, membershipId);
 
     if (!member) {
       throw new AppError(ErrorCode.ResourceNotFound, 'Server member was not found.', HttpStatus.NOT_FOUND);
     }
 
     return member;
-  }
-
-  private async getRoleRow(roleId: string): Promise<RoleRow | null> {
-    const [role] = await this.prisma.$queryRaw<RoleRow[]>`
-      SELECT
-        id,
-        server_id AS "serverId",
-        name,
-        permission_bits AS "permissionBits",
-        color,
-        priority,
-        is_default AS "isDefault"
-      FROM roles
-      WHERE id = ${roleId}::uuid
-      LIMIT 1
-    `;
-
-    return role ?? null;
   }
 
   private async auditRoleChange(
@@ -1270,24 +790,8 @@ export class ServersService {
     );
   }
 
-  private async listServerUserIds(serverId: string): Promise<string[]> {
-    const rows = await this.prisma.$queryRaw<ServerUserRow[]>`
-      SELECT user_id AS "userId"
-      FROM memberships
-      WHERE server_id = ${serverId}::uuid
-        AND member_status IN ('active', 'muted')
-    `;
-
-    return rows.map((row) => row.userId);
-  }
-
   private async forceMemberLeaveServerRooms(serverId: string, userId: string): Promise<void> {
-    const channels = await this.prisma.$queryRaw<Array<{ id: string; type: string }>>`
-      SELECT id, type
-      FROM channels
-      WHERE server_id = ${serverId}::uuid
-        AND status = 'active'
-    `;
+    const channels = await this.serversRepo.listServerChannels(serverId);
     const rooms = [
       buildRealtimeRoom('server', serverId),
       ...channels.map((channel) => buildRealtimeRoom('channel', channel.id)),

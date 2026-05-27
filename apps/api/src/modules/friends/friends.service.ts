@@ -7,6 +7,7 @@ import { ErrorCode } from '@eiscord/shared';
 import { AuthenticatedUserContext } from '../../common/auth/auth.types';
 import { AppError } from '../../common/errors/app-error';
 import { PrismaService } from '../../common/persistence/prisma.service';
+import type { RawSqlExecutor } from '../../common/persistence/types';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CreateFriendRequestDto } from './dto/create-friend-request.dto';
@@ -40,8 +41,6 @@ type FriendshipLookupRow = {
   id: string;
   status: string;
 };
-
-type RawSqlExecutor = Pick<PrismaService, '$executeRaw' | '$queryRaw'>;
 
 @Injectable()
 export class FriendsService {

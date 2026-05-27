@@ -1,5 +1,3 @@
-import { randomUUID } from 'node:crypto';
-
 import { HttpStatus, Injectable } from '@nestjs/common';
 
 import { ErrorCode, RealtimeEvent } from '@eiscord/shared';
@@ -7,6 +5,7 @@ import { ErrorCode, RealtimeEvent } from '@eiscord/shared';
 import { AuthenticatedUserContext } from '../../common/auth/auth.types';
 import { AppError } from '../../common/errors/app-error';
 import { PrismaService } from '../../common/persistence/prisma.service';
+import type { RawSqlExecutor } from '../../common/persistence/types';
 import { PermissionAction } from '../../common/permissions/permission.types';
 import { PermissionsService } from '../../common/permissions/permissions.service';
 import { AuditService } from '../audit/audit.service';
@@ -20,27 +19,19 @@ import {
   PermissionOverwriteRow,
   toChannelSummary,
 } from './channels.presenter';
+import {
+  ChannelsRepository,
+  type NormalizedPermissionOverwrite,
+} from './channels.repository';
 import { CreateChannelDto } from './dto/create-channel.dto';
 import { PermissionOverwriteDto } from './dto/permission-overwrite.dto';
 import { UpdateChannelDto } from './dto/update-channel.dto';
-
-type RawSqlExecutor = Pick<PrismaService, '$executeRaw' | '$queryRaw'>;
-
-type NormalizedPermissionOverwrite = {
-  allowBits: bigint;
-  denyBits: bigint;
-  targetId: string;
-  targetType: 'member' | 'role';
-};
-
-type ServerUserRow = {
-  userId: string;
-};
 
 @Injectable()
 export class ChannelsService {
   constructor(
     private readonly auditService: AuditService,
+    private readonly channelsRepo: ChannelsRepository,
     private readonly notificationsService: NotificationsService,
     private readonly permissionsService: PermissionsService,
     private readonly prisma: PrismaService,
@@ -73,36 +64,15 @@ export class ChannelsService {
       user,
     });
     const result = await this.prisma.$transaction(async (tx) => {
-      const [created] = await tx.$queryRaw<ChannelRow[]>`
-        INSERT INTO channels (id, server_id, name, type, topic, sort_order, status)
-        VALUES (
-          ${randomUUID()}::uuid,
-          ${serverId}::uuid,
-          ${name},
-          ${dto.type},
-          ${normalizeNullableText(dto.topic)},
-          ${dto.sort_order ?? 0},
-          'active'
-        )
-        RETURNING
-          id,
-          server_id AS "serverId",
-          name,
-          type,
-          topic,
-          sort_order AS "sortOrder",
-          status,
-          created_at AS "createdAt"
-      `;
+      const created = await this.channelsRepo.insertChannel(tx, {
+        name,
+        serverId,
+        sortOrder: dto.sort_order ?? 0,
+        topic: normalizeNullableText(dto.topic),
+        type: dto.type,
+      });
 
-      await tx.$executeRaw`
-        INSERT INTO read_states (id, user_id, scope_type, channel_id, last_read_message_id, unread_count)
-        SELECT gen_random_uuid(), m.user_id, 'channel', ${created.id}::uuid, null, 0
-        FROM memberships m
-        WHERE m.server_id = ${serverId}::uuid
-          AND m.member_status IN ('active', 'muted')
-        ON CONFLICT (user_id, channel_id) DO NOTHING
-      `;
+      await this.channelsRepo.seedChannelReadStates(tx, created.id, serverId);
 
       const permissionOverwrites = await this.replacePermissionOverwrites(
         tx,
@@ -160,28 +130,15 @@ export class ChannelsService {
     }
 
     const result = await this.prisma.$transaction(async (tx) => {
-      const [updated] = await tx.$queryRaw<ChannelRow[]>`
-        UPDATE channels
-        SET
-          name = ${name},
-          type = ${dto.type ?? current.type},
-          topic = ${dto.topic !== undefined ? normalizeNullableText(dto.topic) : current.topic},
-          sort_order = ${dto.sort_order ?? current.sortOrder},
-          updated_at = NOW()
-        WHERE id = ${channelId}::uuid
-        RETURNING
-          id,
-          server_id AS "serverId",
-          name,
-          type,
-          topic,
-          sort_order AS "sortOrder",
-          status,
-          created_at AS "createdAt"
-      `;
+      const updated = await this.channelsRepo.updateChannel(tx, channelId, {
+        name,
+        sortOrder: dto.sort_order ?? current.sortOrder,
+        topic: dto.topic !== undefined ? normalizeNullableText(dto.topic) : current.topic,
+        type: dto.type ?? current.type,
+      });
       const permissionOverwrites =
         overwrites === undefined
-          ? await this.listPermissionOverwrites(tx, channelId)
+          ? await this.channelsRepo.listPermissionOverwrites(tx, channelId)
           : await this.replacePermissionOverwrites(tx, channelId, updated.serverId, overwrites);
 
       return { channel: updated, permissionOverwrites };
@@ -216,20 +173,7 @@ export class ChannelsService {
       user,
     });
     const current = await this.getActiveChannel(channelId, 'DeleteChannel', user.userId, requestId);
-    const [deleted] = await this.prisma.$queryRaw<ChannelRow[]>`
-      UPDATE channels
-      SET status = 'deleted', updated_at = NOW()
-      WHERE id = ${channelId}::uuid
-      RETURNING
-        id,
-        server_id AS "serverId",
-        name,
-        type,
-        topic,
-        sort_order AS "sortOrder",
-        status,
-        created_at AS "createdAt"
-    `;
+    const deleted = await this.channelsRepo.markChannelDeleted(channelId);
 
     await this.auditService.record({
       action: 'DeleteChannel',
@@ -258,27 +202,7 @@ export class ChannelsService {
     userId: string,
     requestId?: string,
   ): Promise<ChannelRow> {
-    const [channel] = await this.prisma.$queryRaw<ChannelRow[]>`
-      SELECT
-        c.id,
-        c.server_id AS "serverId",
-        c.name,
-        c.type,
-        c.topic,
-        c.sort_order AS "sortOrder",
-        c.status,
-        c.created_at AS "createdAt"
-      FROM channels c
-      INNER JOIN servers s ON s.id = c.server_id
-      INNER JOIN memberships m
-        ON m.server_id = c.server_id
-       AND m.user_id = ${userId}::uuid
-      WHERE c.id = ${channelId}::uuid
-        AND c.status = 'active'
-        AND s.status = 'active'
-        AND m.member_status IN ('active', 'muted')
-      LIMIT 1
-    `;
+    const channel = await this.channelsRepo.findActiveChannelForMember(channelId, userId);
 
     if (!channel) {
       await this.recordFailure(action, userId, channelId, 'channel_not_found_or_forbidden', requestId);
@@ -299,33 +223,13 @@ export class ChannelsService {
     overwrites: NormalizedPermissionOverwrite[],
   ): Promise<PermissionOverwriteRow[]> {
     await this.validatePermissionOverwriteTargets(tx, serverId, overwrites);
-    await tx.$executeRaw`
-      DELETE FROM permission_overwrites
-      WHERE channel_id = ${channelId}::uuid
-    `;
+    await this.channelsRepo.deletePermissionOverwrites(tx, channelId);
 
     for (const overwrite of overwrites) {
-      await tx.$executeRaw`
-        INSERT INTO permission_overwrites (
-          id,
-          channel_id,
-          target_type,
-          target_id,
-          allow_bits,
-          deny_bits
-        )
-        VALUES (
-          gen_random_uuid(),
-          ${channelId}::uuid,
-          ${overwrite.targetType},
-          ${overwrite.targetId}::uuid,
-          ${overwrite.allowBits},
-          ${overwrite.denyBits}
-        )
-      `;
+      await this.channelsRepo.insertPermissionOverwrite(tx, channelId, overwrite);
     }
 
-    return this.listPermissionOverwrites(tx, channelId);
+    return this.channelsRepo.listPermissionOverwrites(tx, channelId);
   }
 
   private async validatePermissionOverwriteTargets(
@@ -335,13 +239,7 @@ export class ChannelsService {
   ): Promise<void> {
     for (const overwrite of overwrites) {
       if (overwrite.targetType === 'role') {
-        const [role] = await tx.$queryRaw<{ id: string }[]>`
-          SELECT id
-          FROM roles
-          WHERE id = ${overwrite.targetId}::uuid
-            AND server_id = ${serverId}::uuid
-          LIMIT 1
-        `;
+        const role = await this.channelsRepo.findRoleInServer(tx, overwrite.targetId, serverId);
 
         if (!role) {
           throw new AppError(
@@ -351,14 +249,11 @@ export class ChannelsService {
           );
         }
       } else {
-        const [member] = await tx.$queryRaw<{ id: string }[]>`
-          SELECT id
-          FROM memberships
-          WHERE id = ${overwrite.targetId}::uuid
-            AND server_id = ${serverId}::uuid
-            AND member_status IN ('active', 'muted')
-          LIMIT 1
-        `;
+        const member = await this.channelsRepo.findActiveMembership(
+          tx,
+          overwrite.targetId,
+          serverId,
+        );
 
         if (!member) {
           throw new AppError(
@@ -369,24 +264,6 @@ export class ChannelsService {
         }
       }
     }
-  }
-
-  private async listPermissionOverwrites(
-    tx: RawSqlExecutor,
-    channelId: string,
-  ): Promise<PermissionOverwriteRow[]> {
-    return tx.$queryRaw<PermissionOverwriteRow[]>`
-      SELECT
-        id,
-        channel_id AS "channelId",
-        target_type AS "targetType",
-        target_id AS "targetId",
-        allow_bits AS "allowBits",
-        deny_bits AS "denyBits"
-      FROM permission_overwrites
-      WHERE channel_id = ${channelId}::uuid
-      ORDER BY target_type ASC, created_at ASC
-    `;
   }
 
   private publishChannelChanged(
@@ -413,7 +290,7 @@ export class ChannelsService {
     requestId?: string,
   ) {
     const [serverUsers, allowedUsers] = await Promise.all([
-      this.listServerUserIds(channel.serverId),
+      this.channelsRepo.listServerActiveUserIds(channel.serverId),
       this.permissionsService.listUsersWithChannelPermission(channel.id, PermissionAction.ViewChannel),
     ]);
     const deniedUsers = serverUsers.filter((userId) => !allowedUsers.includes(userId));
@@ -459,17 +336,6 @@ export class ChannelsService {
         this.notificationsService.publishCreated(notifResult.notification, requestId);
       }
     }
-  }
-
-  private async listServerUserIds(serverId: string): Promise<string[]> {
-    const rows = await this.prisma.$queryRaw<ServerUserRow[]>`
-      SELECT user_id AS "userId"
-      FROM memberships
-      WHERE server_id = ${serverId}::uuid
-        AND member_status IN ('active', 'muted')
-    `;
-
-    return rows.map((row) => row.userId);
   }
 
   private async recordFailure(
