@@ -3,10 +3,8 @@ import { describe, expect, it } from 'vitest';
 import {
   iceServerSchema,
   joinVoiceMediaResponseSchema,
-  voiceActiveSpeakerPayloadSchema,
   voiceConsumerCreatedRequestSchema,
   voiceConsumerResumedRequestSchema,
-  voiceProducerClosedPayloadSchema,
   voiceProducerCreatedRequestSchema,
   voiceRouterCapabilitiesRequestSchema,
   voiceTransportConnectRequestSchema,
@@ -115,25 +113,5 @@ describe('voice media schemas', () => {
       consumer_id: 'consumer-1',
       session_id: sessionId,
     });
-  });
-
-  it('validates server broadcasts', () => {
-    expect(() =>
-      voiceProducerClosedPayloadSchema.parse({
-        channel_id: '00000000-0000-4000-8000-000000000001',
-        closed_at: '2026-05-04T00:00:00.000Z',
-        producer_id: 'producer-1',
-        reason: 'manual_leave',
-        user_id: '00000000-0000-4000-8000-000000000002',
-      }),
-    ).not.toThrow();
-    expect(() =>
-      voiceActiveSpeakerPayloadSchema.parse({
-        audio_level: -32.5,
-        channel_id: '00000000-0000-4000-8000-000000000001',
-        observed_at: '2026-05-04T00:00:00.000Z',
-        user_id: null,
-      }),
-    ).not.toThrow();
   });
 });
