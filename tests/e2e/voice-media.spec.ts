@@ -147,12 +147,12 @@ test.describe('voice media — worker kill recovery (AC-E8, gated)', () => {
       const recoveryDeadline = 5_000;
       await expect(alice.page.getByTestId('voice-status')).toHaveAttribute(
         'data-voice-status',
-        'connected',
+        'CONNECTED',
         { timeout: recoveryDeadline + 5_000 },
       );
       await expect(bob.page.getByTestId('voice-status')).toHaveAttribute(
         'data-voice-status',
-        'connected',
+        'CONNECTED',
         { timeout: recoveryDeadline + 5_000 },
       );
 

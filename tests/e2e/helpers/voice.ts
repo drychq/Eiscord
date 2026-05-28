@@ -45,12 +45,12 @@ export type JoinTimings = {
   totalMs: number;
 };
 
-/** Clicks 加入语音 and waits until voice-client status === 'connected'. */
+/** Clicks 加入语音 and waits until voice-client status === 'CONNECTED'. */
 export async function joinVoiceAndAwaitConnected(page: Page, timeoutMs = 10_000): Promise<JoinTimings> {
   const startedAt = Date.now();
   await page.getByTestId('voice-join').click();
 
-  await expect(page.getByTestId('voice-status')).toHaveAttribute('data-voice-status', 'connected', {
+  await expect(page.getByTestId('voice-status')).toHaveAttribute('data-voice-status', 'CONNECTED', {
     timeout: timeoutMs,
   });
 
