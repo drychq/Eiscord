@@ -1,6 +1,9 @@
 export { ServerChannelsPage } from './ServerChannelsPage';
 export { ServerVoicePage } from './ServerVoicePage';
-export { ServerSettingsPage } from './ServerSettingsPage';
+export { ServerSettingsLayout } from './settings/ServerSettingsLayout';
+export { RolesTab } from './settings/RolesTab';
+export { MembersTab } from './settings/MembersTab';
+export { ChannelsTab } from './settings/ChannelsTab';
 export {
   useServersList,
   useServerDetail,

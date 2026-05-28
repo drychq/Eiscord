@@ -11,7 +11,10 @@ import { MessagesPage } from '../features/messages/MessagesPage';
 import { NotificationsPage } from '../features/notifications/NotificationsPage';
 import { ServerChannelsPage } from '../features/servers/ServerChannelsPage';
 import { ServerVoicePage } from '../features/servers/ServerVoicePage';
-import { ServerSettingsPage } from '../features/servers/ServerSettingsPage';
+import { ServerSettingsLayout } from '../features/servers/settings/ServerSettingsLayout';
+import { RolesTab } from '../features/servers/settings/RolesTab';
+import { MembersTab } from '../features/servers/settings/MembersTab';
+import { ChannelsTab } from '../features/servers/settings/ChannelsTab';
 import { useWorkspaceStore } from '../shared/state/use-workspace-store';
 
 function RecentRedirect() {
@@ -68,7 +71,12 @@ export function AppRouter() {
         <Route path="dm/:conversationId" element={<MessagesPage />} />
         <Route path="servers/:serverId/channels/:channelId" element={<ServerChannelsPage />} />
         <Route path="servers/:serverId/voice/:channelId" element={<ServerVoicePage />} />
-        <Route path="servers/:serverId/settings" element={<ServerSettingsPage />} />
+        <Route path="servers/:serverId/settings" element={<ServerSettingsLayout />}>
+          <Route index element={<Navigate to="roles" replace />} />
+          <Route path="roles" element={<RolesTab />} />
+          <Route path="members" element={<MembersTab />} />
+          <Route path="channels" element={<ChannelsTab />} />
+        </Route>
         <Route path="notifications" element={<NotificationsPage />} />
         <Route path="*" element={<Navigate to="friends" replace />} />
       </Route>
