@@ -21,11 +21,6 @@ export const DEFAULT_MEMBER_PERMISSION_BITS =
   PermissionBit.SpeakVoice |
   PermissionBit.ListenVoice;
 
-export const ALL_PERMISSION_BITS = Object.values(PermissionBit).reduce(
-  (bits, bit) => bits | bit,
-  0,
-);
-
 export function combinePermissionBits(bits: PermissionBit[]): number {
   return bits.reduce((combined, bit) => combined | bit, 0);
 }
