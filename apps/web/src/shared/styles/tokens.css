@@ -62,7 +62,6 @@
   --radius-lg:   12px;
   --radius-xl:   16px;
   --radius-pill: 999px;
-  --radius-control: var(--radius-md); /* legacy alias */
 
   /* ── Typography ── */
   --font-sans: "Inter Variable", Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -200,12 +199,4 @@
   --gradient-auth: linear-gradient(135deg, #edf4f1 0%, #eceeeb 100%);
 
   color-scheme: light;
-}
-
-/* ── Legacy aliases (kept for incremental migration) ── */
-:root {
-  --color-accent:  var(--palette-teal-600);
-  --color-warning: var(--palette-amber-500);
-  --color-ink:     #242424;
-  --color-panel:   #eceeeb;
 }
