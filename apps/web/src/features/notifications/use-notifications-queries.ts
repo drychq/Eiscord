@@ -1,5 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { RealtimeEvent } from '@eiscord/shared';
 import { useToastStore } from '../../shared/state/use-toast-store';
+import { useRealtimeSubscription } from '../../shared/api/realtime-registry';
 import { formatErrorMessage } from '../../shared/utils/error-message';
 import {
   fetchNotifications,
@@ -28,5 +30,13 @@ export function useMarkNotificationsRead() {
     onError: (error) => {
       pushToast({ kind: 'error', message: formatErrorMessage(error), ttl: 5000 });
     },
+  });
+}
+
+export function useNotificationsRealtime() {
+  const queryClient = useQueryClient();
+
+  useRealtimeSubscription(RealtimeEvent.NotificationCreated, () => {
+    queryClient.invalidateQueries({ queryKey: ['notifications'] });
   });
 }

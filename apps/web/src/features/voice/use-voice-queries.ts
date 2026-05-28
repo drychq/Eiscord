@@ -1,7 +1,11 @@
+import { useCallback } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { RealtimeEvent } from '@eiscord/shared';
 
+import { useAuthStore } from '../../shared/state/use-auth-store';
 import { useToastStore } from '../../shared/state/use-toast-store';
 import { useWorkspaceStore } from '../../shared/state/use-workspace-store';
+import { useRealtimeSubscription } from '../../shared/api/realtime-registry';
 import { formatErrorMessage } from '../../shared/utils/error-message';
 import {
   joinVoiceChannel,
@@ -73,4 +77,37 @@ export function useUpdateVoiceState() {
       pushToast({ kind: 'error', message: formatErrorMessage(error), ttl: 5000 });
     },
   });
+}
+
+export function useVoiceRealtime() {
+  const queryClient = useQueryClient();
+
+  const invalidateVoice = useCallback(
+    (payload: unknown) => {
+      const data = payload as { channel_id?: string };
+      if (data.channel_id) {
+        queryClient.invalidateQueries({ queryKey: ['voice', data.channel_id] });
+      }
+    },
+    [queryClient],
+  );
+
+  const handleVoiceLeft = useCallback(
+    (payload: unknown) => {
+      invalidateVoice(payload);
+      const data = payload as { user_id?: string };
+      const currentUserId = useAuthStore.getState().currentUser?.user_id;
+      if (data.user_id && data.user_id === currentUserId) {
+        useWorkspaceStore.getState().setActiveVoiceSession(null);
+      }
+    },
+    [invalidateVoice],
+  );
+
+  useRealtimeSubscription(RealtimeEvent.VoiceMemberJoined, invalidateVoice);
+  useRealtimeSubscription(RealtimeEvent.VoiceStateChanged, invalidateVoice);
+  useRealtimeSubscription(RealtimeEvent.VoiceMemberLeft, handleVoiceLeft);
+  useRealtimeSubscription(RealtimeEvent.VoiceProducerCreated, invalidateVoice);
+  useRealtimeSubscription(RealtimeEvent.VoiceProducerClosed, invalidateVoice);
+  useRealtimeSubscription(RealtimeEvent.VoiceActiveSpeaker, invalidateVoice);
 }

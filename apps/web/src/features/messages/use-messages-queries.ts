@@ -1,5 +1,8 @@
+import { useCallback } from 'react';
 import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { RealtimeEvent } from '@eiscord/shared';
 import { useToastStore } from '../../shared/state/use-toast-store';
+import { useRealtimeSubscription } from '../../shared/api/realtime-registry';
 import { formatErrorMessage } from '../../shared/utils/error-message';
 import {
   fetchChannelMessages,
@@ -99,4 +102,30 @@ export function useDeleteMessage() {
       pushToast({ kind: 'error', message: formatErrorMessage(error), ttl: 5000 });
     },
   });
+}
+
+export function useMessagesRealtime() {
+  const queryClient = useQueryClient();
+
+  const invalidateMessages = useCallback(
+    (payload: unknown) => {
+      const data = payload as {
+        channel_id?: string | null;
+        conversation_id?: string | null;
+      };
+
+      if (data.channel_id) {
+        queryClient.invalidateQueries({ queryKey: ['messages', 'channel', data.channel_id] });
+      }
+
+      if (data.conversation_id) {
+        queryClient.invalidateQueries({ queryKey: ['messages', 'dm', data.conversation_id] });
+      }
+    },
+    [queryClient],
+  );
+
+  useRealtimeSubscription(RealtimeEvent.MessageCreated, invalidateMessages);
+  useRealtimeSubscription(RealtimeEvent.MessageDeleted, invalidateMessages);
+  useRealtimeSubscription(RealtimeEvent.UnreadUpdated, invalidateMessages);
 }

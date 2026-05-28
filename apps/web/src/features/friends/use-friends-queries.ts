@@ -1,5 +1,8 @@
+import { useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { RealtimeEvent } from '@eiscord/shared';
 import { useToastStore } from '../../shared/state/use-toast-store';
+import { useRealtimeSubscription } from '../../shared/api/realtime-registry';
 import { formatErrorMessage } from '../../shared/utils/error-message';
 import {
   fetchFriends,
@@ -75,4 +78,17 @@ export function useRejectFriendRequest() {
       queryClient.invalidateQueries({ queryKey: ['friends'] });
     },
   });
+}
+
+export function useFriendsRealtime() {
+  const queryClient = useQueryClient();
+
+  const invalidatePresence = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ['friends'] });
+    queryClient.invalidateQueries({ queryKey: ['servers'] });
+  }, [queryClient]);
+
+  useRealtimeSubscription(RealtimeEvent.PresenceChanged, invalidatePresence);
+  useRealtimeSubscription(RealtimeEvent.MemberChanged, invalidatePresence);
+  useRealtimeSubscription(RealtimeEvent.MemberJoined, invalidatePresence);
 }

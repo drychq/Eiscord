@@ -10,7 +10,11 @@ import { ProfilePanel } from '../../features/profile/ProfilePanel';
 import { useViewport } from '../hooks/use-viewport';
 import { useAuthStore } from '../state/use-auth-store';
 import { useWorkspaceStore } from '../state/use-workspace-store';
-import { useRealtimeEventSync, useRealtimePermissionSync } from '../hooks/use-realtime-sync';
+import { useRealtimePermissionSync } from '../hooks/use-realtime-sync';
+import { useMessagesRealtime } from '../../features/messages/use-messages-queries';
+import { useNotificationsRealtime } from '../../features/notifications/use-notifications-queries';
+import { useFriendsRealtime } from '../../features/friends/use-friends-queries';
+import { useVoiceRealtime } from '../../features/voice/use-voice-queries';
 import * as socket from '../api/socket-client';
 
 export function AppShell() {
@@ -27,7 +31,10 @@ export function AppShell() {
   } = useWorkspaceStore();
 
   useRealtimePermissionSync();
-  useRealtimeEventSync();
+  useMessagesRealtime();
+  useNotificationsRealtime();
+  useFriendsRealtime();
+  useVoiceRealtime();
 
   useEffect(() => {
     const token = useAuthStore.getState().accessToken;
