@@ -12,13 +12,13 @@ export const VOICE_TEST_IDS = {
   voiceChannel: VOICE_CHANNEL_ID,
 } as const;
 
-/** Logs in via the public login form. Reuses the production form selectors from auth.spec.ts. */
+/** Logs in via the public login form. */
 export async function loginAs(page: Page, username: string, password: string): Promise<void> {
   await page.goto('/login');
-  await page.locator('input[type="text"]').first().fill(username);
-  await page.locator('input[type="password"]').first().fill(password);
+  await page.getByLabel('用户名 / 邮箱 / 手机号').fill(username);
+  await page.getByLabel('密码').fill(password);
   await page.getByRole('button', { name: '登录' }).click();
-  await expect(page).toHaveURL(/\/app/);
+  await expect(page.getByRole('heading', { name: '好友与私聊' })).toBeVisible();
   await page.waitForFunction(() => {
     const raw = window.localStorage.getItem('eiscord:auth');
     if (!raw) return false;
@@ -38,7 +38,9 @@ export async function navigateToVoiceRoom(
   channelId: string = VOICE_CHANNEL_ID,
 ): Promise<void> {
   await page.goto(`/app/servers/${serverId}/voice/${channelId}`);
-  await expect(page.getByTestId('voice-join').or(page.getByTestId('voice-leave'))).toBeVisible({ timeout: 15_000 });
+  await expect(
+    page.getByRole('button', { name: '加入语音' }).or(page.getByRole('button', { name: '离开语音' })),
+  ).toBeVisible({ timeout: 15_000 });
 }
 
 export type JoinTimings = {
@@ -48,7 +50,7 @@ export type JoinTimings = {
 /** Clicks 加入语音 and waits until voice-client status === 'CONNECTED'. */
 export async function joinVoiceAndAwaitConnected(page: Page, timeoutMs = 10_000): Promise<JoinTimings> {
   const startedAt = Date.now();
-  await page.getByTestId('voice-join').click();
+  await page.getByRole('button', { name: '加入语音' }).click();
 
   await expect(page.getByTestId('voice-status')).toHaveAttribute('data-voice-status', 'CONNECTED', {
     timeout: timeoutMs,

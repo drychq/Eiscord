@@ -94,7 +94,7 @@ test.describe('voice media — real audio negotiation (AC-03 / AC-N2 / AC-N6)', 
         .toBeGreaterThan(ACTIVE_DB_FLOOR);
 
       // Mute alice → bob should observe a sharp drop in 1 kHz power within ~1.5s
-      await alice.page.getByTestId('voice-mute').click();
+      await alice.page.getByRole('button', { name: '静音麦克风' }).click();
       await alice.page.waitForTimeout(1500);
       const bobHearsAliceMuted = await measureFrequencyPower(bob.page, VOICE_TEST_IDS.alice, ALICE_TONE_HZ);
       expect(
@@ -103,13 +103,13 @@ test.describe('voice media — real audio negotiation (AC-03 / AC-N2 / AC-N6)', 
       ).toBeGreaterThan(SILENCE_DROP_DB);
 
       // Unmute → tone returns
-      await alice.page.getByTestId('voice-mute').click();
+      await alice.page.getByRole('button', { name: '取消静音' }).click();
       await alice.page.waitForTimeout(1500);
       const bobHearsAliceAfterUnmute = await measureFrequencyPower(bob.page, VOICE_TEST_IDS.alice, ALICE_TONE_HZ);
       expect(bobHearsAliceAfterUnmute).toBeGreaterThan(ACTIVE_DB_FLOOR);
 
       // Alice leaves → bob's [data-user-id=alice] audio element should disappear within 5s
-      await alice.page.getByTestId('voice-leave').click();
+      await alice.page.getByRole('button', { name: '离开语音' }).click();
       await bob.page.waitForFunction(
         (uid) => !document.querySelector(`audio[data-user-id="${uid}"]`),
         VOICE_TEST_IDS.alice,
