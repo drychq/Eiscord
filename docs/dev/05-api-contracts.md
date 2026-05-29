@@ -184,6 +184,52 @@
 
 返回当前用户资料、账号状态和可见配置。
 
+### `GET /users/search`
+
+搜索可添加好友的公开用户资料。仅登录用户可用，不返回邮箱、手机号或其他登录凭据。
+
+查询参数：
+
+```text
+q=carol&limit=10
+```
+
+约束：
+
+- `q` 至少 2 个字符，最多 64 个字符。
+- `limit` 默认 10，最大 20。
+- 搜索范围仅限 `account_status = active` 的用户。
+- 匹配 `username` 和 `nickname`；`username` 是唯一、可直接添加的公开标识，`nickname` 仅用于发现和展示。
+- 接口带用户维度限流，默认 60 次/分钟。
+
+响应：
+
+```json
+[
+  {
+    "user": {
+      "user_id": "uuid",
+      "username": "carol",
+      "nickname": "Carol",
+      "avatar_attachment_id": null,
+      "bio": null,
+      "account_status": "active",
+      "presence_status": "offline",
+      "created_at": "2026-05-01T12:00:00.000Z"
+    },
+    "relationship_status": "none"
+  }
+]
+```
+
+`relationship_status` 可取：
+
+- `none`：可发送好友申请。
+- `self`：当前账号。
+- `pending_outgoing`：当前用户已发出申请，等待对方处理。
+- `pending_incoming`：对方已发来申请，当前用户可在待处理列表处理。
+- `accepted`：双方已是好友。
+
 ### `PATCH /users/me/profile`
 
 对应 `UpdateProfile`，覆盖 FR-04。
@@ -224,7 +270,16 @@
 
 对应 `CreateFriendRequest`，覆盖 FR-06。
 
-请求：
+请求。`target_user_id` 与 `target_username` 必须且只能提供一个；UUID 调用保留用于兼容和内部测试，前端主流程使用搜索结果或 username。
+
+```json
+{
+  "target_username": "carol",
+  "message": "optional"
+}
+```
+
+兼容请求：
 
 ```json
 {
@@ -533,7 +588,7 @@
 | FR-03 | `POST /auth/forgot-password`、`POST /auth/reset-password` |
 | FR-04 | `PATCH /users/me/profile` |
 | FR-05 | `PATCH /users/me/presence` |
-| FR-06 | `POST /friend-requests`、`POST /friend-requests/{id}/accept` |
+| FR-06 | `GET /users/search`、`POST /friend-requests`、`POST /friend-requests/{id}/accept` |
 | FR-07 | `GET/POST /dm-conversations/{id}/messages` |
 | FR-08 | `POST /servers` |
 | FR-09 | `POST /servers/join`、`POST /servers/{id}/leave` |

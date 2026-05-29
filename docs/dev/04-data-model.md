@@ -30,7 +30,7 @@
 | `passwordResetAttempts` | 当前 OTP 已发生的失败核验次数，默认 0；达到上限后强制清空 OTP 并要求重新发起 forgot-password。 |
 | `createdAt`、`updatedAt` | 创建和更新时间。 |
 
-约束：`username` 和 `emailOrPhone` 唯一；禁用账号不能登录；删除或注销账号后登录凭证失效，历史消息按展示策略脱敏。密码重置 OTP 字段仅在 `POST /auth/forgot-password` 与 `POST /auth/reset-password` 间承载流程状态，不参与登录、注册或资料读写；OTP 仅存哈希，禁止落明文。
+约束：`username` 和 `emailOrPhone` 唯一；`username` 是公开、唯一、可搜索和可添加好友的标识，注册与登录时按小写归一化。用户搜索只暴露公开资料（用户 ID、用户名、昵称、头像、简介、账号状态、在线状态、创建时间）和当前用户与其关系状态，禁止返回 `emailOrPhone`、`passwordHash`、密码重置字段或会话信息；`nickname` 可用于搜索展示但不能作为唯一添加凭据。禁用账号不能登录，也不能作为搜索或添加好友目标；删除或注销账号后登录凭证失效，历史消息按展示策略脱敏。密码重置 OTP 字段仅在 `POST /auth/forgot-password` 与 `POST /auth/reset-password` 间承载流程状态，不参与登录、注册或资料读写；OTP 仅存哈希，禁止落明文。
 
 ### AuthSession
 
