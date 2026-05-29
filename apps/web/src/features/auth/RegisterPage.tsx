@@ -65,7 +65,7 @@ export function RegisterPage() {
         )}
 
         <form onSubmit={handleSubmit(onSubmit)} noValidate>
-          <FormField label="用户名" error={errors.username?.message}>
+          <FormField label="用户名" error={errors.username?.message} htmlFor="username">
             <input
               type="text"
               autoComplete="username"
@@ -78,7 +78,11 @@ export function RegisterPage() {
             />
           </FormField>
 
-          <FormField label="邮箱 / 手机号" error={errors.email_or_phone?.message}>
+          <FormField
+            label="邮箱 / 手机号"
+            error={errors.email_or_phone?.message}
+            htmlFor="email_or_phone"
+          >
             <input
               type="text"
               autoComplete="email"
@@ -91,7 +95,7 @@ export function RegisterPage() {
             />
           </FormField>
 
-          <FormField label="密码" error={errors.password?.message}>
+          <FormField label="密码" error={errors.password?.message} htmlFor="password">
             <input
               type="password"
               autoComplete="new-password"
@@ -104,7 +108,11 @@ export function RegisterPage() {
             />
           </FormField>
 
-          <FormField label="确认密码" error={errors.confirmPassword?.message}>
+          <FormField
+            label="确认密码"
+            error={errors.confirmPassword?.message}
+            htmlFor="confirmPassword"
+          >
             <input
               type="password"
               autoComplete="new-password"

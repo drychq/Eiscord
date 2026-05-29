@@ -1394,13 +1394,70 @@ button:disabled {
   margin-left: auto;
 }
 
-.add-friend-form {
+.add-friend-form,
+.user-search-form {
   display: flex;
   gap: var(--space-sm);
 }
 
-.add-friend-form .form-input {
+.add-friend-form .form-input,
+.user-search-input-wrap {
   flex: 1;
+}
+
+.user-search-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.user-search-input-wrap svg {
+  position: absolute;
+  left: 12px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.user-search-input-wrap .form-input {
+  width: 100%;
+  padding-left: 38px;
+}
+
+.user-search-results {
+  margin-top: var(--space-md);
+}
+
+.user-search-item {
+  min-height: 60px;
+}
+
+.friend-relation-badge {
+  flex-shrink: 0;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-subtle);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+}
+
+.friend-relation-badge.none {
+  color: var(--success);
+}
+
+.friend-relation-badge.accepted,
+.friend-relation-badge.pending_incoming,
+.friend-relation-badge.pending_outgoing {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: transparent;
+}
+
+.friend-action-button {
+  min-width: 88px;
+  flex-shrink: 0;
 }
 
 /* ── Server rail modal ── */
@@ -1999,6 +2056,21 @@ button:disabled {
 
   .search-button {
     flex: 1;
+  }
+
+  .friends-tabs,
+  .user-search-form,
+  .user-search-item {
+    flex-wrap: wrap;
+  }
+
+  .friend-relation-badge {
+    margin-left: 52px;
+  }
+
+  .friend-action-button {
+    flex: 1;
+    min-width: 120px;
   }
 
   .composer {

@@ -1,19 +1,29 @@
-import { useState } from 'react';
+import { type FormEvent, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { UserPlus, Clock, Users, MessageCircle, Check, X } from 'lucide-react';
+import { UserPlus, Clock, Users, MessageCircle, Check, X, Search } from 'lucide-react';
 import { Spinner } from '../../shared/components/Spinner';
 import { FormField } from '../../shared/components/FormField';
-import { useFriendsList, useDmConversations, useCreateFriendRequest, useAcceptFriendRequest, useRejectFriendRequest } from './use-friends-queries';
-import type { FriendshipSummary, DirectConversationSummary } from './friends-api';
+import { formatErrorMessage } from '../../shared/utils/error-message';
+import {
+  useFriendsList,
+  useDmConversations,
+  useCreateFriendRequest,
+  useAcceptFriendRequest,
+  useRejectFriendRequest,
+  useUserSearch,
+} from './use-friends-queries';
+import type { FriendshipSummary, DirectConversationSummary, UserSearchResult } from './friends-api';
 
 type Tab = 'friends' | 'pending' | 'add';
+
+const usernamePattern = /^[a-zA-Z0-9_]{3,32}$/;
 
 function FriendItem({ friendship, onDm }: { friendship: FriendshipSummary; onDm: (conversationId: string) => void }) {
   const { friend, conversation_id } = friendship;
   const statusLabel = friend.presence_status.toLowerCase() === 'online' ? '在线' : '离线';
 
   return (
-    <li className="friend-item">
+    <li className="friend-item" aria-label={`${friend.nickname} @${friend.username} ${statusLabel}`}>
       <div className="friend-avatar" aria-hidden>
         {friend.nickname.slice(0, 1).toUpperCase()}
       </div>
@@ -37,7 +47,12 @@ function PendingItem({ friendship }: { friendship: FriendshipSummary }) {
   const isIncoming = friendship.direction === 'incoming';
 
   return (
-    <li className="friend-item">
+    <li
+      className="friend-item"
+      aria-label={`${friendship.friend.nickname} @${friendship.friend.username} ${
+        isIncoming ? '待你处理' : '等待对方'
+      }`}
+    >
       <div className="friend-avatar" aria-hidden>
         {friendship.friend.nickname.slice(0, 1).toUpperCase()}
       </div>
@@ -74,7 +89,7 @@ function PendingItem({ friendship }: { friendship: FriendshipSummary }) {
 
 function DmItem({ dm, onClick }: { dm: DirectConversationSummary; onClick: (id: string) => void }) {
   return (
-    <li className="friend-item">
+    <li className="friend-item" aria-label={`${dm.friend.nickname} @${dm.friend.username}`}>
       <div className="friend-avatar" aria-hidden>
         {dm.friend.nickname.slice(0, 1).toUpperCase()}
       </div>
@@ -89,13 +104,82 @@ function DmItem({ dm, onClick }: { dm: DirectConversationSummary; onClick: (id: 
   );
 }
 
+function relationLabel(relationship: UserSearchResult['relationship_status']): string {
+  switch (relationship) {
+    case 'accepted':
+      return '已是好友';
+    case 'pending_incoming':
+      return '待你处理';
+    case 'pending_outgoing':
+      return '已发送';
+    case 'self':
+      return '当前账号';
+    case 'none':
+    default:
+      return '可添加';
+  }
+}
+
+function UserSearchItem({
+  result,
+  isSubmitting,
+  onAdd,
+  onViewPending,
+}: {
+  result: UserSearchResult;
+  isSubmitting: boolean;
+  onAdd: (userId: string) => void;
+  onViewPending: () => void;
+}) {
+  const { relationship_status, user } = result;
+  const isAddable = relationship_status === 'none';
+  const isIncoming = relationship_status === 'pending_incoming';
+  const statusLabel = user.presence_status.toLowerCase() === 'online' ? '在线' : '离线';
+
+  return (
+    <li
+      className="friend-item user-search-item"
+      aria-label={`${user.nickname} @${user.username} ${relationLabel(relationship_status)}`}
+    >
+      <div className="friend-avatar" aria-hidden>
+        {user.nickname.slice(0, 1).toUpperCase()}
+      </div>
+      <div className="friend-info">
+        <span className="friend-name">{user.nickname}</span>
+        <span className="friend-username">@{user.username}</span>
+        <span className={`friend-status ${user.presence_status.toLowerCase()}`}>{statusLabel}</span>
+      </div>
+      <span className={`friend-relation-badge ${relationship_status}`}>
+        {relationLabel(relationship_status)}
+      </span>
+      {isIncoming ? (
+        <button className="button-secondary friend-action-button" type="button" onClick={onViewPending}>
+          去处理
+        </button>
+      ) : (
+        <button
+          className="button-primary friend-action-button"
+          type="button"
+          disabled={!isAddable || isSubmitting}
+          onClick={() => onAdd(user.user_id)}
+        >
+          {isAddable ? '添加' : relationLabel(relationship_status)}
+        </button>
+      )}
+    </li>
+  );
+}
+
 export function FriendsPage() {
   const [tab, setTab] = useState<Tab>('friends');
-  const [targetId, setTargetId] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
   const navigate = useNavigate();
   const { data: friendships, isLoading: friendsLoading } = useFriendsList();
   const { data: dms, isLoading: dmsLoading } = useDmConversations();
   const createRequest = useCreateFriendRequest();
+  const searchResults = useUserSearch(searchQuery);
+  const canSearch = searchInput.trim().length >= 2;
 
   const accepted = friendships?.filter((f) => f.status.toLowerCase() === 'accepted') ?? [];
   const pending = friendships?.filter((f) => f.status.toLowerCase() === 'pending') ?? [];
@@ -105,6 +189,25 @@ export function FriendsPage() {
     { key: 'pending', label: `待处理 (${pending.length})`, icon: Clock },
     { key: 'add', label: '添加好友', icon: UserPlus },
   ];
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      setSearchQuery(searchInput.trim());
+    }, 300);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [searchInput]);
+
+  const handleDirectAdd = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const username = searchInput.trim().toLowerCase();
+
+    if (!usernamePattern.test(username)) {
+      return;
+    }
+
+    createRequest.mutate({ target_username: username });
+  };
 
   if (friendsLoading || dmsLoading) return <Spinner />;
 
@@ -156,30 +259,63 @@ export function FriendsPage() {
 
         {tab === 'add' && (
           <section aria-label="添加好友">
-            <FormField label="目标用户 ID" error={createRequest.error ? '发送失败' : undefined}>
-              <form
-                className="add-friend-form"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  if (targetId.trim()) {
-                    createRequest.mutate(targetId.trim());
-                    setTargetId('');
-                  }
-                }}
-              >
-                <input
-                  className="form-input"
-                  type="text"
-                  placeholder="输入用户 UUID"
-                  value={targetId}
-                  onChange={(e) => setTargetId(e.target.value)}
-                  disabled={createRequest.isPending}
-                />
-                <button className="button-primary" type="submit" disabled={createRequest.isPending || !targetId.trim()}>
-                  {createRequest.isPending ? '发送中...' : '发送申请'}
+            <FormField
+              label="搜索用户"
+              error={createRequest.error ? formatErrorMessage(createRequest.error) : undefined}
+              htmlFor="friend-search"
+            >
+              <form className="user-search-form" onSubmit={handleDirectAdd}>
+                <div className="user-search-input-wrap">
+                  <Search size={18} aria-hidden />
+                  <input
+                    id="friend-search"
+                    className="form-input"
+                    type="search"
+                    placeholder="搜索用户名或昵称"
+                    value={searchInput}
+                    onChange={(e) => setSearchInput(e.target.value)}
+                    disabled={createRequest.isPending}
+                  />
+                </div>
+                <button
+                  className="button-primary"
+                  type="submit"
+                  disabled={createRequest.isPending || !usernamePattern.test(searchInput.trim())}
+                >
+                  {createRequest.isPending ? '发送中...' : '按用户名添加'}
                 </button>
               </form>
             </FormField>
+
+            {!canSearch && (
+              <p className="empty-section">输入至少 2 个字符搜索用户</p>
+            )}
+
+            {canSearch && searchResults.isLoading && <Spinner size={24} />}
+
+            {canSearch && searchResults.error && (
+              <p className="empty-section" role="alert">
+                {formatErrorMessage(searchResults.error)}
+              </p>
+            )}
+
+            {canSearch && searchResults.data && searchResults.data.length === 0 && (
+              <p className="empty-section">没有找到匹配用户</p>
+            )}
+
+            {canSearch && searchResults.data && searchResults.data.length > 0 && (
+              <ul className="friend-list user-search-results">
+                {searchResults.data.map((result) => (
+                  <UserSearchItem
+                    key={result.user.user_id}
+                    result={result}
+                    isSubmitting={createRequest.isPending}
+                    onAdd={(userId) => createRequest.mutate({ target_user_id: userId })}
+                    onViewPending={() => setTab('pending')}
+                  />
+                ))}
+              </ul>
+            )}
           </section>
         )}
 

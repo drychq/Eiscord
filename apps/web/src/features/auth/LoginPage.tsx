@@ -39,7 +39,11 @@ export function LoginPage() {
         )}
 
         <form onSubmit={handleSubmit((data) => mutation.mutate(data))} noValidate>
-          <FormField label="用户名 / 邮箱 / 手机号" error={errors.login_identifier?.message}>
+          <FormField
+            label="用户名 / 邮箱 / 手机号"
+            error={errors.login_identifier?.message}
+            htmlFor="login_identifier"
+          >
             <input
               type="text"
               autoComplete="username"
@@ -51,7 +55,7 @@ export function LoginPage() {
             />
           </FormField>
 
-          <FormField label="密码" error={errors.password?.message}>
+          <FormField label="密码" error={errors.password?.message} htmlFor="password">
             <input
               type="password"
               autoComplete="current-password"

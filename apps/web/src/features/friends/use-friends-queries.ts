@@ -7,9 +7,11 @@ import { formatErrorMessage } from '../../shared/utils/error-message';
 import {
   fetchFriends,
   fetchDmConversations,
+  searchUsers,
   createFriendRequest,
   acceptFriendRequest,
   rejectFriendRequest,
+  type CreateFriendRequestInput,
 } from './friends-api';
 
 export function useFriendsList() {
@@ -28,14 +30,26 @@ export function useDmConversations() {
   });
 }
 
+export function useUserSearch(query: string) {
+  const normalizedQuery = query.trim();
+
+  return useQuery({
+    queryKey: ['user-search', normalizedQuery],
+    queryFn: () => searchUsers(normalizedQuery),
+    enabled: normalizedQuery.length >= 2,
+    staleTime: 10_000,
+  });
+}
+
 export function useCreateFriendRequest() {
   const queryClient = useQueryClient();
   const { pushToast } = useToastStore();
 
   return useMutation({
-    mutationFn: (targetUserId: string) => createFriendRequest(targetUserId),
+    mutationFn: (input: CreateFriendRequestInput) => createFriendRequest(input),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['friends'] });
+      queryClient.invalidateQueries({ queryKey: ['user-search'] });
       pushToast({
         kind: 'success',
         message: `好友申请已发送给 ${data.friend.username}`,

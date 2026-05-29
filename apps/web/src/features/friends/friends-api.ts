@@ -26,9 +26,25 @@ const directConversationSummarySchema = z.object({
   last_message_id: z.string().uuid().nullable(),
 });
 
+const userSearchResultSchema = z.object({
+  relationship_status: z.enum([
+    'accepted',
+    'none',
+    'pending_incoming',
+    'pending_outgoing',
+    'self',
+  ]),
+  user: friendUserSummarySchema,
+});
+
+export type CreateFriendRequestInput =
+  | { target_user_id: string; target_username?: never }
+  | { target_username: string; target_user_id?: never };
+
 export type FriendUserSummary = z.infer<typeof friendUserSummarySchema>;
 export type FriendshipSummary = z.infer<typeof friendshipSummarySchema>;
 export type DirectConversationSummary = z.infer<typeof directConversationSummarySchema>;
+export type UserSearchResult = z.infer<typeof userSearchResultSchema>;
 
 export function fetchFriends(): Promise<FriendshipSummary[]> {
   return request<FriendshipSummary[]>('GET', '/friends', {
@@ -36,9 +52,19 @@ export function fetchFriends(): Promise<FriendshipSummary[]> {
   });
 }
 
-export function createFriendRequest(targetUserId: string): Promise<FriendshipSummary> {
+export function searchUsers(query: string, limit = 10): Promise<UserSearchResult[]> {
+  const searchParams = new URLSearchParams();
+  searchParams.set('q', query);
+  searchParams.set('limit', String(limit));
+
+  return request<UserSearchResult[]>('GET', `/users/search?${searchParams.toString()}`, {
+    schema: z.array(userSearchResultSchema),
+  });
+}
+
+export function createFriendRequest(input: CreateFriendRequestInput): Promise<FriendshipSummary> {
   return request<FriendshipSummary>('POST', '/friend-requests', {
-    body: { target_user_id: targetUserId },
+    body: input,
     schema: friendshipSummarySchema,
   });
 }
