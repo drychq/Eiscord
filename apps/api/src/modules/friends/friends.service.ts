@@ -90,6 +90,20 @@ export class FriendsService {
     dto: CreateFriendRequestDto,
     requestId?: string,
   ): Promise<FriendshipSummary> {
+    const hasTargetUserId =
+      typeof dto.target_user_id === 'string' && dto.target_user_id.trim().length > 0;
+    const hasTargetUsername =
+      typeof dto.target_username === 'string' && dto.target_username.trim().length > 0;
+
+    if (hasTargetUserId === hasTargetUsername) {
+      await this.recordFailure('CreateFriendRequest', user.userId, 'invalid_target', requestId);
+      throw new AppError(
+        ErrorCode.ValidationFailed,
+        'Provide exactly one friend request target.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
     if (dto.target_user_id === user.userId) {
       await this.recordFailure('CreateFriendRequest', user.userId, 'self_request', requestId);
       throw new AppError(
@@ -99,7 +113,7 @@ export class FriendsService {
       );
     }
 
-    const target = await this.getUserForFriend(dto.target_user_id);
+    const target = await this.resolveFriendTarget(dto);
 
     if (!target) {
       await this.recordFailure('CreateFriendRequest', user.userId, 'target_not_found', requestId);
@@ -110,12 +124,23 @@ export class FriendsService {
       );
     }
 
+    const targetUserId = target.friendId;
+
+    if (targetUserId === user.userId) {
+      await this.recordFailure('CreateFriendRequest', user.userId, 'self_request', requestId);
+      throw new AppError(
+        ErrorCode.ValidationFailed,
+        'Cannot send a friend request to yourself.',
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
     const [existing] = await this.prisma.$queryRaw<FriendshipLookupRow[]>`
       SELECT id, status
       FROM friendships
       WHERE (
-          (requester_id = ${user.userId}::uuid AND addressee_id = ${dto.target_user_id}::uuid)
-          OR (requester_id = ${dto.target_user_id}::uuid AND addressee_id = ${user.userId}::uuid)
+          (requester_id = ${user.userId}::uuid AND addressee_id = ${targetUserId}::uuid)
+          OR (requester_id = ${targetUserId}::uuid AND addressee_id = ${user.userId}::uuid)
         )
         AND status IN ('pending', 'accepted')
       LIMIT 1
@@ -139,7 +164,7 @@ export class FriendsService {
       const friendshipId = await this.persistence.runWithEvents(async (tx, events) => {
         const [friendship] = await tx.$queryRaw<FriendshipRecord[]>`
           INSERT INTO friendships (id, requester_id, addressee_id, status)
-          VALUES (${randomUUID()}::uuid, ${user.userId}::uuid, ${dto.target_user_id}::uuid, 'pending')
+          VALUES (${randomUUID()}::uuid, ${user.userId}::uuid, ${targetUserId}::uuid, 'pending')
           RETURNING
             id,
             requester_id AS "requesterId",
@@ -164,7 +189,7 @@ export class FriendsService {
           sourceId: friendship.id,
           sourceType: 'friendship',
           type: 'friend_request',
-          userId: dto.target_user_id,
+          userId: targetUserId,
         });
 
         if (notification.created) {
@@ -424,6 +449,15 @@ export class FriendsService {
     return toFriendshipSummary(row, currentUserId);
   }
 
+  private async resolveFriendTarget(dto: CreateFriendRequestDto): Promise<FriendUserRow | null> {
+    if (dto.target_user_id) {
+      return this.getUserForFriend(dto.target_user_id);
+    }
+
+    const username = normalizeUsername(dto.target_username ?? '');
+    return this.getUserForFriendByUsername(username);
+  }
+
   private async getUserForFriend(userId: string): Promise<FriendUserRow | null> {
     const [user] = await this.prisma.$queryRaw<FriendUserRow[]>`
       SELECT
@@ -437,6 +471,26 @@ export class FriendsService {
         created_at AS "friendCreatedAt"
       FROM users
       WHERE id = ${userId}::uuid
+        AND account_status = 'active'
+      LIMIT 1
+    `;
+
+    return user ?? null;
+  }
+
+  private async getUserForFriendByUsername(username: string): Promise<FriendUserRow | null> {
+    const [user] = await this.prisma.$queryRaw<FriendUserRow[]>`
+      SELECT
+        id AS "friendId",
+        username AS "friendUsername",
+        nickname AS "friendNickname",
+        avatar_attachment_id AS "friendAvatarAttachmentId",
+        bio AS "friendBio",
+        account_status AS "friendAccountStatus",
+        presence_status AS "friendPresenceStatus",
+        created_at AS "friendCreatedAt"
+      FROM users
+      WHERE username = ${username}
         AND account_status = 'active'
       LIMIT 1
     `;
@@ -459,6 +513,10 @@ export class FriendsService {
       targetType: 'friendship',
     });
   }
+}
+
+function normalizeUsername(value: string): string {
+  return value.trim().toLowerCase();
 }
 
 function orderedPair(userA: string, userB: string): [string, string] {

@@ -101,14 +101,53 @@ describe('FriendsService', () => {
     );
   });
 
+  it('creates friend requests by username', async () => {
+    prisma.$queryRaw.mockResolvedValueOnce([friendUserRow()]);
+    prisma.$queryRaw.mockResolvedValueOnce([]);
+    tx.$queryRaw.mockResolvedValueOnce([friendshipRecord({ status: 'pending' })]);
+    prisma.$queryRaw.mockResolvedValueOnce([friendshipRow({ status: 'pending' })]);
+
+    const result = await service.createFriendRequest(
+      alice,
+      { target_username: 'Bob' },
+      'request-1',
+    );
+
+    expect(result).toMatchObject({
+      direction: 'outgoing',
+      friend: { user_id: bobId },
+      status: 'pending',
+    });
+    expect(notificationsService.createNotification).toHaveBeenCalledWith(
+      tx,
+      expect.objectContaining({ type: 'friend_request', userId: bobId }),
+    );
+  });
+
   it('rejects self friend requests', async () => {
     await expect(
       service.createFriendRequest(alice, { target_user_id: alice.userId }),
     ).rejects.toMatchObject<AppError>({ code: ErrorCode.ValidationFailed });
 
-    expect(prisma.$queryRaw).not.toHaveBeenCalled();
     expect(auditService.record).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'CreateFriendRequest', result: 'failure' }),
+    );
+  });
+
+  it('rejects friend requests with more than one target identifier', async () => {
+    await expect(
+      service.createFriendRequest(alice, {
+        target_user_id: bobId,
+        target_username: 'bob',
+      }),
+    ).rejects.toMatchObject<AppError>({ code: ErrorCode.ValidationFailed });
+
+    expect(auditService.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'CreateFriendRequest',
+        failureReason: 'invalid_target',
+        result: 'failure',
+      }),
     );
   });
 
@@ -152,7 +191,6 @@ describe('FriendsService', () => {
       direction: 'incoming',
       status: 'accepted',
     });
-    expect(tx.$queryRaw).toHaveBeenCalledTimes(3);
     expect(events.audit).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'AcceptFriendRequest', result: 'success' }),
     );

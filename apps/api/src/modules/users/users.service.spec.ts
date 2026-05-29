@@ -4,7 +4,7 @@ import { AppError } from '../../common/errors/app-error';
 import { PrismaService } from '../../common/persistence/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { PresenceService } from '../realtime/presence.service';
-import type { UserRecord } from './user.presenter';
+import type { UserRecord, UserSearchRow } from './user.presenter';
 import { UsersService } from './users.service';
 
 describe('UsersService', () => {
@@ -111,6 +111,42 @@ describe('UsersService', () => {
       'request-1',
     );
   });
+
+  it('searches public active users with relationship status', async () => {
+    prisma.$queryRaw.mockResolvedValueOnce([
+      userSearchRow({
+        id: '00000000-0000-4000-8000-000000000002',
+        nickname: 'Bob',
+        relationshipStatus: 'pending_outgoing',
+        username: 'bob',
+      }),
+    ]);
+
+    const result = await service.searchUsers(
+      { accountStatus: 'active', sessionId: 'session-1', userId: 'user-1' },
+      { q: 'bo', limit: 5 },
+    );
+
+    expect(result).toEqual([
+      expect.objectContaining({
+        relationship_status: 'pending_outgoing',
+        user: expect.objectContaining({
+          nickname: 'Bob',
+          user_id: '00000000-0000-4000-8000-000000000002',
+          username: 'bob',
+        }),
+      }),
+    ]);
+  });
+
+  it('does not query for too-short user searches', async () => {
+    await expect(
+      service.searchUsers(
+        { accountStatus: 'active', sessionId: 'session-1', userId: 'user-1' },
+        { q: 'a' },
+      ),
+    ).resolves.toEqual([]);
+  });
 });
 
 function userRecord(overrides: Partial<UserRecord> = {}): UserRecord {
@@ -125,6 +161,21 @@ function userRecord(overrides: Partial<UserRecord> = {}): UserRecord {
     passwordHash: 'hashed-password',
     presenceStatus: 'offline',
     username: 'alice',
+    ...overrides,
+  };
+}
+
+function userSearchRow(overrides: Partial<UserSearchRow> = {}): UserSearchRow {
+  return {
+    accountStatus: 'active',
+    avatarAttachmentId: null,
+    bio: null,
+    createdAt: new Date('2026-05-02T00:00:00.000Z'),
+    id: 'user-2',
+    nickname: 'bob',
+    presenceStatus: 'offline',
+    relationshipStatus: 'none',
+    username: 'bob',
     ...overrides,
   };
 }

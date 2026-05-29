@@ -91,6 +91,13 @@ describe('M6 exception flow acceptance', () => {
       .expect(400)
       .expect((response) => expectErrorCode(response.body, ErrorCode.ValidationFailed));
 
+    await http(testApp)
+      .post('/api/v1/friend-requests')
+      .set('Authorization', bearer(alice))
+      .send({ target_user_id: bob.userId, target_username: bob.username })
+      .expect(400)
+      .expect((response) => expectErrorCode(response.body, ErrorCode.ValidationFailed));
+
     const first = await http(testApp)
       .post('/api/v1/friend-requests')
       .set('Authorization', bearer(alice))

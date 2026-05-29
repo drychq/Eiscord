@@ -7,9 +7,17 @@ import { AppError } from '../../common/errors/app-error';
 import { PrismaService } from '../../common/persistence/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { PresenceService } from '../realtime/presence.service';
+import { SearchUsersDto } from './dto/search-users.dto';
 import { UpdatePresenceDto } from './dto/update-presence.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
-import { toUserSummary, UserRecord, UserSummary } from './user.presenter';
+import {
+  toUserSearchResult,
+  toUserSummary,
+  UserRecord,
+  UserSearchResult,
+  UserSearchRow,
+  UserSummary,
+} from './user.presenter';
 
 type AttachmentLookupRow = {
   id: string;
@@ -46,6 +54,69 @@ export class UsersService {
     }
 
     return toUserSummary(found);
+  }
+
+  async searchUsers(
+    user: AuthenticatedUserContext,
+    dto: SearchUsersDto,
+  ): Promise<UserSearchResult[]> {
+    const query = dto.q.trim().toLowerCase();
+
+    if (query.length < 2) {
+      return [];
+    }
+
+    const containsPattern = `%${escapeLike(query)}%`;
+    const prefixPattern = `${escapeLike(query)}%`;
+    const limit = dto.limit ?? 10;
+    const rows = await this.prisma.$queryRaw<UserSearchRow[]>`
+      SELECT
+        u.id,
+        u.username,
+        u.nickname,
+        u.avatar_attachment_id AS "avatarAttachmentId",
+        u.bio,
+        u.account_status AS "accountStatus",
+        u.presence_status AS "presenceStatus",
+        u.created_at AS "createdAt",
+        CASE
+          WHEN u.id = ${user.userId}::uuid THEN 'self'
+          WHEN active_friendship.status = 'accepted' THEN 'accepted'
+          WHEN active_friendship.status = 'pending'
+            AND active_friendship.requester_id = ${user.userId}::uuid THEN 'pending_outgoing'
+          WHEN active_friendship.status = 'pending'
+            AND active_friendship.addressee_id = ${user.userId}::uuid THEN 'pending_incoming'
+          ELSE 'none'
+        END AS "relationshipStatus"
+      FROM users u
+      LEFT JOIN LATERAL (
+        SELECT requester_id, addressee_id, status
+        FROM friendships f
+        WHERE (
+            (f.requester_id = ${user.userId}::uuid AND f.addressee_id = u.id)
+            OR (f.addressee_id = ${user.userId}::uuid AND f.requester_id = u.id)
+          )
+          AND f.status IN ('pending', 'accepted')
+        ORDER BY f.updated_at DESC
+        LIMIT 1
+      ) active_friendship ON true
+      WHERE u.account_status = 'active'
+        AND (
+          lower(u.username) LIKE ${containsPattern} ESCAPE '\\'
+          OR lower(u.nickname) LIKE ${containsPattern} ESCAPE '\\'
+        )
+      ORDER BY
+        CASE
+          WHEN lower(u.username) = ${query} THEN 0
+          WHEN lower(u.username) LIKE ${prefixPattern} ESCAPE '\\' THEN 1
+          WHEN lower(u.nickname) LIKE ${prefixPattern} ESCAPE '\\' THEN 2
+          ELSE 3
+        END,
+        lower(u.username) ASC
+      LIMIT ${limit}
+    `;
+
+    return rows.map(toUserSearchResult);
   }
 
   async updateProfile(
@@ -184,4 +255,8 @@ function normalizeNullableText(value: string | null): string | null {
   const trimmed = value.trim();
 
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, (match) => `\\${match}`);
 }

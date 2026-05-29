@@ -42,6 +42,27 @@ describe('M6 API + Socket acceptance flows', () => {
     const bobSocket = await connectRealtime(testApp.baseUrl, bob);
 
     try {
+      const searchResponse = await http(testApp)
+        .get('/api/v1/users/search')
+        .query({ q: bob.username, limit: 10 })
+        .set('Authorization', bearer(alice))
+        .expect(200);
+      const searchResults = unwrap<
+        Array<{
+          relationship_status: string;
+          user: Record<string, unknown> & { user_id: string; username: string };
+        }>
+      >(searchResponse.body);
+      const bobSearchResult = searchResults.find((result) => result.user.user_id === bob.userId);
+
+      expect(bobSearchResult).toBeTruthy();
+      expect(bobSearchResult).toMatchObject({
+        relationship_status: 'none',
+        user: { user_id: bob.userId, username: bob.username },
+      });
+      expect(bobSearchResult!.user).not.toHaveProperty('email_or_phone');
+      expect(bobSearchResult!.user).not.toHaveProperty('password_hash');
+
       const friendNotification = onceEvent<{ type: string }>(
         bobSocket,
         RealtimeEvent.NotificationCreated,
@@ -50,17 +71,40 @@ describe('M6 API + Socket acceptance flows', () => {
       const requestResponse = await http(testApp)
         .post('/api/v1/friend-requests')
         .set('Authorization', bearer(alice))
-        .send({ target_user_id: bob.userId })
+        .send({ target_username: bob.username })
         .expect(201);
       const requestData = unwrap<{ friendship_id: string }>(requestResponse.body);
 
       await expect(friendNotification).resolves.toBeTruthy();
+
+      const incomingSearchResponse = await http(testApp)
+        .get('/api/v1/users/search')
+        .query({ q: alice.username })
+        .set('Authorization', bearer(bob))
+        .expect(200);
+      expect(unwrap<Array<{ relationship_status: string }>>(incomingSearchResponse.body)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ relationship_status: 'pending_incoming' }),
+        ]),
+      );
 
       await http(testApp)
         .post(`/api/v1/friend-requests/${requestData.friendship_id}/accept`)
         .set('Authorization', bearer(bob))
         .send({})
         .expect(201);
+
+      const acceptedSearchResponse = await http(testApp)
+        .get('/api/v1/users/search')
+        .query({ q: alice.username })
+        .set('Authorization', bearer(bob))
+        .expect(200);
+      expect(unwrap<Array<{ relationship_status: string }>>(acceptedSearchResponse.body)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ relationship_status: 'accepted' }),
+        ]),
+      );
+
       const dmResponse = await http(testApp)
         .get('/api/v1/dm-conversations')
         .set('Authorization', bearer(alice))
