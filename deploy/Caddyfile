@@ -1,0 +1,38 @@
+{
+	email {$ACME_EMAIL}
+}
+
+(security_headers) {
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+}
+
+{$PUBLIC_WEB_DOMAIN} {
+	import security_headers
+	encode zstd gzip
+
+	handle /api/v1/* {
+		reverse_proxy api:3000
+	}
+
+	handle /realtime* {
+		reverse_proxy api:3000
+	}
+
+	handle {
+		root * /srv/eiscord
+		try_files {path} /index.html
+		file_server
+	}
+}
+
+{$S3_PUBLIC_DOMAIN} {
+	encode zstd gzip
+
+	reverse_proxy minio:9000 {
+		header_up Host {host}
+	}
+}

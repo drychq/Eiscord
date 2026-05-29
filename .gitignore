@@ -42,7 +42,11 @@ pnpm-debug.log*
 .env
 .env.local
 .env.*.local
+.env.production
 docker-compose.override.yml
+
+# Production backup artifacts
+backups/
 
 # OS files
 .DS_Store
