@@ -19,15 +19,15 @@ import {
   realtimeSubscribePayloadSchema,
 } from '@eiscord/shared';
 
-import { TOKEN_VERIFIER } from '../../common/auth/auth.types';
-import type { AuthenticatedUserContext, TokenVerifier } from '../../common/auth/auth.types';
-import { extractBearerToken } from '../../common/auth/token.utils';
-import { AppError } from '../../common/errors/app-error';
-import { createApiErrorResponse, createApiSuccessResponse } from '../../common/http/api-response.factory';
-import { PrismaService } from '../../common/persistence/prisma.service';
-import { PermissionAction, PermissionResourceType } from '../../common/permissions/permission.types';
-import { PermissionsService } from '../../common/permissions/permissions.service';
-import { isRecord } from '../../common/utils/is-record';
+import { TOKEN_VERIFIER } from '../../core/auth/auth.types';
+import type { AuthenticatedUserContext, TokenVerifier } from '../../core/auth/auth.types';
+import { extractBearerToken } from '../../core/auth/token.utils';
+import { AppError } from '../../core/errors/app-error';
+import { createApiErrorResponse, createApiSuccessResponse } from '../../core/http/api-response.factory';
+import { PrismaService } from '../../infra/persistence/prisma.service';
+import { PermissionAction, PermissionResourceType } from '../../core/permissions/permission.types';
+import { PermissionsService } from '../../core/permissions/permissions.service';
+import { isRecord } from '../../core/utils/is-record';
 import { AuditService } from '../audit/audit.service';
 import { VoiceService } from '../voice/voice.service';
 import { PresenceService } from './presence.service';

@@ -1,8 +1,8 @@
 import { ErrorCode } from '@eiscord/shared';
 
-import { AppError } from '../../common/errors/app-error';
-import { PersistenceCoordinator } from '../../common/persistence/persistence-coordinator.service';
-import { PrismaService } from '../../common/persistence/prisma.service';
+import { AppError } from '../../core/errors/app-error';
+import { PersistenceCoordinator } from '../../infra/persistence/persistence-coordinator.service';
+import { PrismaService } from '../../infra/persistence/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AuditService } from '../audit/audit.service';
 import { FriendsService } from './friends.service';

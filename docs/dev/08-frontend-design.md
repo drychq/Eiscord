@@ -40,6 +40,32 @@
 
 实时事件只更新当前用户有权可见的缓存。收到 `PermissionChanged` 后强制刷新社区详情、频道列表和权限摘要。
 
+## 目录与依赖边界
+
+```text
+apps/web/src/
+  app/
+    layout/               # AppShell、社区栏、频道栏、成员栏、语音控制条
+    routing/              # ProtectedRoute、PublicOnlyRoute
+    router.tsx            # 路由表
+  features/
+    messages/
+      components/         # 消息列表、消息气泡、发送框
+    servers/
+      components/         # 角色徽章、权限位编辑器
+      settings/           # 社区设置页签和弹窗
+    ...
+  shared/
+    api/                  # HTTP/Socket/Query client
+    components/           # ConfirmDialog、EmptyState、ErrorBoundary、FormField、Spinner、Toaster
+    hooks/
+    state/
+    styles/
+    utils/
+```
+
+依赖方向固定为 `app → features → shared`。`shared` 只能放无业务域知识的通用能力；消息、服务器、语音等领域组件放回对应 `features`。ESLint 会拦截 `shared → features/app` 和 `features → app` 的反向依赖。
+
 ## 页面布局
 
 ### 登录与注册

@@ -3,7 +3,7 @@ import { Users } from 'lucide-react';
 import { fetchServerMembers } from '../../features/servers/servers-api';
 import { useQuery } from '@tanstack/react-query';
 import type { MemberSummary } from '../../features/servers/servers-api';
-import { Spinner } from './Spinner';
+import { Spinner } from '../../shared/components/Spinner';
 
 function MemberItem({ member }: { member: MemberSummary }) {
   const statusLabel = member.user.presence_status.toLowerCase() === 'online' ? '在线' : '离线';

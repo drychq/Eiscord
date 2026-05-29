@@ -1,9 +1,9 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Req } from '@nestjs/common';
 
-import { CurrentUser } from '../../common/auth/current-user.decorator';
-import type { AuthenticatedUserContext } from '../../common/auth/auth.types';
-import { getRequestId } from '../../common/request/request-id.util';
-import type { AuthenticatedRequest } from '../../common/request/request.types';
+import { CurrentUser } from '../../core/auth/current-user.decorator';
+import type { AuthenticatedUserContext } from '../../core/auth/auth.types';
+import { getRequestId } from '../../core/request/request-id.util';
+import type { AuthenticatedRequest } from '../../core/request/request.types';
 import { CreateFriendRequestDto } from './dto/create-friend-request.dto';
 import { FriendsService } from './friends.service';
 

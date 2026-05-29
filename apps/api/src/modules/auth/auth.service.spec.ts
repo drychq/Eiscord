@@ -2,8 +2,8 @@ import { ConfigService } from '@nestjs/config';
 
 import { ErrorCode } from '@eiscord/shared';
 
-import { AppError } from '../../common/errors/app-error';
-import { PrismaService } from '../../common/persistence/prisma.service';
+import { AppError } from '../../core/errors/app-error';
+import { PrismaService } from '../../infra/persistence/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import type { UserRecord } from '../users/user.presenter';
 import { AuthService } from './auth.service';

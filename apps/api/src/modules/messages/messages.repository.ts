@@ -2,8 +2,8 @@ import { randomUUID } from 'node:crypto';
 
 import { Injectable } from '@nestjs/common';
 
-import { PrismaService } from '../../common/persistence/prisma.service';
-import type { RawSqlExecutor } from '../../common/persistence/types';
+import { PrismaService } from '../../infra/persistence/prisma.service';
+import type { RawSqlExecutor } from '../../infra/persistence/types';
 import type {
   MessageAttachmentRow,
   MessageMentionRow,

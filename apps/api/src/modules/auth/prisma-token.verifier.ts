@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 
-import { AuthenticatedUserContext, TokenVerifier } from '../../common/auth/auth.types';
-import { PrismaService } from '../../common/persistence/prisma.service';
+import { AuthenticatedUserContext, TokenVerifier } from '../../core/auth/auth.types';
+import { PrismaService } from '../../infra/persistence/prisma.service';
 import { TokenService } from './token.service';
 
 type SessionUserStatusRow = {

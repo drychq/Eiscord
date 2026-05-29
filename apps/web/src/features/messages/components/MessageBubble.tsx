@@ -1,6 +1,6 @@
-import { useAuthStore } from '../state/use-auth-store';
-import { usernameColor } from '../utils/username-color';
-import type { Message } from '../../features/messages/messages-api';
+import { useAuthStore } from '../../../shared/state/use-auth-store';
+import { usernameColor } from '../../../shared/utils/username-color';
+import type { Message } from '../messages-api';
 
 type MessageBubbleProps = {
   message: Message;

@@ -1,7 +1,7 @@
 import { RealtimeEvent } from '@eiscord/shared';
 
-import { PrismaService } from '../../common/persistence/prisma.service';
-import { RedisService } from '../../common/redis/redis.service';
+import { PrismaService } from '../../infra/persistence/prisma.service';
+import { RedisService } from '../../infra/redis/redis.service';
 import { RealtimePublisher } from './realtime.publisher';
 import { PresenceService } from './presence.service';
 

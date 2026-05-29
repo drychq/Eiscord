@@ -1,10 +1,10 @@
 import { Body, Controller, Get, Patch, Query, Req } from '@nestjs/common';
 
-import { CurrentUser } from '../../common/auth/current-user.decorator';
-import type { AuthenticatedUserContext } from '../../common/auth/auth.types';
-import { RateLimit } from '../../common/rate-limit/rate-limit.decorator';
-import { getRequestId } from '../../common/request/request-id.util';
-import type { AuthenticatedRequest } from '../../common/request/request.types';
+import { CurrentUser } from '../../core/auth/current-user.decorator';
+import type { AuthenticatedUserContext } from '../../core/auth/auth.types';
+import { RateLimit } from '../../core/rate-limit/rate-limit.decorator';
+import { getRequestId } from '../../core/request/request-id.util';
+import type { AuthenticatedRequest } from '../../core/request/request.types';
 import { SearchUsersDto } from './dto/search-users.dto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UpdatePresenceDto } from './dto/update-presence.dto';

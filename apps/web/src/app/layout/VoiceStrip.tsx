@@ -1,5 +1,5 @@
 import { Headphones, Mic, MicOff, PhoneOff, VolumeX } from 'lucide-react';
-import { useWorkspaceStore } from '../state/use-workspace-store';
+import { useWorkspaceStore } from '../../shared/state/use-workspace-store';
 import {
   useLeaveVoiceSession,
   useUpdateVoiceState,

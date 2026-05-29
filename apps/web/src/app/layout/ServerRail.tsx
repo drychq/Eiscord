@@ -2,8 +2,8 @@ import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Plus, Server, LogIn } from 'lucide-react';
 import { useServersList, useCreateServer, useJoinServer } from '../../features/servers/use-servers-queries';
-import { useWorkspaceStore } from '../state/use-workspace-store';
-import { Spinner } from './Spinner';
+import { useWorkspaceStore } from '../../shared/state/use-workspace-store';
+import { Spinner } from '../../shared/components/Spinner';
 
 export function ServerRail() {
   const { serverId } = useParams();

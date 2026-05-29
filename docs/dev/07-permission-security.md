@@ -35,7 +35,7 @@
 代码中存在两套相关但不同的权限标识体系：
 
 - **PermissionBit** — 11 个 bitset 标志（见上表），存储在 `Role.permissionBits` 与 `PermissionOverwrite.allowBits/denyBits`，**可分配给角色或频道覆盖**。
-- **PermissionAction** — 14 个权限校验动作枚举（`apps/api/src/common/permissions/permission.types.ts`），是服务端 `PermissionGuard` 与 `@RequirePermission` 装饰器的入口动作名。
+- **PermissionAction** — 14 个权限校验动作枚举（`apps/api/src/core/permissions/permission.types.ts`），是服务端 `PermissionGuard` 与 `@RequirePermission` 装饰器的入口动作名。
 
 其中 11 个 Action 与 11 个 Bit 一一对应（`VIEW_CHANNEL` / `SEND_MESSAGE` / `MANAGE_MESSAGE` / `MANAGE_CHANNEL` / `JOIN_VOICE` / `SPEAK_VOICE` / `LISTEN_VOICE` / `MANAGE_MEMBER` / `MANAGE_ROLE` / `CREATE_INVITE` / `VIEW_AUDIT`），守卫按 bitset 决定允许/拒绝。
 

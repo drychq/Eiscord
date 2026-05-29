@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Post, Query } from '@nestjs/common';
 
-import { CurrentUser } from '../../common/auth/current-user.decorator';
-import type { AuthenticatedUserContext } from '../../common/auth/auth.types';
+import { CurrentUser } from '../../core/auth/current-user.decorator';
+import type { AuthenticatedUserContext } from '../../core/auth/auth.types';
 import { ListNotificationsDto } from './dto/list-notifications.dto';
 import { MarkNotificationsReadDto } from './dto/mark-notifications-read.dto';
 import { NotificationsService } from './notifications.service';

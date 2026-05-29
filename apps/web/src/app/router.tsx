@@ -1,8 +1,8 @@
 import { lazy } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
-import { ProtectedRoute } from '../shared/components/ProtectedRoute';
-import { PublicOnlyRoute } from '../shared/components/PublicOnlyRoute';
-import { AppShell } from '../shared/components/AppShell';
+import { ProtectedRoute } from './routing/ProtectedRoute';
+import { PublicOnlyRoute } from './routing/PublicOnlyRoute';
+import { AppShell } from './layout/AppShell';
 import { ForgotPasswordPage } from '../features/auth/ForgotPasswordPage';
 import { LoginPage } from '../features/auth/LoginPage';
 import { RegisterPage } from '../features/auth/RegisterPage';

@@ -1,7 +1,7 @@
-import { AppError } from '../../common/errors/app-error';
-import { PrismaService } from '../../common/persistence/prisma.service';
-import { PermissionAction } from '../../common/permissions/permission.types';
-import { PermissionsService } from '../../common/permissions/permissions.service';
+import { AppError } from '../../core/errors/app-error';
+import { PrismaService } from '../../infra/persistence/prisma.service';
+import { PermissionAction } from '../../core/permissions/permission.types';
+import { PermissionsService } from '../../core/permissions/permissions.service';
 import { RealtimePublisher } from '../realtime/realtime.publisher';
 import { MediaSignalingService } from './media-signaling.service';
 import { MediasoupRouterRegistry } from './mediasoup-router.registry';

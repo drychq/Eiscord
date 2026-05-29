@@ -1,8 +1,8 @@
 import { Body, Controller, Post } from '@nestjs/common';
 
-import { CurrentUser } from '../../common/auth/current-user.decorator';
-import type { AuthenticatedUserContext } from '../../common/auth/auth.types';
-import { PermissionsService } from '../../common/permissions/permissions.service';
+import { CurrentUser } from '../../core/auth/current-user.decorator';
+import type { AuthenticatedUserContext } from '../../core/auth/auth.types';
+import { PermissionsService } from '../../core/permissions/permissions.service';
 import { CheckPermissionDto } from './dto/check-permission.dto';
 
 @Controller('permissions')

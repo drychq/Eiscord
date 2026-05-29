@@ -2,8 +2,8 @@ import { Controller, Get, HttpStatus, Post } from '@nestjs/common';
 
 import { ErrorCode } from '@eiscord/shared';
 
-import { Public } from '../../common/auth/public.decorator';
-import { AppError } from '../../common/errors/app-error';
+import { Public } from '../../core/auth/public.decorator';
+import { AppError } from '../../core/errors/app-error';
 import { MediasoupWorkerClient } from '../media-signaling/mediasoup-worker.client';
 import { HealthService } from './health.service';
 

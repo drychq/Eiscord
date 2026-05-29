@@ -62,6 +62,7 @@ tests/e2e/fixtures/audio
 
 # Local test artifacts
 test-accounts.*
+docs/local/
 
 .claude/
 .ccg/

@@ -1,5 +1,5 @@
 import { Navigate, useLocation } from 'react-router-dom';
-import { useAuthStore } from '../state/use-auth-store';
+import { useAuthStore } from '../../shared/state/use-auth-store';
 
 export function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { status } = useAuthStore();

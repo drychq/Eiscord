@@ -2,7 +2,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 
 import { RealtimeEvent, VoiceConnectionStatus, VoiceMediaState } from '@eiscord/shared';
 
-import { PrismaService } from '../../common/persistence/prisma.service';
+import { PrismaService } from '../../infra/persistence/prisma.service';
 import { buildRealtimeRoom } from '../realtime/realtime.rooms';
 import { RealtimePublisher } from '../realtime/realtime.publisher';
 import { MediasoupWorkerClient, type WorkerEvent } from './mediasoup-worker.client';

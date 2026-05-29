@@ -3,9 +3,9 @@ import { ConfigService } from '@nestjs/config';
 
 import { ErrorCode } from '@eiscord/shared';
 
-import { AppError } from '../../common/errors/app-error';
-import { PermissionsService } from '../../common/permissions/permissions.service';
-import { PrismaService } from '../../common/persistence/prisma.service';
+import { AppError } from '../../core/errors/app-error';
+import { PermissionsService } from '../../core/permissions/permissions.service';
+import { PrismaService } from '../../infra/persistence/prisma.service';
 import { AttachmentsService } from './attachments.service';
 
 const now = new Date('2026-05-03T00:00:00.000Z');

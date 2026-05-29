@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Shield, X, Edit3, Trash2 } from 'lucide-react';
 import { useManageMember, useAssignRole, useRemoveRole } from '../use-servers-queries';
-import { RoleBadge } from '../../../shared/components/RoleBadge';
+import { RoleBadge } from '../components/RoleBadge';
 import { ConfirmDialog } from '../../../shared/components/ConfirmDialog';
 import { useServerSettingsContext } from './types';
 import { RoleAssignModal } from './modals/RoleAssignModal';

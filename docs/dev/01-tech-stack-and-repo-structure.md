@@ -37,8 +37,17 @@ Eiscord/
     minio/                # 本地对象存储初始化配置
     postgres/             # 数据库初始化配置
     coturn/               # TURN 服务器配置（turnserver.conf）
+  deploy/
+    docker/               # 生产镜像 Dockerfile
+    scripts/              # 生产烟测与备份脚本
+    docker-compose.prod.yml
+    Caddyfile
+  scripts/                # 开发、测试、检查和运维辅助脚本
+  tests/
+    e2e/                  # Playwright 浏览器 E2E
   docs/
     dev/                  # 开发方案文档集
+    audit/                # 历史审计报告
   docker-compose.yml
   package.json
   pnpm-workspace.yaml
@@ -65,7 +74,18 @@ NestJS 中按业务能力拆分模块：
 | `RealtimeModule` | Socket.IO 网关、房间订阅、事件分发。 | FR-05、FR-13、FR-18 |
 | `AuditModule` | 安全、权限和管理动作审计。 | NFR-12、NFR-14 |
 
-公共能力如鉴权守卫、权限守卫、异常过滤器、请求追踪 ID、中间件和配置读取放入 `apps/api/src/common/`。
+服务端源码按层组织：
+
+```text
+apps/api/src/
+  bootstrap/              # Nest 应用启动装配与全局 pipe/CORS
+  core/                   # 鉴权、权限、错误、HTTP 信封、请求 ID、限流等业务核心横切能力
+  infra/                  # 配置、Prisma、Redis 等基础设施适配
+  modules/                # 业务模块
+apps/api/test/e2e/        # API 端到端测试
+```
+
+`core` 可以被业务模块复用；`infra` 封装外部依赖；业务模块不直接绕过服务层写数据库。
 
 ## 前端模块边界
 
@@ -74,6 +94,8 @@ NestJS 中按业务能力拆分模块：
 ```text
 apps/web/src/
   app/                    # 路由、全局 Provider、应用启动
+    layout/               # 工作区外壳、导航栏、频道栏、成员栏、语音控制条
+    routing/              # 登录态路由守卫
   features/
     auth/
     profile/
@@ -85,7 +107,7 @@ apps/web/src/
     voice/
   shared/
     api/                  # HTTP client、Socket client、错误处理
-    components/           # 通用按钮、弹窗、表单、列表
+    components/           # 真正跨功能通用的弹窗、表单、空状态、错误边界、加载、Toast
     hooks/
     state/                # Zustand store：auth、workspace、theme、toast
     styles/
@@ -94,6 +116,8 @@ apps/web/src/
 ```
 
 状态管理采用 TanStack Query 处理服务端数据缓存，Zustand 处理当前选择的社区、频道、语音连接面板和本地 UI 状态。实时事件进入后只更新有权可见的查询缓存和本地状态。
+
+前端依赖方向为 `app → features → shared`。ESLint 禁止 `shared` 反向依赖 `features/app`，也禁止 `features` 依赖 `app`。
 
 ## 共享类型
 

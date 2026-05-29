@@ -1,7 +1,7 @@
 import { IsIn, IsString, IsUUID } from 'class-validator';
 
-import { PermissionAction } from '../../../common/permissions/permission.types';
-import type { PermissionResourceType } from '../../../common/permissions/permission.types';
+import { PermissionAction } from '../../../core/permissions/permission.types';
+import type { PermissionResourceType } from '../../../core/permissions/permission.types';
 
 const permissionActions = Object.values(PermissionAction);
 const permissionResourceTypes: PermissionResourceType[] = [

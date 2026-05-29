@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 
-import { AccessTokenGuard } from '../../common/auth/access-token.guard';
-import { TOKEN_VERIFIER } from '../../common/auth/auth.types';
+import { AccessTokenGuard } from '../../core/auth/access-token.guard';
+import { TOKEN_VERIFIER } from '../../core/auth/auth.types';
 import { AuditModule } from '../audit/audit.module';
 import { MailerModule } from '../mailer/mailer.module';
 import { AuthController } from './auth.controller';

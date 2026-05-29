@@ -8,10 +8,10 @@ import { io, Socket } from 'socket.io-client';
 
 import { ErrorCode, PermissionBit, RealtimeEvent } from '@eiscord/shared';
 
-import { AppModule } from '../app.module';
-import { configureApiApp } from '../common/bootstrap/configure-api-app';
-import { PrismaService } from '../common/persistence/prisma.service';
-import { RedisService } from '../common/redis/redis.service';
+import { AppModule } from '../../src/app.module';
+import { configureApiApp } from '../../src/bootstrap/configure-api-app';
+import { PrismaService } from '../../src/infra/persistence/prisma.service';
+import { RedisService } from '../../src/infra/redis/redis.service';
 
 type ApiEnvelope<T> = {
   data?: T;

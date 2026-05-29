@@ -2,14 +2,14 @@ import { HttpStatus, Injectable } from '@nestjs/common';
 
 import { ErrorCode, RealtimeEvent } from '@eiscord/shared';
 
-import { AuthenticatedUserContext } from '../../common/auth/auth.types';
-import { AppError } from '../../common/errors/app-error';
-import type { EventCollector } from '../../common/persistence/event-collector';
-import { PersistenceCoordinator } from '../../common/persistence/persistence-coordinator.service';
-import { PrismaService } from '../../common/persistence/prisma.service';
-import type { RawSqlExecutor } from '../../common/persistence/types';
-import { PermissionAction } from '../../common/permissions/permission.types';
-import { PermissionsService } from '../../common/permissions/permissions.service';
+import { AuthenticatedUserContext } from '../../core/auth/auth.types';
+import { AppError } from '../../core/errors/app-error';
+import type { EventCollector } from '../../infra/persistence/event-collector';
+import { PersistenceCoordinator } from '../../infra/persistence/persistence-coordinator.service';
+import { PrismaService } from '../../infra/persistence/prisma.service';
+import type { RawSqlExecutor } from '../../infra/persistence/types';
+import { PermissionAction } from '../../core/permissions/permission.types';
+import { PermissionsService } from '../../core/permissions/permissions.service';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { buildRealtimeRoom, buildUserRoom } from '../realtime/realtime.rooms';

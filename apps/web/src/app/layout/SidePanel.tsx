@@ -1,10 +1,10 @@
 import { NavLink, useParams, useNavigate } from 'react-router-dom';
 import { Hash, UserPlus, Volume2, Settings } from 'lucide-react';
 import { PermissionBit, hasPermissionBit } from '@eiscord/shared';
-import { useWorkspaceStore } from '../state/use-workspace-store';
+import { useWorkspaceStore } from '../../shared/state/use-workspace-store';
 import { useServerDetail } from '../../features/servers/use-servers-queries';
 import { useDmConversations } from '../../features/friends/use-friends-queries';
-import { Spinner } from './Spinner';
+import { Spinner } from '../../shared/components/Spinner';
 
 export function SidePanel() {
   const { serverId } = useParams();

@@ -1,5 +1,5 @@
 import { Plus, X } from 'lucide-react';
-import { RoleBadge } from '../../../../shared/components/RoleBadge';
+import { RoleBadge } from '../../components/RoleBadge';
 import type { MemberSummary, RoleSummary } from '../../servers-api';
 
 type Props = {

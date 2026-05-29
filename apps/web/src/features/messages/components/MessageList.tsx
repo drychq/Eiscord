@@ -5,8 +5,8 @@ import React, {
   useRef,
   type ReactNode,
 } from 'react';
-import { Spinner } from './Spinner';
-import { EmptyState } from './EmptyState';
+import { Spinner } from '../../../shared/components/Spinner';
+import { EmptyState } from '../../../shared/components/EmptyState';
 import { MessageSquare } from 'lucide-react';
 
 type MessageListProps = {

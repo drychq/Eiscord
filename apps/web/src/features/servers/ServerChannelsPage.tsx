@@ -8,9 +8,9 @@ import {
 } from '../messages/use-messages-queries';
 import { toChronologicalMessages } from '../messages/message-ordering';
 import { useServerDetail } from './use-servers-queries';
-import { MessageList } from '../../shared/components/MessageList';
-import { MessageBubble } from '../../shared/components/MessageBubble';
-import { MessageComposer } from '../../shared/components/MessageComposer';
+import { MessageList } from '../messages/components/MessageList';
+import { MessageBubble } from '../messages/components/MessageBubble';
+import { MessageComposer } from '../messages/components/MessageComposer';
 
 export function ServerChannelsPage() {
   const { serverId, channelId } = useParams<{ channelId: string; serverId: string }>();

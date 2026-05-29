@@ -16,8 +16,8 @@ import {
   voiceTransportCreatedRequestSchema,
 } from '@eiscord/shared';
 
-import { AppError } from '../../common/errors/app-error';
-import { createApiErrorResponse, createApiSuccessResponse } from '../../common/http/api-response.factory';
+import { AppError } from '../../core/errors/app-error';
+import { createApiErrorResponse, createApiSuccessResponse } from '../../core/http/api-response.factory';
 import type { RealtimeSocket } from '../realtime/realtime.gateway';
 import { MediaSignalingService } from './media-signaling.service';
 

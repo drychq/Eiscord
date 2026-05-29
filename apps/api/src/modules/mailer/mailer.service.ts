@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createTransport, type Transporter } from 'nodemailer';
 
-import type { Environment } from '../../common/config/env.validation';
+import type { Environment } from '../../infra/config/env.validation';
 
 export type PasswordResetEmail = {
   code: string;

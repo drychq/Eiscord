@@ -5,9 +5,9 @@ import { ConfigService } from '@nestjs/config';
 
 import { ErrorCode } from '@eiscord/shared';
 
-import type { Environment } from '../../common/config/env.validation';
-import { AppError } from '../../common/errors/app-error';
-import { PrismaService } from '../../common/persistence/prisma.service';
+import type { Environment } from '../../infra/config/env.validation';
+import { AppError } from '../../core/errors/app-error';
+import { PrismaService } from '../../infra/persistence/prisma.service';
 import { AuditService } from '../audit/audit.service';
 import { MailerService } from '../mailer/mailer.service';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';

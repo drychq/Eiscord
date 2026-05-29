@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Plus, Trash2, Edit3 } from 'lucide-react';
 import { useCreateRole, useUpdateRole, useDeleteRole } from '../use-servers-queries';
-import { RoleBadge } from '../../../shared/components/RoleBadge';
+import { RoleBadge } from '../components/RoleBadge';
 import { ConfirmDialog } from '../../../shared/components/ConfirmDialog';
 import { useServerSettingsContext } from './types';
 import { RoleFormModal } from './modals/RoleFormModal';

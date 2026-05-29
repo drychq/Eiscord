@@ -1,5 +1,5 @@
 import { Navigate } from 'react-router-dom';
-import { useAuthStore } from '../state/use-auth-store';
+import { useAuthStore } from '../../shared/state/use-auth-store';
 
 export function PublicOnlyRoute({ children }: { children: React.ReactNode }) {
   const { status } = useAuthStore();

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { PermissionBitEditor } from '../../../../shared/components/PermissionBitEditor';
+import { PermissionBitEditor } from '../../components/PermissionBitEditor';
 import type { RoleSummary } from '../../servers-api';
 
 type Props = {

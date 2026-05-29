@@ -1,4 +1,4 @@
-import { PrismaService } from '../../common/persistence/prisma.service';
+import { PrismaService } from '../../infra/persistence/prisma.service';
 import { AuditService } from './audit.service';
 
 describe('AuditService', () => {

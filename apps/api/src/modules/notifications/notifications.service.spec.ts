@@ -1,5 +1,5 @@
-import type { EventCollector } from '../../common/persistence/event-collector';
-import { PrismaService } from '../../common/persistence/prisma.service';
+import type { EventCollector } from '../../infra/persistence/event-collector';
+import { PrismaService } from '../../infra/persistence/prisma.service';
 import { NotificationsService } from './notifications.service';
 
 const now = new Date('2026-05-03T00:00:00.000Z');

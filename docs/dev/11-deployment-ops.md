@@ -10,8 +10,8 @@
 | Redis | `6379` | 在线状态、缓存、限流和短期去重。 |
 | MinIO | `9000`、`9001` | S3 兼容对象存储和控制台。 |
 | MailHog | `1025`（SMTP）、`8025`（Web UI） | 本地开发邮件捕获器；密码重置 OTP 邮件落地此处供调试。 |
-| API | `3000` | NestJS HTTP API 和 Socket.IO。 |
-| Web | `5173` | Vite 开发服务器。 |
+| API | `3000` | NestJS HTTP API 和 Socket.IO，由 `pnpm dev:api` / `pnpm dev` 在宿主机启动。 |
+| Web | `5173` | Vite 开发服务器，由 `pnpm dev:web` / `pnpm dev` 在宿主机启动。 |
 | mediasoup worker | `40000-40100/UDP`（RTC） | API 进程 spawn 的 `apps/media` 子进程，承载 SFU 媒体路由；`3001` 健康端口仅用于独立运行/调试。 |
 | coturn | `3478/UDP+TCP`、`5349/TLS` | STUN/TURN，签发短 TTL HMAC 凭证。 |
 
@@ -32,7 +32,7 @@ pnpm db:seed
 pnpm dev
 ```
 
-`pnpm dev` 会先构建 `@eiscord/media`，API 随后按需 spawn `apps/media/dist/main.js`。Docker Compose 中的 `mediasoup` 服务是独立运行/健康检查用入口，当前本地开发默认不依赖它。MailHog 在 `pnpm infra:up` 中已包含；密码重置邮件可在 http://localhost:8025 查看。
+根目录 `docker-compose.yml` 只承载本地依赖服务和可选调试服务；API 与 Web 由 pnpm 脚本启动。`pnpm dev` 会先构建 `@eiscord/media`，API 随后按需 spawn `apps/media/dist/main.js`。Docker Compose 中的 `mediasoup` 服务是独立运行/健康检查用入口，当前本地开发默认不依赖它。MailHog 在 `pnpm infra:up` 中已包含；密码重置邮件可在 http://localhost:8025 查看。
 
 M6 验收命令：
 
@@ -91,16 +91,21 @@ pnpm perf:k6
 
 ## Docker Compose 设计
 
-Compose 文件包含：
+根目录本地 Compose 文件包含：
 
 - `postgres`：持久化 volume，健康检查。
 - `redis`：持久化可选，健康检查。
 - `minio`：创建本地 bucket。
 - `mailhog`：捕获本地 SMTP 流量供密码重置等流程调试；生产不部署，由真实 SMTP 服务替代。
-- `api`：依赖数据库和 Redis，暴露 `3000`。
-- `web`：开发模式暴露 `5173`，生产模式可由 Nginx 或静态托管提供。
 - `mediasoup`：独立启动 `apps/media` 的可选调试服务；默认 API 仍使用子进程 worker。若生产改为独立服务，需要同步调整 API 与 worker 的 RPC 边界。
 - `coturn`：挂载 `docker/coturn/turnserver.conf`，使用 `TURN_SHARED_SECRET` 启用 HMAC 时间凭证，禁用静态用户。
+
+生产/演示部署位于 `deploy/`：
+
+- `deploy/docker-compose.prod.yml`：单机生产/演示 Compose，包含 `postgres`、`redis`、`minio`、`api`、`migrate`、`caddy`、`coturn`。
+- `deploy/docker/api.Dockerfile`：API 生产镜像，同时内置 `apps/media/dist`，供 API 进程 spawn mediasoup worker；`apps/media` 不再维护独立 Dockerfile。
+- `deploy/docker/web.Dockerfile`：Web 静态构建并通过 Caddy 提供服务。
+- `deploy/Caddyfile`：前端、API、Socket.IO 和 MinIO 的 HTTPS 反向代理。
 
 API 容器启动前执行迁移的策略必须谨慎。开发环境可自动迁移，生产环境使用显式迁移命令。
 

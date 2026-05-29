@@ -2,8 +2,8 @@ import { Server } from 'socket.io';
 
 import { ErrorCode, RealtimeEvent } from '@eiscord/shared';
 
-import { RejectingTokenVerifier } from '../../common/auth/rejecting-token.verifier';
-import { PermissionsService } from '../../common/permissions/permissions.service';
+import { RejectingTokenVerifier } from '../../core/auth/rejecting-token.verifier';
+import { PermissionsService } from '../../core/permissions/permissions.service';
 import { AuditService } from '../audit/audit.service';
 import { RealtimeGateway, RealtimeSocket } from './realtime.gateway';
 import { RealtimePublisher } from './realtime.publisher';

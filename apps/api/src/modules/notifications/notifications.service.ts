@@ -2,11 +2,11 @@ import { HttpStatus, Injectable } from '@nestjs/common';
 
 import { ErrorCode, RealtimeEvent } from '@eiscord/shared';
 
-import { AuthenticatedUserContext } from '../../common/auth/auth.types';
-import { AppError } from '../../common/errors/app-error';
-import type { EventCollector } from '../../common/persistence/event-collector';
-import { PrismaService } from '../../common/persistence/prisma.service';
-import type { RawSqlExecutor } from '../../common/persistence/types';
+import { AuthenticatedUserContext } from '../../core/auth/auth.types';
+import { AppError } from '../../core/errors/app-error';
+import type { EventCollector } from '../../infra/persistence/event-collector';
+import { PrismaService } from '../../infra/persistence/prisma.service';
+import type { RawSqlExecutor } from '../../infra/persistence/types';
 import { buildUserRoom } from '../realtime/realtime.rooms';
 import { ListNotificationsDto } from './dto/list-notifications.dto';
 import { MarkNotificationsReadDto } from './dto/mark-notifications-read.dto';

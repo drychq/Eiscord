@@ -2,8 +2,8 @@ import { Injectable } from '@nestjs/common';
 
 import { VoiceConnectionStatus, VoiceMediaState } from '@eiscord/shared';
 
-import { PrismaService } from '../../common/persistence/prisma.service';
-import type { RawSqlExecutor } from '../../common/persistence/types';
+import { PrismaService } from '../../infra/persistence/prisma.service';
+import type { RawSqlExecutor } from '../../infra/persistence/types';
 import type { VoiceSessionRow } from './voice.presenter';
 
 export type VoiceChannelRow = {

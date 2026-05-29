@@ -3,7 +3,7 @@ import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
-import { AuthenticatedUserContext } from '../../common/auth/auth.types';
+import { AuthenticatedUserContext } from '../../core/auth/auth.types';
 
 type AccessTokenClaims = {
   exp: number;

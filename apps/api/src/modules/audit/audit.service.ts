@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import { Injectable, Logger, Optional } from '@nestjs/common';
 
-import { PrismaService } from '../../common/persistence/prisma.service';
+import { PrismaService } from '../../infra/persistence/prisma.service';
 
 export type AuditResult = 'failure' | 'success';
 

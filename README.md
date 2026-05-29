@@ -89,12 +89,18 @@ Eiscord/
     schema.prisma         # 数据模型
     seed.ts               # 演示数据入口
   scripts/                # 见下文「脚本参考」
-  docker/                 # Docker 服务初始化
-  docs/dev/               # 开发方案文档集
-  docker-compose.yml
+  docker/                 # 本地依赖服务配置（MinIO/Postgres/coturn）
+  deploy/                 # 生产/演示 Compose、Dockerfile、Caddy 与运维脚本
+  tests/e2e/              # Playwright 浏览器 E2E
+  docs/
+    dev/                  # 开发方案文档集
+    audit/                # 历史审计与一致性报告
+  docker-compose.yml      # 本地 infra Compose
   package.json
   pnpm-workspace.yaml
 ```
+
+源码内部按层组织：API 使用 `src/bootstrap`、`src/core`、`src/infra`、`src/modules` 和 `test/e2e`；Web 使用 `src/app`、`src/features`、`src/shared`，并通过 ESLint 禁止 `shared → features/app` 与 `features → app` 的反向依赖。
 
 ## 脚本参考
 
@@ -145,7 +151,7 @@ Eiscord/
 
 | 命令             | 底层脚本                                         | 说明                                                                                                                                        |
 | ---------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm e2e:api`   | `scripts/e2e/api.sh` / `scripts/e2e/api.ps1`     | 运行 API 端到端测试（Jest + Supertest + Socket.IO）。                                                                                       |
+| `pnpm e2e:api`   | `scripts/e2e/api.sh` / `scripts/e2e/api.ps1`     | 运行 API 端到端测试（Jest + Supertest + Socket.IO，测试文件位于 `apps/api/test/e2e`）。                                                     |
 | `pnpm e2e:web`   | `scripts/e2e/web.sh` / `scripts/e2e/web.ps1`     | 运行 Web 端到端测试（Playwright）。                                                                                                         |
 | `pnpm e2e:voice` | `scripts/e2e/voice.sh` / `scripts/e2e/voice.ps1` | 运行语音频道 E2E（`tests/e2e/voice-media.spec.ts`）。                                                                                       |
 | `pnpm e2e`       | `scripts/e2e/all.sh` / `scripts/e2e/all.ps1`     | 运行全部 E2E。共享单次 `deps:build` + `db:test:reset`，再依次执行 API E2E 与 Web E2E，避免重复前置。                                        |

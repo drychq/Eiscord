@@ -1,11 +1,11 @@
 import { Body, Controller, Post, Req } from '@nestjs/common';
 
-import { CurrentUser } from '../../common/auth/current-user.decorator';
-import { Public } from '../../common/auth/public.decorator';
-import type { AuthenticatedUserContext } from '../../common/auth/auth.types';
-import { RateLimit } from '../../common/rate-limit/rate-limit.decorator';
-import { getRequestId } from '../../common/request/request-id.util';
-import type { AuthenticatedRequest, RequestWithId } from '../../common/request/request.types';
+import { CurrentUser } from '../../core/auth/current-user.decorator';
+import { Public } from '../../core/auth/public.decorator';
+import type { AuthenticatedUserContext } from '../../core/auth/auth.types';
+import { RateLimit } from '../../core/rate-limit/rate-limit.decorator';
+import { getRequestId } from '../../core/request/request-id.util';
+import type { AuthenticatedRequest, RequestWithId } from '../../core/request/request.types';
 import { AuthService } from './auth.service';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { LoginUserDto } from './dto/login-user.dto';

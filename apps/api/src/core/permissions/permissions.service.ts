@@ -3,7 +3,7 @@ import { HttpStatus, Injectable, Optional } from '@nestjs/common';
 import { ErrorCode, PermissionBit } from '@eiscord/shared';
 
 import { AppError } from '../errors/app-error';
-import { PrismaService } from '../persistence/prisma.service';
+import { PrismaService } from '../../infra/persistence/prisma.service';
 import { AuditService } from '../../modules/audit/audit.service';
 import { AuthenticatedUserContext } from '../auth/auth.types';
 import { PermissionAction, PermissionCheckInput, PermissionDecision } from './permission.types';

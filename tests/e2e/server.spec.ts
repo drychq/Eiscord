@@ -33,7 +33,7 @@ test.describe('server channel and voice flows', () => {
 
     await page.getByRole('button', { name: '加入语音' }).click();
     await expect(page.getByRole('button', { name: '离开语音' })).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText(/已连接|协商中/)).toBeVisible();
+    await expect(page.getByTestId('voice-status')).toContainText(/已连接|协商中/);
 
     const muteButton = page.getByRole('button', { name: '静音麦克风' });
     await muteButton.click();

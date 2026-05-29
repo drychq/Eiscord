@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 
-import { PermissionGuard } from '../../common/permissions/permission.guard';
-import { PermissionsService } from '../../common/permissions/permissions.service';
+import { PermissionGuard } from '../../core/permissions/permission.guard';
+import { PermissionsService } from '../../core/permissions/permissions.service';
 import { AuditModule } from '../audit/audit.module';
 import { PermissionsController } from './permissions.controller';
 

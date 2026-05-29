@@ -1,9 +1,9 @@
 import { ErrorCode } from '@eiscord/shared';
 
-import type { TokenVerifier } from '../../common/auth/auth.types';
-import type { PrismaService } from '../../common/persistence/prisma.service';
-import { PermissionAction } from '../../common/permissions/permission.types';
-import type { PermissionsService } from '../../common/permissions/permissions.service';
+import type { TokenVerifier } from '../../core/auth/auth.types';
+import type { PrismaService } from '../../infra/persistence/prisma.service';
+import { PermissionAction } from '../../core/permissions/permission.types';
+import type { PermissionsService } from '../../core/permissions/permissions.service';
 import type { AuditService } from '../audit/audit.service';
 import type { PresenceService } from './presence.service';
 import { RealtimeGateway } from './realtime.gateway';

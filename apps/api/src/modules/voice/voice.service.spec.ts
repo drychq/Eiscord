@@ -2,9 +2,9 @@ import { ConfigService } from '@nestjs/config';
 
 import { ErrorCode, RealtimeEvent } from '@eiscord/shared';
 
-import { PersistenceCoordinator } from '../../common/persistence/persistence-coordinator.service';
-import { PrismaService } from '../../common/persistence/prisma.service';
-import { PermissionsService } from '../../common/permissions/permissions.service';
+import { PersistenceCoordinator } from '../../infra/persistence/persistence-coordinator.service';
+import { PrismaService } from '../../infra/persistence/prisma.service';
+import { PermissionsService } from '../../core/permissions/permissions.service';
 import { MediaSignalingService } from '../media-signaling/media-signaling.service';
 import { TurnCredentialService } from '../media-signaling/turn-credential.service';
 import { RealtimePublisher } from '../realtime/realtime.publisher';

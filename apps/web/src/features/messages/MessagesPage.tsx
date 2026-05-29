@@ -3,9 +3,9 @@ import { useParams } from 'react-router-dom';
 import * as socket from '../../shared/api/socket-client';
 import { useDmMessages, useSendDmMessage, useDeleteMessage } from './use-messages-queries';
 import { toChronologicalMessages } from './message-ordering';
-import { MessageList } from '../../shared/components/MessageList';
-import { MessageBubble } from '../../shared/components/MessageBubble';
-import { MessageComposer } from '../../shared/components/MessageComposer';
+import { MessageList } from './components/MessageList';
+import { MessageBubble } from './components/MessageBubble';
+import { MessageComposer } from './components/MessageComposer';
 
 export function MessagesPage() {
   const { conversationId } = useParams<{ conversationId: string }>();

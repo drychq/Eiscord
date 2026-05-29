@@ -8,7 +8,7 @@ import { ErrorCode } from '@eiscord/shared';
 
 import { AppModule } from '../../app.module';
 import { Public } from '../auth/public.decorator';
-import { configureApiApp } from '../bootstrap/configure-api-app';
+import { configureApiApp } from '../../bootstrap/configure-api-app';
 
 class ProbeDto {
   @IsString()

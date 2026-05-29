@@ -5,17 +5,17 @@ import { ServerRail } from './ServerRail';
 import { SidePanel } from './SidePanel';
 import { MemberPanel } from './MemberPanel';
 import { VoiceStrip } from './VoiceStrip';
-import { ErrorBoundary } from './ErrorBoundary';
+import { ErrorBoundary } from '../../shared/components/ErrorBoundary';
 import { ProfilePanel } from '../../features/profile/ProfilePanel';
-import { useViewport } from '../hooks/use-viewport';
-import { useAuthStore } from '../state/use-auth-store';
-import { useWorkspaceStore } from '../state/use-workspace-store';
-import { useRealtimePermissionSync } from '../hooks/use-realtime-sync';
+import { useViewport } from '../../shared/hooks/use-viewport';
+import { useAuthStore } from '../../shared/state/use-auth-store';
+import { useWorkspaceStore } from '../../shared/state/use-workspace-store';
+import { useRealtimePermissionSync } from '../../shared/hooks/use-realtime-sync';
 import { useMessagesRealtime } from '../../features/messages/use-messages-queries';
 import { useNotificationsRealtime } from '../../features/notifications/use-notifications-queries';
 import { useFriendsRealtime } from '../../features/friends/use-friends-queries';
 import { useVoiceRealtime } from '../../features/voice/use-voice-queries';
-import * as socket from '../api/socket-client';
+import * as socket from '../../shared/api/socket-client';
 
 export function AppShell() {
   const viewport = useViewport();

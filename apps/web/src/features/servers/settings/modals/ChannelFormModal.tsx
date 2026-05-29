@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Plus, Shield, Edit3, Trash2 } from 'lucide-react';
-import { PermissionBitEditor } from '../../../../shared/components/PermissionBitEditor';
+import { PermissionBitEditor } from '../../components/PermissionBitEditor';
 import type { ChannelSummary, PermissionOverwriteInput } from '../../servers-api';
 
 type ChannelFormInitial = Pick<

@@ -2,10 +2,10 @@ import { HttpStatus, Injectable, Logger } from '@nestjs/common';
 
 import { ErrorCode, RealtimeEvent } from '@eiscord/shared';
 
-import { AuthenticatedUserContext } from '../../common/auth/auth.types';
-import { AppError } from '../../common/errors/app-error';
-import { PrismaService } from '../../common/persistence/prisma.service';
-import { RedisService } from '../../common/redis/redis.service';
+import { AuthenticatedUserContext } from '../../core/auth/auth.types';
+import { AppError } from '../../core/errors/app-error';
+import { PrismaService } from '../../infra/persistence/prisma.service';
+import { RedisService } from '../../infra/redis/redis.service';
 import type { PresenceStatusValue } from '../users/dto/update-presence.dto';
 import { toUserSummary, type UserRecord, type UserSummary } from '../users/user.presenter';
 import { buildUserRoom } from './realtime.rooms';

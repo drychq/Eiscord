@@ -1,11 +1,11 @@
 import { Body, Controller, Delete, Param, ParseUUIDPipe, Patch, Post, Req } from '@nestjs/common';
 
-import { CurrentUser } from '../../common/auth/current-user.decorator';
-import type { AuthenticatedUserContext } from '../../common/auth/auth.types';
-import { PermissionAction } from '../../common/permissions/permission.types';
-import { RequirePermissionForParam } from '../../common/permissions/require-permission.decorator';
-import { getRequestId } from '../../common/request/request-id.util';
-import type { AuthenticatedRequest } from '../../common/request/request.types';
+import { CurrentUser } from '../../core/auth/current-user.decorator';
+import type { AuthenticatedUserContext } from '../../core/auth/auth.types';
+import { PermissionAction } from '../../core/permissions/permission.types';
+import { RequirePermissionForParam } from '../../core/permissions/require-permission.decorator';
+import { getRequestId } from '../../core/request/request-id.util';
+import type { AuthenticatedRequest } from '../../core/request/request.types';
 import { ChannelsService } from './channels.service';
 import { CreateChannelDto } from './dto/create-channel.dto';
 import { UpdateChannelDto } from './dto/update-channel.dto';

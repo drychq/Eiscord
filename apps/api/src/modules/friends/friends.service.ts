@@ -4,11 +4,11 @@ import { HttpStatus, Injectable } from '@nestjs/common';
 
 import { ErrorCode } from '@eiscord/shared';
 
-import { AuthenticatedUserContext } from '../../common/auth/auth.types';
-import { AppError } from '../../common/errors/app-error';
-import { PersistenceCoordinator } from '../../common/persistence/persistence-coordinator.service';
-import { PrismaService } from '../../common/persistence/prisma.service';
-import type { RawSqlExecutor } from '../../common/persistence/types';
+import { AuthenticatedUserContext } from '../../core/auth/auth.types';
+import { AppError } from '../../core/errors/app-error';
+import { PersistenceCoordinator } from '../../infra/persistence/persistence-coordinator.service';
+import { PrismaService } from '../../infra/persistence/prisma.service';
+import type { RawSqlExecutor } from '../../infra/persistence/types';
 import { AuditService } from '../audit/audit.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CreateFriendRequestDto } from './dto/create-friend-request.dto';

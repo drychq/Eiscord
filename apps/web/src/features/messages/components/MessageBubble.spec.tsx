@@ -4,8 +4,8 @@ import { cleanup, render, screen } from '@testing-library/react';
 import type { UserSummary } from '@eiscord/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import type { Message } from '../../features/messages/messages-api';
-import { useAuthStore } from '../state/use-auth-store';
+import type { Message } from '../messages-api';
+import { useAuthStore } from '../../../shared/state/use-auth-store';
 import { MessageBubble } from './MessageBubble';
 
 const CURRENT_USER_ID = '00000000-0000-4000-8000-000000000100';
