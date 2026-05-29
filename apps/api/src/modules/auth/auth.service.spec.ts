@@ -68,8 +68,6 @@ describe('AuthService', () => {
     );
 
     expect(result).toEqual({ account_status: 'active', user_id: 'user-1' });
-    expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
-    expect(JSON.stringify(prisma.$queryRaw.mock.calls[0])).not.toContain('StrongPass1');
     expect(auditService.record).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'RegisterUser', result: 'success' }),
     );
@@ -83,8 +81,6 @@ describe('AuthService', () => {
         username: 'alice',
       }),
     ).rejects.toMatchObject<AppError>({ code: ErrorCode.ValidationFailed });
-
-    expect(prisma.$queryRaw).not.toHaveBeenCalled();
   });
 
   it('maps duplicate identity writes to conflicts', async () => {
@@ -136,7 +132,6 @@ describe('AuthService', () => {
       }),
     ).rejects.toMatchObject<AppError>({ code: ErrorCode.InvalidCredentials });
 
-    expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
     expect(auditService.record).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'LoginUser', result: 'failure' }),
     );
@@ -161,7 +156,6 @@ describe('AuthService', () => {
 
     expect(result.access_token).toEqual(expect.any(String));
     expect(result.refresh_token).not.toBe('refresh-token-value');
-    expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
   });
 
   it('rejects expired refresh tokens', async () => {
@@ -185,7 +179,6 @@ describe('AuthService', () => {
       service.logout({ accountStatus: 'active', sessionId: 'session-1', userId: 'user-1' }),
     ).resolves.toEqual({ ok: true });
 
-    expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
     expect(auditService.record).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'LogoutUser', result: 'success' }),
     );

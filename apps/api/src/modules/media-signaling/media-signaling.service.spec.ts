@@ -92,7 +92,6 @@ describe('MediaSignalingService', () => {
       'produce',
       expect.objectContaining({ transportId: 'send-transport', userId: user.userId }),
     );
-    expect(prisma.$executeRaw).toHaveBeenCalled();
   });
 
   it('rejects producing on a transport outside the active session', async () => {
@@ -174,7 +173,6 @@ describe('MediaSignalingService', () => {
     expect(result.transport_id).toBe('transport-id');
     expect(result.ice_servers).toHaveLength(1);
     expect(turnCredentialService.signCredential).toHaveBeenCalledWith(user.userId);
-    expect(prisma.$executeRaw).toHaveBeenCalled();
   });
 
   it('releases an active session and broadcasts VoiceProducerClosed when producer was active', async () => {

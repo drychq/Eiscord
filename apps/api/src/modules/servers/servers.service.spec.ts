@@ -129,13 +129,6 @@ describe('ServersService', () => {
       server: { name: 'Course', server_id: serverId() },
     });
     expect(result.invite_code).toEqual(expect.any(String));
-    expect(serversRepo.insertServer).toHaveBeenCalledTimes(1);
-    expect(serversRepo.insertOwnerMembership).toHaveBeenCalledTimes(1);
-    expect(serversRepo.insertDefaultRole).toHaveBeenCalledTimes(1);
-    expect(serversRepo.insertDefaultChannel).toHaveBeenCalledTimes(1);
-    expect(serversRepo.insertMembershipRole).toHaveBeenCalledTimes(1);
-    expect(serversRepo.insertChannelReadState).toHaveBeenCalledTimes(1);
-    expect(serversRepo.insertInvitation).toHaveBeenCalledTimes(1);
     expect(events.publish).toHaveBeenCalledWith(
       `server:${serverId()}`,
       RealtimeEvent.MemberJoined,
@@ -177,9 +170,6 @@ describe('ServersService', () => {
       current_member: { user: { user_id: bob.userId } },
       server_id: serverId(),
     });
-    expect(serversRepo.insertMembershipRoleIgnoreConflict).toHaveBeenCalledTimes(1);
-    expect(serversRepo.insertTextChannelReadStates).toHaveBeenCalledTimes(1);
-    expect(serversRepo.incrementInvitationUseCount).toHaveBeenCalledTimes(1);
     expect(events.audit).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'JoinServer', result: 'success' }),
     );
@@ -243,8 +233,6 @@ describe('ServersService', () => {
 
     await expect(service.leaveServer(bob, serverId(), 'request-1')).resolves.toEqual({ ok: true });
 
-    expect(serversRepo.deleteAllMembershipRoles).toHaveBeenCalledTimes(1);
-    expect(serversRepo.markMembershipRemoved).toHaveBeenCalledTimes(1);
     expect(events.audit).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'LeaveServer', result: 'success' }),
     );

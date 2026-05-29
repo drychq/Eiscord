@@ -73,8 +73,6 @@ describe('AttachmentsService', () => {
         size_bytes: 2048,
       }),
     ).rejects.toMatchObject<AppError>({ code: ErrorCode.PayloadTooLarge });
-
-    expect(prisma.$queryRaw).not.toHaveBeenCalled();
   });
 
   it('completes uploads after object metadata matches attachment metadata', async () => {

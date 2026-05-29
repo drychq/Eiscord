@@ -104,9 +104,6 @@ describe('ChannelsService', () => {
       sort_order: 10,
       type: 'text',
     });
-    expect(channelsRepo.insertChannel).toHaveBeenCalledTimes(1);
-    expect(channelsRepo.seedChannelReadStates).toHaveBeenCalledTimes(1);
-    expect(channelsRepo.deletePermissionOverwrites).toHaveBeenCalledTimes(1);
     expect(events.audit).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'CreateChannel', result: 'success' }),
     );

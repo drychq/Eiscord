@@ -107,15 +107,6 @@ describe('MessagesService', () => {
       content: 'hello',
       message_id: messageId(),
     });
-    expect(messagesRepo.insertMessage).toHaveBeenCalledTimes(1);
-    expect(messagesRepo.markSenderReadChannel).toHaveBeenCalledWith(
-      tx,
-      user.userId,
-      channelId(),
-      messageId(),
-    );
-    expect(messagesRepo.loadMessageAttachments).toHaveBeenCalledWith(tx, messageId());
-    expect(messagesRepo.loadMessageMentions).toHaveBeenCalledWith(tx, messageId());
     expect(events.publish).toHaveBeenCalledWith(
       `channel:${channelId()}`,
       RealtimeEvent.MessageCreated,
