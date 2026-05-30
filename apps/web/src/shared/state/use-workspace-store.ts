@@ -39,7 +39,6 @@ export type WorkspaceState = {
     user_id: string;
   } | null;
   pendingVoiceMedia: JoinVoiceMediaResponse | null;
-  isServerSettingsOpen: boolean;
   isProfilePanelOpen: boolean;
   isMobileNavOpen: boolean;
   recentPath: string | null;
@@ -52,7 +51,6 @@ export type WorkspaceState = {
     session: WorkspaceState['activeVoiceSession'],
   ) => void;
   setPendingVoiceMedia: (media: JoinVoiceMediaResponse | null) => void;
-  setServerSettingsOpen: (open: boolean) => void;
   setProfilePanelOpen: (open: boolean) => void;
   setMobileNavOpen: (open: boolean) => void;
   setRecentPath: (path: string) => void;
@@ -65,7 +63,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   activeVoiceChannelId: null,
   activeVoiceSession: null,
   pendingVoiceMedia: null,
-  isServerSettingsOpen: false,
   isProfilePanelOpen: false,
   isMobileNavOpen: false,
   recentPath: loadRecentPath(),
@@ -86,7 +83,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
       ...(session ? {} : { pendingVoiceMedia: null }),
     }),
   setPendingVoiceMedia: (media) => set({ pendingVoiceMedia: media }),
-  setServerSettingsOpen: (open) => set({ isServerSettingsOpen: open }),
   setProfilePanelOpen: (open) => set({ isProfilePanelOpen: open }),
   setMobileNavOpen: (open) => set({ isMobileNavOpen: open }),
   setRecentPath: (path) => {

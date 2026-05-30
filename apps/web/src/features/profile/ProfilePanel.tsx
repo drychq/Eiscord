@@ -1,6 +1,6 @@
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Monitor, Moon, Sun } from 'lucide-react';
+import { Monitor, Moon, Sun, X } from 'lucide-react';
 import {
   updateProfileRequestSchema,
   type UpdatePresenceRequest,
@@ -9,6 +9,7 @@ import {
 import { useAuthStore } from '../../shared/state/use-auth-store';
 import { useThemeStore, type ThemePreference } from '../../shared/state/use-theme-store';
 import { useWorkspaceStore } from '../../shared/state/use-workspace-store';
+import { useBackDismiss } from '../../shared/hooks/use-back-dismiss';
 import { FormField } from '../../shared/components/FormField';
 import { formFieldProps } from '../../shared/components/form-field-props';
 import { Spinner } from '../../shared/components/Spinner';
@@ -42,6 +43,8 @@ export function ProfilePanel() {
     },
   });
 
+  useBackDismiss(isProfilePanelOpen, () => setProfilePanelOpen(false));
+
   if (!isProfilePanelOpen || !currentUser) return null;
 
   return (
@@ -52,7 +55,17 @@ export function ProfilePanel() {
         aria-hidden="true"
       />
       <aside className="profile-panel" role="dialog" aria-label="个人资料">
-        <h2>个人资料</h2>
+        <div className="profile-panel-header">
+          <h2>个人资料</h2>
+          <button
+            className="icon-button profile-close"
+            type="button"
+            aria-label="关闭"
+            onClick={() => setProfilePanelOpen(false)}
+          >
+            <X size={18} />
+          </button>
+        </div>
 
         <div className="profile-readonly">
           <span>用户名</span>

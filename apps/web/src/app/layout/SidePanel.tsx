@@ -9,7 +9,7 @@ import { Spinner } from '../../shared/components/Spinner';
 export function SidePanel() {
   const { serverId } = useParams();
   const navigate = useNavigate();
-  const { isServerSettingsOpen, setServerSettingsOpen, setActiveChannelId } = useWorkspaceStore();
+  const { setActiveChannelId } = useWorkspaceStore();
   const { data: server, isLoading: serverLoading } = useServerDetail(serverId ?? null);
   const { data: dms, isLoading: dmsLoading } = useDmConversations();
 
@@ -54,7 +54,7 @@ export function SidePanel() {
               className="icon-button"
               type="button"
               aria-label="社区设置"
-              onClick={() => setServerSettingsOpen(!isServerSettingsOpen)}
+              onClick={() => navigate(`/app/servers/${serverId}/settings`)}
             >
               <Settings size={18} />
             </button>

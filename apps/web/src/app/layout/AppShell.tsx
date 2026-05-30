@@ -8,6 +8,7 @@ import { VoiceStrip } from './VoiceStrip';
 import { ErrorBoundary } from '../../shared/components/ErrorBoundary';
 import { ProfilePanel } from '../../features/profile/ProfilePanel';
 import { useViewport } from '../../shared/hooks/use-viewport';
+import { useBackDismiss } from '../../shared/hooks/use-back-dismiss';
 import { useAuthStore } from '../../shared/state/use-auth-store';
 import { useWorkspaceStore } from '../../shared/state/use-workspace-store';
 import { useRealtimePermissionSync } from '../../shared/hooks/use-realtime-sync';
@@ -36,6 +37,8 @@ export function AppShell() {
   useFriendsRealtime();
   useVoiceRealtime();
 
+  useBackDismiss(isMobileNavOpen, () => setMobileNavOpen(false));
+
   useEffect(() => {
     const token = useAuthStore.getState().accessToken;
     if (token && !socket.isConnected()) {
@@ -61,6 +64,14 @@ export function AppShell() {
     <div className="workspace" data-mobile-nav-open={isMobileNavOpen ? 'true' : 'false'}>
       <ServerRail />
       <SidePanel />
+
+      {viewport === 'mobile' && isMobileNavOpen && (
+        <div
+          className="mobile-nav-overlay"
+          onClick={() => setMobileNavOpen(false)}
+          aria-hidden="true"
+        />
+      )}
 
       <main className="message-panel">
         <header className="message-header">

@@ -1,3 +1,5 @@
+import { useBackDismiss } from '../hooks/use-back-dismiss';
+
 type ConfirmDialogProps = {
   open: boolean;
   title: string;
@@ -17,6 +19,8 @@ export function ConfirmDialog({
   onCancel,
   variant = 'default',
 }: ConfirmDialogProps) {
+  useBackDismiss(open, onCancel);
+
   if (!open) return null;
 
   return (
