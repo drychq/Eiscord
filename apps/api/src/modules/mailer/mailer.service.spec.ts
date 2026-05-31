@@ -1,29 +1,28 @@
 import { ConfigService } from '@nestjs/config';
 
-const sendMailMock = jest.fn();
-const createTransportMock = jest.fn(() => ({ sendMail: sendMailMock }));
+const sendMock = jest.fn();
 
-jest.mock('nodemailer', () => ({
-  createTransport: (...args: unknown[]) => createTransportMock(...args),
+jest.mock('resend', () => ({
+  Resend: jest.fn().mockImplementation(() => ({ emails: { send: sendMock } })),
 }));
 
+import { Resend } from 'resend';
 import { MailerService } from './mailer.service';
+
+const ResendMock = Resend as unknown as jest.Mock;
 
 describe('MailerService', () => {
   let mailer: MailerService;
 
   beforeEach(() => {
-    sendMailMock.mockReset();
-    sendMailMock.mockResolvedValue({ messageId: 'mocked' });
-    createTransportMock.mockClear();
+    sendMock.mockReset();
+    sendMock.mockResolvedValue({ data: { id: 'mocked' }, error: null });
+    ResendMock.mockClear();
 
-    const configValues: Record<string, string | number> = {
-      SMTP_FROM_EMAIL: 'noreply@eiscord.test',
-      SMTP_FROM_NAME: 'Eiscord',
-      SMTP_HOST: 'localhost',
-      SMTP_PASSWORD: '',
-      SMTP_PORT: 1025,
-      SMTP_USER: '',
+    const configValues: Record<string, string> = {
+      MAIL_FROM_EMAIL: 'noreply@eiscord.test',
+      MAIL_FROM_NAME: 'Eiscord',
+      RESEND_API_KEY: 're_test_key',
     };
 
     const config = {
@@ -41,8 +40,8 @@ describe('MailerService', () => {
       to: 'user@example.com',
     });
 
-    expect(sendMailMock).toHaveBeenCalledTimes(1);
-    const payload = sendMailMock.mock.calls[0][0] as {
+    expect(sendMock).toHaveBeenCalledTimes(1);
+    const payload = sendMock.mock.calls[0][0] as {
       from: string;
       html: string;
       subject: string;
@@ -57,7 +56,7 @@ describe('MailerService', () => {
     expect(payload.html).not.toContain('<User & Co>');
   });
 
-  it('lazy-initializes the transporter exactly once across multiple sends', async () => {
+  it('lazy-initializes the Resend client exactly once across multiple sends', async () => {
     await mailer.sendPasswordResetCode({
       code: '111111',
       expiresInMinutes: 15,
@@ -71,18 +70,16 @@ describe('MailerService', () => {
       to: 'b@example.com',
     });
 
-    expect(createTransportMock).toHaveBeenCalledTimes(1);
-    expect(createTransportMock).toHaveBeenCalledWith({
-      auth: undefined,
-      host: 'localhost',
-      port: 1025,
-      secure: false,
-    });
-    expect(sendMailMock).toHaveBeenCalledTimes(2);
+    expect(ResendMock).toHaveBeenCalledTimes(1);
+    expect(ResendMock).toHaveBeenCalledWith('re_test_key');
+    expect(sendMock).toHaveBeenCalledTimes(2);
   });
 
-  it('propagates and logs SMTP errors', async () => {
-    sendMailMock.mockRejectedValueOnce(new Error('connection refused'));
+  it('propagates and logs errors returned by Resend', async () => {
+    sendMock.mockResolvedValueOnce({
+      data: null,
+      error: { message: 'invalid recipient', name: 'validation_error' },
+    });
 
     await expect(
       mailer.sendPasswordResetCode({
@@ -91,6 +88,6 @@ describe('MailerService', () => {
         nickname: 'Charlie',
         to: 'c@example.com',
       }),
-    ).rejects.toThrow('connection refused');
+    ).rejects.toThrow('invalid recipient');
   });
 });

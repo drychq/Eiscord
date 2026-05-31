@@ -9,7 +9,7 @@ export const registerRequestSchema = z
       .min(3)
       .max(32)
       .regex(/^[a-zA-Z0-9_]{3,32}$/, 'Username must be 3-32 alphanumeric or underscore characters.'),
-    email_or_phone: z.string().min(1).max(320),
+    email_or_phone: z.string().email('请输入有效的邮箱地址').max(320),
     password: z.string().min(8).max(128),
     verification_token: z.string().max(200).optional(),
   })

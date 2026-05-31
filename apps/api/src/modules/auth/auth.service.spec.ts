@@ -54,6 +54,7 @@ describe('AuthService', () => {
   });
 
   it('registers users without storing plaintext passwords', async () => {
+    prisma.$queryRaw.mockResolvedValueOnce([]); // email is not yet registered
     prisma.$queryRaw.mockResolvedValueOnce([
       userRecord({ passwordHash: passwordService.hashPassword('StrongPass1') }),
     ]);
@@ -84,6 +85,7 @@ describe('AuthService', () => {
   });
 
   it('maps duplicate identity writes to conflicts', async () => {
+    prisma.$queryRaw.mockResolvedValueOnce([]); // email lookup clears; the DB unique constraint rejects the insert
     prisma.$queryRaw.mockRejectedValueOnce({ code: 'P2010' });
 
     await expect(
@@ -93,6 +95,25 @@ describe('AuthService', () => {
         username: 'alice',
       }),
     ).rejects.toMatchObject<AppError>({ code: ErrorCode.Conflict });
+  });
+
+  it('rejects registration when the email is already registered', async () => {
+    prisma.$queryRaw.mockResolvedValueOnce([{ id: 'user-1' }]);
+
+    await expect(
+      service.register(
+        {
+          email_or_phone: 'alice@example.com',
+          password: 'StrongPass1',
+          username: 'alice',
+        },
+        'request-1',
+      ),
+    ).rejects.toMatchObject<AppError>({ code: ErrorCode.Conflict });
+
+    expect(auditService.record).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'RegisterUser', result: 'failure' }),
+    );
   });
 
   it('logs in and returns access, refresh, user, and M2 summaries', async () => {

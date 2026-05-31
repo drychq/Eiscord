@@ -48,7 +48,7 @@ export async function registerNewUser(
 ): Promise<void> {
   await page.goto('/register');
   await page.getByLabel('用户名').fill(username);
-  await page.getByLabel('邮箱 / 手机号').fill(`${username}@example.com`);
+  await page.getByLabel('邮箱').fill(`${username}@example.com`);
   await page.getByLabel('密码', { exact: true }).fill(password);
   await page.getByLabel('确认密码').fill(password);
   await page.getByRole('button', { name: '注册' }).click();

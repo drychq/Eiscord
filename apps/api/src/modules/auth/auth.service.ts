@@ -84,6 +84,26 @@ export class AuthService {
       );
     }
 
+    const [existing] = await this.prisma.$queryRaw<{ id: string }[]>`
+      SELECT id FROM users WHERE email_or_phone = ${emailOrPhone} LIMIT 1
+    `;
+
+    if (existing) {
+      await this.auditService.record({
+        action: 'RegisterUser',
+        failureReason: 'duplicate_email',
+        requestId,
+        result: 'failure',
+        targetType: 'user',
+      });
+
+      throw new AppError(
+        ErrorCode.Conflict,
+        'Email is already registered.',
+        HttpStatus.CONFLICT,
+      );
+    }
+
     try {
       const userId = randomUUID();
       const [user] = await this.prisma.$queryRaw<UserRecord[]>`

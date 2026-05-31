@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createTransport, type Transporter } from 'nodemailer';
+import { Resend } from 'resend';
 
 import type { Environment } from '../../infra/config/env.validation';
 
@@ -14,21 +14,25 @@ export type PasswordResetEmail = {
 @Injectable()
 export class MailerService {
   private readonly logger = new Logger(MailerService.name);
-  private transporter?: Transporter;
+  private client?: Resend;
 
   constructor(private readonly configService: ConfigService<Environment, true>) {}
 
   async sendPasswordResetCode(input: PasswordResetEmail): Promise<void> {
-    const fromEmail = this.configService.get('SMTP_FROM_EMAIL', { infer: true });
-    const fromName = this.configService.get('SMTP_FROM_NAME', { infer: true });
+    const fromEmail = this.configService.get('MAIL_FROM_EMAIL', { infer: true });
+    const fromName = this.configService.get('MAIL_FROM_NAME', { infer: true });
 
     try {
-      await this.getTransporter().sendMail({
+      const { error } = await this.getClient().emails.send({
         from: `"${fromName}" <${fromEmail}>`,
         html: renderPasswordResetEmail(input),
         subject: 'Eiscord 密码重置验证码',
         to: input.to,
       });
+
+      if (error) {
+        throw new Error(`${error.name ?? 'ResendError'}: ${error.message}`);
+      }
     } catch (error) {
       this.logger.error(
         `Failed to send password reset email to ${input.to}`,
@@ -38,22 +42,13 @@ export class MailerService {
     }
   }
 
-  private getTransporter(): Transporter {
-    if (!this.transporter) {
-      const host = this.configService.get('SMTP_HOST', { infer: true });
-      const port = this.configService.get('SMTP_PORT', { infer: true });
-      const user = this.configService.get('SMTP_USER', { infer: true });
-      const password = this.configService.get('SMTP_PASSWORD', { infer: true });
-
-      this.transporter = createTransport({
-        auth: user ? { pass: password, user } : undefined,
-        host,
-        port,
-        secure: port === 465,
-      });
+  private getClient(): Resend {
+    if (!this.client) {
+      const apiKey = this.configService.get('RESEND_API_KEY', { infer: true });
+      this.client = new Resend(apiKey);
     }
 
-    return this.transporter;
+    return this.client;
   }
 }
 

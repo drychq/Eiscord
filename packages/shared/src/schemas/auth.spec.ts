@@ -29,6 +29,16 @@ describe('auth schemas', () => {
     ).toThrow();
   });
 
+  it('rejects a register request whose contact is not an email', () => {
+    expect(() =>
+      registerRequestSchema.parse({
+        username: 'alice_01',
+        email_or_phone: '13800138000',
+        password: 'Password1',
+      }),
+    ).toThrow();
+  });
+
   it('parses the register response shape returned by /auth/register', () => {
     expect(() =>
       registerResponseSchema.parse({

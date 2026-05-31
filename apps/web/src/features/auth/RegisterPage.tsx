@@ -79,14 +79,14 @@ export function RegisterPage() {
           </FormField>
 
           <FormField
-            label="邮箱 / 手机号"
+            label="邮箱"
             error={errors.email_or_phone?.message}
             htmlFor="email_or_phone"
           >
             <input
-              type="text"
+              type="email"
               autoComplete="email"
-              placeholder="用于登录和找回密码"
+              placeholder="you@example.com"
               {...formFieldProps(
                 register('email_or_phone'),
                 'email_or_phone-error',
