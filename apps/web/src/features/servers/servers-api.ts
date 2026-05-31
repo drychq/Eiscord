@@ -62,6 +62,25 @@ const memberSummarySchema = z.object({
   user: serverMemberUserSummarySchema,
 });
 
+const inviteCreatorSchema = z.object({
+  avatar_attachment_id: z.string().uuid().nullable(),
+  nickname: z.string(),
+  user_id: z.string().uuid(),
+  username: z.string(),
+});
+
+const inviteSummarySchema = z.object({
+  code: z.string(),
+  created_at: z.string(),
+  creator: inviteCreatorSchema,
+  expires_at: z.string().nullable(),
+  invite_id: z.string().uuid(),
+  max_uses: z.number().nullable(),
+  server_id: z.string().uuid(),
+  status: z.string(),
+  used_count: z.number(),
+});
+
 const serverBaseSummarySchema = z.object({
   created_at: z.string(),
   description: z.string().nullable(),
@@ -92,6 +111,7 @@ export type ServerDetail = z.infer<typeof serverDetailSchema>;
 export type ChannelSummary = z.infer<typeof channelSummarySchema>;
 export type MemberSummary = z.infer<typeof memberSummarySchema>;
 export type RoleSummary = z.infer<typeof roleSummarySchema>;
+export type InviteSummary = z.infer<typeof inviteSummarySchema>;
 
 export function fetchServers(): Promise<ServerSummary[]> {
   return request<ServerSummary[]>('GET', '/servers', {
@@ -260,6 +280,24 @@ export function updateChannel(
 
 export function deleteChannel(channelId: string): Promise<{ ok: true }> {
   return request<{ ok: true }>('DELETE', `/channels/${channelId}`, {
+    schema: z.object({ ok: z.literal(true) }),
+  });
+}
+
+export function fetchServerInvites(serverId: string): Promise<InviteSummary[]> {
+  return request<InviteSummary[]>('GET', `/servers/${serverId}/invites`, {
+    schema: z.array(inviteSummarySchema),
+  });
+}
+
+export function createInvite(serverId: string): Promise<InviteSummary> {
+  return request<InviteSummary>('POST', `/servers/${serverId}/invites`, {
+    schema: inviteSummarySchema,
+  });
+}
+
+export function revokeInvite(serverId: string, inviteId: string): Promise<{ ok: true }> {
+  return request<{ ok: true }>('DELETE', `/servers/${serverId}/invites/${inviteId}`, {
     schema: z.object({ ok: z.literal(true) }),
   });
 }

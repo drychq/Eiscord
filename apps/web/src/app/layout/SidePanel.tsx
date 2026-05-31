@@ -28,7 +28,8 @@ export function SidePanel() {
       isOwner ||
       hasPermissionBit(currentPerms, PermissionBit.ManageRole) ||
       hasPermissionBit(currentPerms, PermissionBit.ManageMember) ||
-      hasPermissionBit(currentPerms, PermissionBit.ManageChannel);
+      hasPermissionBit(currentPerms, PermissionBit.ManageChannel) ||
+      hasPermissionBit(currentPerms, PermissionBit.CreateInvite);
 
     const allChannels = server?.channels ?? [];
     const textChannels = allChannels.filter(

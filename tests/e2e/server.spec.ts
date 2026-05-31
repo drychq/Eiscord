@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-import { login, sendMessage } from './helpers';
+import { createUserViaApi, login, logout, sendMessage, strongPassword, uniqueUsername } from './helpers';
 
 test.describe('server channel and voice flows', () => {
   test('owner Alice navigates to server and sends text message', async ({ page }) => {
@@ -99,5 +99,44 @@ test.describe('server channel and voice flows', () => {
 
     await page.getByRole('button', { name: 'Course Discussion' }).click();
     await expect(page.getByRole('button', { name: '社区设置' })).toHaveCount(0);
+  });
+});
+
+test.describe('server invite flow', () => {
+  test('owner generates an invite and a new user joins through the invite link', async ({
+    page,
+  }) => {
+    const joiner = uniqueUsername('inv');
+    await createUserViaApi(joiner);
+
+    // Owner Alice opens community settings and generates a fresh invite.
+    await login(page, 'alice');
+    await page.getByRole('button', { name: 'Course Discussion' }).click();
+    await page.getByRole('button', { name: '社区设置' }).click();
+    await page.getByRole('link', { name: '邀请' }).click();
+
+    const codeLocator = page.locator('.settings-list-item .item-name');
+    await expect(codeLocator.first()).toBeVisible();
+    const before = await codeLocator.allInnerTexts();
+    await page.getByRole('button', { name: '生成邀请' }).click();
+    await expect(codeLocator).toHaveCount(before.length + 1);
+    const after = await codeLocator.allInnerTexts();
+    const code = after.find((c) => !before.includes(c))?.trim();
+    expect(code).toBeTruthy();
+
+    // A brand-new (non-member) user opens the invite link, which joins the community.
+    await logout(page);
+    await login(page, joiner, strongPassword);
+    const joinResponse = page.waitForResponse(
+      (r) => r.url().includes('/api/v1/servers/join') && r.request().method() === 'POST',
+    );
+    await page.goto(`/invite/${code}`);
+    expect((await joinResponse).status()).toBe(201);
+
+    // The joined community is now visible in the new member's workspace.
+    await page.goto('/app');
+    await expect(page.getByRole('button', { name: 'Course Discussion' })).toBeVisible({
+      timeout: 15_000,
+    });
   });
 });

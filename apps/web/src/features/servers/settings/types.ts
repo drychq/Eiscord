@@ -8,6 +8,7 @@ export type ServerSettingsContext = {
   canManageRole: boolean;
   canManageMember: boolean;
   canManageChannel: boolean;
+  canCreateInvite: boolean;
 };
 
 export function useServerSettingsContext(): ServerSettingsContext {

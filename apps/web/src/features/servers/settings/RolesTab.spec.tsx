@@ -78,6 +78,7 @@ function buildContext(overrides: { roles: RoleSummary[] }): ServerSettingsContex
     canManageRole: true,
     canManageMember: true,
     canManageChannel: true,
+    canCreateInvite: true,
   };
 }
 

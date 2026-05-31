@@ -61,6 +61,9 @@ describe('ServersService', () => {
       insertDefaultChannel: jest.fn(),
       insertChannelReadState: jest.fn().mockResolvedValue(undefined),
       insertInvitation: jest.fn().mockResolvedValue(undefined),
+      insertInvitationReturning: jest.fn(),
+      listActiveInvitations: jest.fn().mockResolvedValue([]),
+      revokeInvitation: jest.fn(),
       listMembershipServers: jest.fn().mockResolvedValue([]),
       getInvitationForUpdate: jest.fn(),
       getDefaultRole: jest.fn(),
@@ -137,6 +140,17 @@ describe('ServersService', () => {
     );
   });
 
+  it('generates a base64url invite code when creating a server', async () => {
+    serversRepo.insertServer.mockResolvedValueOnce(serverRow());
+    serversRepo.insertOwnerMembership.mockResolvedValueOnce(memberRow());
+    serversRepo.insertDefaultRole.mockResolvedValueOnce(roleRow());
+    serversRepo.insertDefaultChannel.mockResolvedValueOnce(channelRow());
+
+    const result = await service.createServer(alice, { name: 'Course' }, 'request-1');
+
+    expect(result.invite_code).toMatch(/^[A-Za-z0-9_-]{8}$/);
+  });
+
   it('rejects invalid server icon attachments', async () => {
     serversRepo.findReadyServerIconAttachment.mockResolvedValueOnce(null);
 
@@ -172,6 +186,34 @@ describe('ServersService', () => {
     });
     expect(events.audit).toHaveBeenCalledWith(
       expect.objectContaining({ action: 'JoinServer', result: 'success' }),
+    );
+  });
+
+  it('increments the invitation use count and publishes MemberJoined when joining', async () => {
+    serversRepo.getInvitationForUpdate.mockResolvedValueOnce(invitationRow());
+    serversRepo.getDefaultRole.mockResolvedValueOnce(roleRow());
+    serversRepo.getMembershipForUpdate.mockResolvedValueOnce(null);
+    serversRepo.createMembership.mockResolvedValueOnce(membershipLookup({ userId: bob.userId }));
+    serversRepo.getActiveServerMembership.mockResolvedValueOnce({
+      ...serverRow(),
+      ...memberRow({ userId: bob.userId }),
+    });
+    serversRepo.listActiveChannelsByServer.mockResolvedValueOnce([channelRow()]);
+    serversRepo.listServerMembersRows.mockResolvedValueOnce([memberRow({ userId: bob.userId })]);
+    serversRepo.listRoleRows.mockResolvedValueOnce([roleRow()]);
+    serversRepo.listPermissionOverwritesForChannels.mockResolvedValueOnce([]);
+
+    await service.joinServer(bob, { invite_code: 'abc123' }, 'request-1');
+
+    expect(serversRepo.incrementInvitationUseCount).toHaveBeenCalledWith(
+      tx,
+      '00000000-0000-4000-8000-000000000601',
+    );
+    expect(events.publish).toHaveBeenCalledWith(
+      `server:${serverId()}`,
+      RealtimeEvent.MemberJoined,
+      expect.objectContaining({ server_id: serverId() }),
+      'request-1',
     );
   });
 
@@ -271,6 +313,68 @@ describe('ServersService', () => {
       'request-1',
     );
   });
+
+  it('creates an invite, maps the summary and audits without leaking the code', async () => {
+    serversRepo.insertInvitationReturning.mockResolvedValueOnce(invitationListRow());
+
+    const result = await service.createInvite(alice, serverId(), 'request-1');
+
+    expect(result).toMatchObject({
+      code: 'invite-abcdef',
+      creator: { user_id: alice.userId, username: 'alice' },
+      invite_id: inviteId(),
+      server_id: serverId(),
+      status: 'active',
+      used_count: 0,
+    });
+    expect(events.audit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'CreateInvite',
+        result: 'success',
+        targetId: inviteId(),
+        targetType: 'invitation',
+      }),
+    );
+    const auditArg = events.audit.mock.calls[0][0];
+    expect(auditArg.metadata).toBeUndefined();
+  });
+
+  it('lists active invites for a server', async () => {
+    serversRepo.listActiveInvitations.mockResolvedValueOnce([invitationListRow()]);
+
+    const result = await service.listInvites(serverId());
+
+    expect(result).toEqual([
+      expect.objectContaining({ invite_id: inviteId(), server_id: serverId() }),
+    ]);
+    expect(serversRepo.listActiveInvitations).toHaveBeenCalledWith(serverId());
+  });
+
+  it('revokes an active invite and audits the action', async () => {
+    serversRepo.revokeInvitation.mockResolvedValueOnce({ id: inviteId() });
+
+    await expect(
+      service.revokeInvite(alice, serverId(), inviteId(), 'request-1'),
+    ).resolves.toEqual({ ok: true });
+
+    expect(events.audit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'RevokeInvite',
+        result: 'success',
+        targetId: inviteId(),
+        targetType: 'invitation',
+      }),
+    );
+  });
+
+  it('rejects revoking an invite that is missing or already revoked', async () => {
+    serversRepo.revokeInvitation.mockResolvedValueOnce(null);
+
+    await expect(
+      service.revokeInvite(alice, serverId(), inviteId()),
+    ).rejects.toMatchObject<AppError>({ code: ErrorCode.ResourceNotFound });
+    expect(events.audit).not.toHaveBeenCalled();
+  });
 });
 
 function userId(index: number): string {
@@ -295,6 +399,10 @@ function channelId(): string {
 
 function attachmentId(): string {
   return '00000000-0000-4000-8000-000000000501';
+}
+
+function inviteId(): string {
+  return '00000000-0000-4000-8000-000000000701';
 }
 
 function serverRow(overrides: Record<string, unknown> = {}) {
@@ -364,6 +472,23 @@ function invitationRow(overrides: Record<string, unknown> = {}) {
     maxUses: null,
     serverId: serverId(),
     serverStatus: 'active',
+    status: 'active',
+    usedCount: 0,
+    ...overrides,
+  };
+}
+
+function invitationListRow(overrides: Record<string, unknown> = {}) {
+  return {
+    code: 'invite-abcdef',
+    createdAt: now,
+    createdById: alice.userId,
+    creatorAvatarAttachmentId: null,
+    creatorNickname: 'Alice',
+    creatorUsername: 'alice',
+    expiresAt: null,
+    id: inviteId(),
+    maxUses: null,
     status: 'active',
     usedCount: 0,
     ...overrides,

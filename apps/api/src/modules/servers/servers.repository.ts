@@ -8,6 +8,7 @@ import { PrismaService } from '../../infra/persistence/prisma.service';
 import type { RawSqlExecutor } from '../../infra/persistence/types';
 import type {
   ChannelRow,
+  InvitationListRow,
   MemberRow,
   PermissionOverwriteRow,
   RoleRow,
@@ -262,6 +263,76 @@ export class ServersRepository {
         'active'
       )
     `;
+  }
+
+  async insertInvitationReturning(
+    executor: RawSqlExecutor,
+    input: InsertInvitationInput,
+  ): Promise<InvitationListRow> {
+    const [invitation] = await executor.$queryRaw<InvitationListRow[]>`
+      INSERT INTO invitations (id, server_id, code, created_by_id, expires_at, max_uses, used_count, status)
+      VALUES (
+        ${randomUUID()}::uuid,
+        ${input.serverId}::uuid,
+        ${input.code},
+        ${input.createdById}::uuid,
+        null,
+        null,
+        0,
+        'active'
+      )
+      RETURNING
+        id,
+        code,
+        created_by_id AS "createdById",
+        created_at AS "createdAt",
+        expires_at AS "expiresAt",
+        max_uses AS "maxUses",
+        used_count AS "usedCount",
+        status,
+        (SELECT username FROM users WHERE id = ${input.createdById}::uuid) AS "creatorUsername",
+        (SELECT nickname FROM users WHERE id = ${input.createdById}::uuid) AS "creatorNickname",
+        (SELECT avatar_attachment_id FROM users WHERE id = ${input.createdById}::uuid) AS "creatorAvatarAttachmentId"
+    `;
+
+    return invitation;
+  }
+
+  listActiveInvitations(serverId: string): Promise<InvitationListRow[]> {
+    return this.prisma.$queryRaw<InvitationListRow[]>`
+      SELECT
+        i.id,
+        i.code,
+        i.created_by_id AS "createdById",
+        i.created_at AS "createdAt",
+        i.expires_at AS "expiresAt",
+        i.max_uses AS "maxUses",
+        i.used_count AS "usedCount",
+        i.status,
+        u.username AS "creatorUsername",
+        u.nickname AS "creatorNickname",
+        u.avatar_attachment_id AS "creatorAvatarAttachmentId"
+      FROM invitations i
+      INNER JOIN users u ON u.id = i.created_by_id
+      WHERE i.server_id = ${serverId}::uuid
+        AND i.status = 'active'
+      ORDER BY i.created_at DESC
+    `;
+  }
+
+  revokeInvitation(
+    executor: RawSqlExecutor,
+    serverId: string,
+    invitationId: string,
+  ): Promise<{ id: string } | null> {
+    return executor.$queryRaw<Array<{ id: string }>>`
+      UPDATE invitations
+      SET status = 'revoked', updated_at = NOW()
+      WHERE id = ${invitationId}::uuid
+        AND server_id = ${serverId}::uuid
+        AND status = 'active'
+      RETURNING id
+    `.then((rows) => rows[0] ?? null);
   }
 
   listMembershipServers(userId: string): Promise<ServerListRow[]> {

@@ -82,6 +82,25 @@ export type ServerMemberUserSummary = {
   username: string;
 };
 
+export type InviteCreatorSummary = {
+  avatar_attachment_id: string | null;
+  nickname: string;
+  user_id: string;
+  username: string;
+};
+
+export type InviteSummary = {
+  code: string;
+  created_at: string;
+  creator: InviteCreatorSummary;
+  expires_at: string | null;
+  invite_id: string;
+  max_uses: number | null;
+  server_id: string;
+  status: string;
+  used_count: number;
+};
+
 export type ServerRow = {
   createdAt: Date;
   description: string | null;
@@ -139,6 +158,20 @@ export type MemberRow = {
   userId: string;
   username: string;
   userNickname: string;
+};
+
+export type InvitationListRow = {
+  code: string;
+  createdAt: Date;
+  createdById: string;
+  creatorAvatarAttachmentId: string | null;
+  creatorNickname: string;
+  creatorUsername: string;
+  expiresAt: Date | null;
+  id: string;
+  maxUses: number | null;
+  status: string;
+  usedCount: number;
 };
 
 export function toServerBaseSummary(row: ServerRow): ServerBaseSummary {
@@ -222,5 +255,24 @@ export function toMemberSummary(row: MemberRow): MemberSummary {
       user_id: row.userId,
       username: row.username,
     },
+  };
+}
+
+export function toInviteSummary(row: InvitationListRow, serverId: string): InviteSummary {
+  return {
+    code: row.code,
+    created_at: row.createdAt.toISOString(),
+    creator: {
+      avatar_attachment_id: row.creatorAvatarAttachmentId,
+      nickname: row.creatorNickname,
+      user_id: row.createdById,
+      username: row.creatorUsername,
+    },
+    expires_at: row.expiresAt ? row.expiresAt.toISOString() : null,
+    invite_id: row.id,
+    max_uses: row.maxUses,
+    server_id: serverId,
+    status: row.status,
+    used_count: row.usedCount,
   };
 }

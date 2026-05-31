@@ -153,4 +153,31 @@ export class ServersController {
       getRequestId(request),
     );
   }
+
+  @Post(':server_id/invites')
+  @RequirePermissionForParam(PermissionAction.CreateInvite, 'server', 'server_id')
+  createInvite(
+    @CurrentUser() user: AuthenticatedUserContext,
+    @Param('server_id', ParseUUIDPipe) serverId: string,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.serversService.createInvite(user, serverId, getRequestId(request));
+  }
+
+  @Get(':server_id/invites')
+  @RequirePermissionForParam(PermissionAction.CreateInvite, 'server', 'server_id')
+  listInvites(@Param('server_id', ParseUUIDPipe) serverId: string) {
+    return this.serversService.listInvites(serverId);
+  }
+
+  @Delete(':server_id/invites/:invite_id')
+  @RequirePermissionForParam(PermissionAction.CreateInvite, 'server', 'server_id')
+  revokeInvite(
+    @CurrentUser() user: AuthenticatedUserContext,
+    @Param('server_id', ParseUUIDPipe) serverId: string,
+    @Param('invite_id', ParseUUIDPipe) inviteId: string,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.serversService.revokeInvite(user, serverId, inviteId, getRequestId(request));
+  }
 }

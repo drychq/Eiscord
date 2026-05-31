@@ -24,6 +24,7 @@ import { ManageMemberDto } from './dto/manage-member.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
 import {
   ChannelRow,
+  InviteSummary,
   MemberSummary,
   MemberRow,
   ServerCreateResponse,
@@ -31,6 +32,7 @@ import {
   ServerRow,
   ServerSummary,
   toChannelSummary,
+  toInviteSummary,
   toMemberSummary,
   toRoleSummary,
   toServerBaseSummary,
@@ -679,6 +681,69 @@ export class ServersService {
       }
 
       return toMemberSummary(member);
+    });
+  }
+
+  async createInvite(
+    user: AuthenticatedUserContext,
+    serverId: string,
+    requestId?: string,
+  ): Promise<InviteSummary> {
+    const code = createInviteCode();
+
+    return this.persistence.runWithEvents(async (tx, events) => {
+      const invitation = await this.serversRepo.insertInvitationReturning(tx, {
+        code,
+        createdById: user.userId,
+        serverId,
+      });
+
+      events.audit({
+        action: 'CreateInvite',
+        actorId: user.userId,
+        requestId,
+        result: 'success',
+        targetId: invitation.id,
+        targetType: 'invitation',
+      });
+
+      return toInviteSummary(invitation, serverId);
+    });
+  }
+
+  async listInvites(serverId: string): Promise<InviteSummary[]> {
+    const rows = await this.serversRepo.listActiveInvitations(serverId);
+
+    return rows.map((row) => toInviteSummary(row, serverId));
+  }
+
+  async revokeInvite(
+    user: AuthenticatedUserContext,
+    serverId: string,
+    inviteId: string,
+    requestId?: string,
+  ): Promise<{ ok: true }> {
+    return this.persistence.runWithEvents(async (tx, events) => {
+      const revoked = await this.serversRepo.revokeInvitation(tx, serverId, inviteId);
+
+      if (!revoked) {
+        throw new AppError(
+          ErrorCode.ResourceNotFound,
+          'Invitation was not found.',
+          HttpStatus.NOT_FOUND,
+        );
+      }
+
+      events.audit({
+        action: 'RevokeInvite',
+        actorId: user.userId,
+        requestId,
+        result: 'success',
+        targetId: revoked.id,
+        targetType: 'invitation',
+      });
+
+      return { ok: true };
     });
   }
 

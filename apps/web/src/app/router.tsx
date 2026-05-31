@@ -10,6 +10,8 @@ import { ResetPasswordPage } from '../features/auth/ResetPasswordPage';
 import { RolesTab } from '../features/servers/settings/RolesTab';
 import { MembersTab } from '../features/servers/settings/MembersTab';
 import { ChannelsTab } from '../features/servers/settings/ChannelsTab';
+import { InvitesTab } from '../features/servers/settings/InvitesTab';
+import { InviteLandingPage } from '../features/servers/InviteLandingPage';
 import { RouteContainer } from './RouteContainer';
 import { useWorkspaceStore } from '../shared/state/use-workspace-store';
 
@@ -132,6 +134,7 @@ export function AppRouter() {
           <Route path="roles" element={<RolesTab />} />
           <Route path="members" element={<MembersTab />} />
           <Route path="channels" element={<ChannelsTab />} />
+          <Route path="invites" element={<InvitesTab />} />
         </Route>
         <Route
           path="notifications"
@@ -143,6 +146,7 @@ export function AppRouter() {
         />
         <Route path="*" element={<Navigate to="friends" replace />} />
       </Route>
+      <Route path="/invite/:code" element={<InviteLandingPage />} />
       <Route path="*" element={<Navigate to="/app" replace />} />
     </Routes>
   );

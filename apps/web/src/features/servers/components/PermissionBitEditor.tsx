@@ -10,6 +10,8 @@ const PERMISSION_LABELS: Record<number, string> = {
   [PermissionBit.ManageRole]: '管理角色',
   [PermissionBit.CreateInvite]: '创建邀请',
   [PermissionBit.ViewAudit]: '查看审计',
+  [PermissionBit.SpeakVoice]: '语音发言',
+  [PermissionBit.ListenVoice]: '语音收听',
 };
 
 type PermissionBitEditorProps = {

@@ -104,6 +104,7 @@ function buildContext(overrides: {
     canManageRole: true,
     canManageMember: overrides.canManageMember ?? true,
     canManageChannel: true,
+    canCreateInvite: true,
   };
 }
 

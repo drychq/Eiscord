@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { NavLink, Outlet, useParams } from 'react-router-dom';
-import { Shield, Users, Hash } from 'lucide-react';
+import { Shield, Users, Hash, Link2 } from 'lucide-react';
 import { PermissionBit, hasPermissionBit } from '@eiscord/shared';
 import { useServerDetail, useServerRoles } from '../use-servers-queries';
 import { Spinner } from '../../../shared/components/Spinner';
@@ -29,6 +29,7 @@ export function ServerSettingsLayout() {
       canManageRole: isOwner || hasPermissionBit(currentPerms, PermissionBit.ManageRole),
       canManageMember: isOwner || hasPermissionBit(currentPerms, PermissionBit.ManageMember),
       canManageChannel: isOwner || hasPermissionBit(currentPerms, PermissionBit.ManageChannel),
+      canCreateInvite: isOwner || hasPermissionBit(currentPerms, PermissionBit.CreateInvite),
     };
   }, [server, roles, serverId]);
 
@@ -40,10 +41,11 @@ export function ServerSettingsLayout() {
     );
   }
 
-  const tabs: { key: 'roles' | 'members' | 'channels'; label: string; visible: boolean; icon: typeof Shield }[] = [
+  const tabs: { key: 'roles' | 'members' | 'channels' | 'invites'; label: string; visible: boolean; icon: typeof Shield }[] = [
     { key: 'roles', label: '角色', visible: context.canManageRole, icon: Shield },
     { key: 'members', label: '成员', visible: context.canManageMember, icon: Users },
     { key: 'channels', label: '频道', visible: context.canManageChannel, icon: Hash },
+    { key: 'invites', label: '邀请', visible: context.canCreateInvite, icon: Link2 },
   ];
 
   return (

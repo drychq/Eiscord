@@ -18,6 +18,9 @@ import {
   createChannel,
   updateChannel,
   deleteChannel,
+  fetchServerInvites,
+  createInvite,
+  revokeInvite,
   type ManageMemberAction,
   type PermissionOverwriteInput,
 } from './servers-api';
@@ -285,6 +288,46 @@ export function useDeleteChannel(channelId: string) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['servers'] });
       pushToast({ kind: 'success', message: '频道已删除', ttl: 3000 });
+    },
+    onError: (error) => {
+      pushToast({ kind: 'error', message: formatErrorMessage(error), ttl: 5000 });
+    },
+  });
+}
+
+export function useServerInvites(serverId: string | null) {
+  return useQuery({
+    queryKey: ['servers', serverId, 'invites'],
+    queryFn: () => fetchServerInvites(serverId!),
+    enabled: !!serverId,
+  });
+}
+
+export function useCreateInvite(serverId: string) {
+  const queryClient = useQueryClient();
+  const { pushToast } = useToastStore();
+
+  return useMutation({
+    mutationFn: () => createInvite(serverId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['servers', serverId, 'invites'] });
+      pushToast({ kind: 'success', message: '邀请已创建', ttl: 3000 });
+    },
+    onError: (error) => {
+      pushToast({ kind: 'error', message: formatErrorMessage(error), ttl: 5000 });
+    },
+  });
+}
+
+export function useRevokeInvite(serverId: string) {
+  const queryClient = useQueryClient();
+  const { pushToast } = useToastStore();
+
+  return useMutation({
+    mutationFn: (inviteId: string) => revokeInvite(serverId, inviteId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['servers', serverId, 'invites'] });
+      pushToast({ kind: 'success', message: '邀请已撤销', ttl: 3000 });
     },
     onError: (error) => {
       pushToast({ kind: 'error', message: formatErrorMessage(error), ttl: 5000 });

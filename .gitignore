@@ -56,12 +56,9 @@ Thumbs.db
 *.swp
 *.swo
 
-.claude/settings.json
-
 tests/e2e/fixtures/audio
 
 # Local test artifacts
-test-accounts.*
 docs/local/
 
 .claude/
